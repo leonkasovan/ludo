@@ -1,0 +1,37 @@
+{
+  "version": "2.0.0",
+  "tasks": [
+    {
+      "label": "CMake: Configure",
+      "type": "shell",
+      "command": "cmake -B build .",
+      "group": "build",
+      "presentation": {
+        "echo": true,
+        "reveal": "always",
+        "panel": "shared"
+      },
+      "problemMatcher": []
+    },
+    {
+      "label": "CMake: Build",
+      "type": "shell",
+      "command": "cmake --build build --config Debug",
+      "group": "build",
+      "presentation": {
+        "echo": true,
+        "reveal": "always",
+        "panel": "shared"
+      },
+      "problemMatcher": [
+        "$gcc",
+        "$msCompile"
+      ]
+    },
+    {
+      "label": "Build (Configure + Build)",
+      "dependsOn": ["CMake: Configure", "CMake: Build"],
+      "runOptions": { "runOn": "default" }
+    }
+  ]
+}

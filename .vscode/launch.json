@@ -1,0 +1,20 @@
+{
+  "version": "0.2.0",
+  "configurations": [
+    {
+      "name": "Run LUDO (Debug)",
+      "type": "cppdbg",
+      "request": "launch",
+      "program": "${workspaceFolder}/build/ludo${command:cmake.launchTargetExeSuffix}",
+      "args": [],
+      "stopAtEntry": false,
+      "cwd": "${workspaceFolder}",
+      "environment": [],
+      "externalConsole": false,
+      "preLaunchTask": "Build (Configure + Build)",
+      "MIMode": "gdb",
+      "miDebuggerPath": "gdb",
+      "logging": { "engineLogging": false }
+    }
+  ]
+}

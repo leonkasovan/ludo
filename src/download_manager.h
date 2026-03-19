@@ -1,0 +1,87 @@
+#ifndef LUDO_DOWNLOAD_MANAGER_H
+#define LUDO_DOWNLOAD_MANAGER_H
+
+#include <stdint.h>
+#include "thread_queue.h"
+
+/* ------------------------------------------------------------------ */
+/* Download state and mode                                              */
+/* ------------------------------------------------------------------ */
+
+typedef enum {
+    DOWNLOAD_NOW   = 0,  /* start immediately */
+    DOWNLOAD_QUEUE = 1   /* add to end of queue */
+} DownloadMode;
+
+typedef enum {
+    DOWNLOAD_STATE_QUEUED    = 0,
+    DOWNLOAD_STATE_RUNNING   = 1,
+    DOWNLOAD_STATE_PAUSED    = 2,
+    DOWNLOAD_STATE_COMPLETED = 3,
+    DOWNLOAD_STATE_FAILED    = 4
+} DownloadState;
+
+/* ------------------------------------------------------------------ */
+/* Download item                                                        */
+/* ------------------------------------------------------------------ */
+
+typedef struct Download {
+    int            id;
+    char           url[4096];
+    char           output_dir[1024];
+    char           filename[512];     /* derived from URL or Content-Disposition */
+    DownloadState  state;
+    double         progress;          /* 0.0 – 100.0 */
+    double         speed_bps;         /* bytes per second */
+    int64_t        total_bytes;
+    int64_t        downloaded_bytes;
+    struct Download *next;
+} Download;
+
+/* ------------------------------------------------------------------ */
+/* Progress callback (invoked on main/GUI thread via uiQueueMain)       */
+/* ------------------------------------------------------------------ */
+
+typedef struct {
+    int           download_id;
+    DownloadState state;
+    double        progress;      /* 0.0 – 100.0 */
+    double        speed_bps;
+    char          filename[512];
+    char          error_msg[256];
+} ProgressUpdate;
+
+/* Callback registered by the GUI to receive progress updates */
+typedef void (*progress_callback_t)(const ProgressUpdate *update, void *user_data);
+
+/* ------------------------------------------------------------------ */
+/* Manager API                                                          */
+/* ------------------------------------------------------------------ */
+
+/* Initialise with a number of concurrent worker threads.
+   output_dir is the default download destination. */
+void download_manager_init(int num_workers, const char *output_dir);
+void download_manager_shutdown(void);
+
+/* Queue a new download.  Returns the assigned download ID (>0) or -1 on error.
+   Called from any thread; internally uses the task queue. */
+int  download_manager_add(const char *url, const char *output_dir, DownloadMode mode);
+
+/* Pause / resume / remove — may be called from the GUI thread */
+void download_manager_pause(int id);
+void download_manager_resume(int id);
+void download_manager_remove(int id);
+
+/* Access the global list (call only from GUI/main thread) */
+Download *download_manager_get_list(void);
+
+/* Register a progress callback invoked (via uiQueueMain) on the GUI thread */
+void download_manager_set_progress_cb(progress_callback_t cb, void *user_data);
+
+/* Retrieve configured default output directory */
+const char *download_manager_get_output_dir(void);
+
+/* Lookup a single download by id (thread-safe read) */
+Download *download_manager_find(int id);
+
+#endif /* LUDO_DOWNLOAD_MANAGER_H */
