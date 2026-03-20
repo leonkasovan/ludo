@@ -25,16 +25,24 @@ typedef enum {
 /* Download item                                                        */
 /* ------------------------------------------------------------------ */
 
-typedef struct Download {
+/* Mutable runtime fields shared by Download and ProgressUpdate.
+   Embed this in both so field declarations only exist once. */
+typedef struct {
     int            id;
-    char           url[4096];
-    char           output_dir[1024];
     char           filename[512];     /* derived from URL or Content-Disposition */
     DownloadState  state;
     double         progress;          /* 0.0 – 100.0 */
     double         speed_bps;         /* bytes per second */
     int64_t        total_bytes;
     int64_t        downloaded_bytes;
+    time_t         start_time;
+    time_t         end_time;
+} DownloadStatus;
+
+typedef struct Download {
+    DownloadStatus   status;
+    char             url[4096];
+    char             output_dir[1024];
     struct Download *next;
 } Download;
 
@@ -43,12 +51,8 @@ typedef struct Download {
 /* ------------------------------------------------------------------ */
 
 typedef struct {
-    int           download_id;
-    DownloadState state;
-    double        progress;      /* 0.0 – 100.0 */
-    double        speed_bps;
-    char          filename[512];
-    char          error_msg[256];
+    DownloadStatus   status;
+    char             error_msg[256];
 } ProgressUpdate;
 
 /* Callback registered by the GUI to receive progress updates */

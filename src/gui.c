@@ -151,26 +151,26 @@ static DownloadRow *add_row(int id, const char *filename) {
 void gui_on_progress(const ProgressUpdate *update, void *user_data) {
     (void)user_data;
 
-    DownloadRow *r = find_row(update->download_id);
+    DownloadRow *r = find_row(update->status.id);
     if (!r) {
         /* New entry — create a row for it */
-        r = add_row(update->download_id, update->filename);
+        r = add_row(update->status.id, update->status.filename);
         if (!r) return;
     }
 
     /* Update filename label if we now know it */
-    if (update->filename[0]) {
-        uiLabelSetText(r->label_name, update->filename);
+    if (update->status.filename[0]) {
+        uiLabelSetText(r->label_name, update->status.filename);
     }
 
     /* Progress bar (0–100) */
-    int pct = (int)update->progress;
+    int pct = (int)update->status.progress;
     if (pct < 0)   pct = 0;
     if (pct > 100) pct = 100;
     uiProgressBarSetValue(r->progress_bar, pct);
 
     /* Status label */
-    switch (update->state) {
+    switch (update->status.state) {
         case DOWNLOAD_STATE_QUEUED:
             uiLabelSetText(r->label_status, "Queued");
             break;

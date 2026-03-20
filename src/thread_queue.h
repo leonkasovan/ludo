@@ -2,6 +2,8 @@
 #define LUDO_THREAD_QUEUE_H
 
 #include <stddef.h>
+#include <time.h>
+
 
 #ifdef _WIN32
 #include <windows.h>

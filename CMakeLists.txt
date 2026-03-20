@@ -225,6 +225,7 @@ target_link_libraries(ludo PRIVATE
     libui_static
     libcurl_static
     lua
+    z
 )
 
 # Release build tuning: optimize and strip symbols for a smaller binary.
