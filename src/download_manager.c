@@ -796,6 +796,15 @@ const char *download_manager_get_output_dir(void) {
     return g_mgr.output_dir;
 }
 
+void download_manager_set_output_dir(const char *output_dir) {
+    if (!output_dir || output_dir[0] == '\0') return;
+
+    ludo_mutex_lock(&g_mgr.list_mutex);
+    strncpy(g_mgr.output_dir, output_dir, sizeof(g_mgr.output_dir) - 1);
+    g_mgr.output_dir[sizeof(g_mgr.output_dir) - 1] = '\0';
+    ludo_mutex_unlock(&g_mgr.list_mutex);
+}
+
 Download *download_manager_find(int id) {
     ludo_mutex_lock(&g_mgr.list_mutex);
     Download *found = NULL;

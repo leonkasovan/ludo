@@ -199,11 +199,13 @@ endif()
 set(LUDO_SOURCES
     src/main.c
     src/gui.c
+    src/win_toolbar_icons.cpp
     src/lua_engine.c
     src/http_module.c
     src/ludo_module.c
     src/download_manager.c
     src/thread_queue.c
+    third_party/libuilua/libuilua.c
     src/ludo.rc
 )
 
@@ -217,6 +219,7 @@ endif()
 target_include_directories(ludo PRIVATE
     ${CMAKE_SOURCE_DIR}/src
     ${CMAKE_SOURCE_DIR}/third_party/libui-ng
+    ${CMAKE_SOURCE_DIR}/third_party/libuilua
     ${LUA_SRC_DIR}
     "$<BUILD_INTERFACE:${CMAKE_BINARY_DIR}/curl_install/include>"
 )
@@ -245,6 +248,7 @@ if(WIN32)
         # libui-ng Windows dependencies
         user32 kernel32 gdi32 comctl32 uxtheme msimg32
         comdlg32 d2d1 dwrite ole32 oleaut32 oleacc usp10
+        gdiplus
         # libcurl Windows dependencies
         ws2_32 wldap32 crypt32 normaliz secur32 bcrypt iphlpapi
     )
@@ -280,6 +284,14 @@ add_custom_command(TARGET ludo POST_BUILD
         ${CMAKE_SOURCE_DIR}/plugins
         $<TARGET_FILE_DIR:ludo>/plugins
     COMMENT "Copying plugins directory..."
+)
+
+# Copy toolbar/icon resources to build output
+add_custom_command(TARGET ludo POST_BUILD
+    COMMAND ${CMAKE_COMMAND} -E copy_directory
+        ${CMAKE_SOURCE_DIR}/res
+        $<TARGET_FILE_DIR:ludo>/res
+    COMMENT "Copying UI resources..."
 )
 
 # Copy default output directory

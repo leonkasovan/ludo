@@ -85,6 +85,9 @@ void download_manager_set_progress_cb(progress_callback_t cb, void *user_data);
 /* Retrieve configured default output directory */
 const char *download_manager_get_output_dir(void);
 
+/* Update configured default output directory for future downloads */
+void download_manager_set_output_dir(const char *output_dir);
+
 /* Lookup a single download by id (thread-safe read) */
 Download *download_manager_find(int id);
 

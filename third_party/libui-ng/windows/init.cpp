@@ -54,6 +54,10 @@ uiInitOptions uiprivOptions;
 
 const char *uiInit(uiInitOptions *o)
 {
+	#ifndef IDI_APP_ICON
+	#define IDI_APP_ICON 101
+	#endif
+
 	STARTUPINFOW si;
 	const char *ce;
 	HICON hDefaultIcon;
@@ -72,8 +76,12 @@ const char *uiInit(uiInitOptions *o)
 		nCmdShow = si.wShowWindow;
 
 	// LONGTERM set DPI awareness
+	if (hInstance == NULL)
+		hInstance = GetModuleHandleW(NULL);
 
-	hDefaultIcon = LoadIconW(NULL, IDI_APPLICATION);
+	hDefaultIcon = LoadIconW(hInstance, MAKEINTRESOURCEW(IDI_APP_ICON));
+	if (hDefaultIcon == NULL)
+		hDefaultIcon = LoadIconW(NULL, IDI_APPLICATION);
 	if (hDefaultIcon == NULL)
 		return ieLastErr("loading default icon for window classes");
 	hDefaultCursor = LoadCursorW(NULL, IDC_ARROW);

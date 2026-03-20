@@ -1,6 +1,7 @@
 #include "lua_engine.h"
 #include "http_module.h"
 #include "ludo_module.h"
+#include "libuilua.h"
 #include "gui.h"
 #include "thread_queue.h"
 
@@ -49,6 +50,10 @@ static lua_State *create_lua_state(void) {
     luaL_openlibs(L);
     http_module_register(L);
     ludo_module_register(L);
+
+    /* Register libui Lua bindings as "ui" */
+    luaL_requiref(L, "ui", luaopen_libuilua, 1);
+    lua_pop(L, 1);
 
     return L;
 }

@@ -10,11 +10,28 @@
 #include <string.h>
 #include <time.h>
 
+#ifdef _WIN32
+#include <windows.h>
+#include "win_toolbar_icons.h"
+
+#define IDI_APP_ICON 101
+#endif
+
 /* ------------------------------------------------------------------ */
 /* Constants                                                            */
 /* ------------------------------------------------------------------ */
 
 #define MAX_DOWNLOAD_ROWS 64
+
+#define ICON_ADD      "add.png"
+#define ICON_PAUSE    "pause.png"
+#define ICON_RESUME   "resume.png"
+#define ICON_REMOVE   "remove.png"
+#define ICON_PLUGIN   "plugin.png"
+#define ICON_SETTING  "setting.png"
+#define ICON_ABOUT    "about.png"
+
+#define TOOLBAR_BUTTON_SIZE 40
 
 /* ------------------------------------------------------------------ */
 /* Download row UI element                                              */
@@ -35,14 +52,27 @@ typedef struct {
 static struct {
     uiWindow        *window;
     uiEntry         *url_entry;
-    uiButton        *add_btn;
+    uiButton        *tb_add;
+    uiButton        *tb_pause;
+    uiButton        *tb_resume;
+    uiButton        *tb_remove;
+    uiButton        *tb_plugin;
+    uiButton        *tb_setting;
+    uiButton        *tb_about;
     uiBox           *downloads_box; /* vbox; one row per download       */
     uiMultilineEntry *log_view;
 
     DownloadRow      rows[MAX_DOWNLOAD_ROWS];
     int              row_count;
+    int              active_download_id;
 
     ludo_mutex_t     log_mutex;
+
+#ifdef _WIN32
+    void            *toolbar_icon_ctx;
+    HICON            app_icon;
+    int              app_icon_from_file;
+#endif
 } g_gui;
 
 /* Task queue shared with worker threads (initialised in main.c) */
@@ -120,6 +150,137 @@ static DownloadRow *find_row(int id) {
     return NULL;
 }
 
+/* Select latest active download for pause/resume/remove actions. */
+static int pick_target_download_id(void) {
+    if (g_gui.active_download_id > 0) {
+        return g_gui.active_download_id;
+    }
+
+    Download *list = download_manager_get_list();
+    if (!list) return -1;
+
+    for (Download *d = list; d; d = d->next) {
+        if (d->status.state == DOWNLOAD_STATE_RUNNING ||
+            d->status.state == DOWNLOAD_STATE_QUEUED ||
+            d->status.state == DOWNLOAD_STATE_PAUSED) {
+            return d->status.id;
+        }
+    }
+    return list->status.id;
+}
+
+#ifdef _WIN32
+static void set_main_window_icon(void) {
+    HWND hwnd = (HWND)uiControlHandle(uiControl(g_gui.window));
+    if (!hwnd) return;
+
+    HINSTANCE hinst = GetModuleHandle(NULL);
+    HICON hicon = (HICON)LoadImage(hinst, MAKEINTRESOURCE(IDI_APP_ICON),
+                                   IMAGE_ICON, 0, 0, LR_DEFAULTSIZE);
+    int from_file = 0;
+
+    if (!hicon) {
+        const char *candidates[] = {
+            "res/icon/ludo.ico",
+            "../res/icon/ludo.ico",
+            "../../res/icon/ludo.ico"
+        };
+        for (size_t i = 0; i < sizeof(candidates) / sizeof(candidates[0]); i++) {
+            hicon = (HICON)LoadImageA(NULL, candidates[i], IMAGE_ICON, 0, 0,
+                                      LR_LOADFROMFILE | LR_DEFAULTSIZE);
+            if (hicon) {
+                from_file = 1;
+                break;
+            }
+        }
+    }
+
+    if (!hicon) return;
+
+    SendMessage(hwnd, WM_SETICON, ICON_SMALL, (LPARAM)hicon);
+    SendMessage(hwnd, WM_SETICON, ICON_BIG, (LPARAM)hicon);
+    g_gui.app_icon = hicon;
+    g_gui.app_icon_from_file = from_file;
+}
+
+static int resolve_toolbar_png_path(const char *name, char *out, size_t out_sz) {
+    const char *candidates[] = {
+        "res/toolbars/32",
+        "../res/toolbars/32",
+        "../../res/toolbars/32"
+    };
+    for (size_t i = 0; i < sizeof(candidates) / sizeof(candidates[0]); i++) {
+        snprintf(out, out_sz, "%s/%s", candidates[i], name);
+        FILE *f = fopen(out, "rb");
+        if (f) {
+            fclose(f);
+            return 1;
+        }
+    }
+    return 0;
+}
+
+static void toolbar_icons_init(void) {
+    g_gui.toolbar_icon_ctx = ludo_icons_init();
+    if (!g_gui.toolbar_icon_ctx) {
+        return;
+    }
+
+    /* 32x32 icon with 4px visual padding all around. */
+    ludo_icons_set_button_size((uintptr_t)uiControlHandle(uiControl(g_gui.tb_add)), TOOLBAR_BUTTON_SIZE, TOOLBAR_BUTTON_SIZE);
+    ludo_icons_set_button_size((uintptr_t)uiControlHandle(uiControl(g_gui.tb_pause)), TOOLBAR_BUTTON_SIZE, TOOLBAR_BUTTON_SIZE);
+    ludo_icons_set_button_size((uintptr_t)uiControlHandle(uiControl(g_gui.tb_resume)), TOOLBAR_BUTTON_SIZE, TOOLBAR_BUTTON_SIZE);
+    ludo_icons_set_button_size((uintptr_t)uiControlHandle(uiControl(g_gui.tb_remove)), TOOLBAR_BUTTON_SIZE, TOOLBAR_BUTTON_SIZE);
+    ludo_icons_set_button_size((uintptr_t)uiControlHandle(uiControl(g_gui.tb_plugin)), TOOLBAR_BUTTON_SIZE, TOOLBAR_BUTTON_SIZE);
+    ludo_icons_set_button_size((uintptr_t)uiControlHandle(uiControl(g_gui.tb_setting)), TOOLBAR_BUTTON_SIZE, TOOLBAR_BUTTON_SIZE);
+    ludo_icons_set_button_size((uintptr_t)uiControlHandle(uiControl(g_gui.tb_about)), TOOLBAR_BUTTON_SIZE, TOOLBAR_BUTTON_SIZE);
+
+    char path[512];
+    if (resolve_toolbar_png_path(ICON_ADD, path, sizeof(path))) {
+        ludo_icons_set_button_png(g_gui.toolbar_icon_ctx,
+                                  (uintptr_t)uiControlHandle(uiControl(g_gui.tb_add)),
+                                  path);
+    }
+    if (resolve_toolbar_png_path(ICON_PAUSE, path, sizeof(path))) {
+        ludo_icons_set_button_png(g_gui.toolbar_icon_ctx,
+                                  (uintptr_t)uiControlHandle(uiControl(g_gui.tb_pause)),
+                                  path);
+    }
+    if (resolve_toolbar_png_path(ICON_RESUME, path, sizeof(path))) {
+        ludo_icons_set_button_png(g_gui.toolbar_icon_ctx,
+                                  (uintptr_t)uiControlHandle(uiControl(g_gui.tb_resume)),
+                                  path);
+    }
+    if (resolve_toolbar_png_path(ICON_REMOVE, path, sizeof(path))) {
+        ludo_icons_set_button_png(g_gui.toolbar_icon_ctx,
+                                  (uintptr_t)uiControlHandle(uiControl(g_gui.tb_remove)),
+                                  path);
+    }
+    if (resolve_toolbar_png_path(ICON_PLUGIN, path, sizeof(path))) {
+        ludo_icons_set_button_png(g_gui.toolbar_icon_ctx,
+                                  (uintptr_t)uiControlHandle(uiControl(g_gui.tb_plugin)),
+                                  path);
+    }
+    if (resolve_toolbar_png_path(ICON_SETTING, path, sizeof(path))) {
+        ludo_icons_set_button_png(g_gui.toolbar_icon_ctx,
+                                  (uintptr_t)uiControlHandle(uiControl(g_gui.tb_setting)),
+                                  path);
+    }
+    if (resolve_toolbar_png_path(ICON_ABOUT, path, sizeof(path))) {
+        ludo_icons_set_button_png(g_gui.toolbar_icon_ctx,
+                                  (uintptr_t)uiControlHandle(uiControl(g_gui.tb_about)),
+                                  path);
+    }
+}
+
+static void toolbar_icons_shutdown(void) {
+    if (g_gui.toolbar_icon_ctx) {
+        ludo_icons_shutdown(g_gui.toolbar_icon_ctx);
+        g_gui.toolbar_icon_ctx = NULL;
+    }
+}
+#endif
+
 static DownloadRow *add_row(int id, const char *filename) {
     if (g_gui.row_count >= MAX_DOWNLOAD_ROWS) return NULL;
 
@@ -150,6 +311,8 @@ static DownloadRow *add_row(int id, const char *filename) {
 
 void gui_on_progress(const ProgressUpdate *update, void *user_data) {
     (void)user_data;
+
+    g_gui.active_download_id = update->status.id;
 
     DownloadRow *r = find_row(update->status.id);
     if (!r) {
@@ -191,7 +354,7 @@ void gui_on_progress(const ProgressUpdate *update, void *user_data) {
             char buf[288];
             snprintf(buf, sizeof(buf), "Failed: %s", update->error_msg);
             uiLabelSetText(r->label_status, buf);
-            uiProgressBarSetValue(r->progress_bar, -1); /* indeterminate */
+            uiProgressBarSetValue(r->progress_bar, 0); /* indeterminate */
             break;
         }
     }
@@ -235,12 +398,94 @@ static void on_add_clicked(uiButton *sender, void *data) {
     gui_log(LOG_INFO, msg);
 }
 
+static void on_pause_clicked(uiButton *sender, void *data) {
+    (void)sender; (void)data;
+    int id = pick_target_download_id();
+    if (id <= 0) {
+        gui_log(LOG_ERROR, "Pause failed: no active download");
+        return;
+    }
+    download_manager_pause(id);
+    gui_log(LOG_INFO, "Paused selected download");
+}
+
+static void on_resume_clicked(uiButton *sender, void *data) {
+    (void)sender; (void)data;
+    int id = pick_target_download_id();
+    if (id <= 0) {
+        gui_log(LOG_ERROR, "Resume failed: no paused download");
+        return;
+    }
+    download_manager_resume(id);
+    gui_log(LOG_INFO, "Resume requested for selected download");
+}
+
+static void on_remove_clicked(uiButton *sender, void *data) {
+    (void)sender; (void)data;
+    int id = pick_target_download_id();
+    if (id <= 0) {
+        gui_log(LOG_ERROR, "Remove failed: no download selected");
+        return;
+    }
+    download_manager_remove(id);
+    gui_log(LOG_INFO, "Removed selected download from list");
+}
+
+static void on_plugin_clicked(uiButton *sender, void *data) {
+    (void)sender; (void)data;
+    char *folder = uiOpenFolder(g_gui.window);
+    if (!folder || folder[0] == '\0') {
+        if (folder) uiFreeText(folder);
+        return;
+    }
+
+    lua_engine_load_plugins(folder);
+
+    char msg[1024];
+    snprintf(msg, sizeof(msg), "Plugins reloaded from: %s", folder);
+    gui_log(LOG_SUCCESS, msg);
+    uiFreeText(folder);
+}
+
+static void on_setting_clicked(uiButton *sender, void *data) {
+    (void)sender; (void)data;
+    char *folder = uiOpenFolder(g_gui.window);
+    if (!folder || folder[0] == '\0') {
+        if (folder) uiFreeText(folder);
+        return;
+    }
+
+    download_manager_set_output_dir(folder);
+
+    char msg[1024];
+    snprintf(msg, sizeof(msg), "Default output directory changed to: %s", folder);
+    gui_log(LOG_SUCCESS, msg);
+    uiFreeText(folder);
+}
+
+static void on_about_clicked(uiButton *sender, void *data) {
+    (void)sender; (void)data;
+    uiMsgBox(g_gui.window,
+             "About LUDO",
+             "LUDO - LUa DOwnloader\n\n"
+             "A lightweight download manager with plugin support,\n"
+             "resume, progress tracking, and session persistence.");
+}
+
 /* ------------------------------------------------------------------ */
 /* Window close callback                                                */
 /* ------------------------------------------------------------------ */
 
 static int on_window_close(uiWindow *w, void *data) {
     (void)w; (void)data;
+#ifdef _WIN32
+    toolbar_icons_shutdown();
+    if (g_gui.app_icon && g_gui.app_icon_from_file) {
+        DestroyIcon(g_gui.app_icon);
+        g_gui.app_icon = NULL;
+        g_gui.app_icon_from_file = 0;
+    }
+#endif
     uiQuit();
     return 1; /* destroy window */
 }
@@ -256,15 +501,66 @@ static int on_should_quit(void *data) {
 /* ------------------------------------------------------------------ */
 
 void gui_create(void) {
+    memset(&g_gui, 0, sizeof(g_gui));
+
     /* Outer window */
     g_gui.window = uiNewWindow("LUDO - LUa DOwnloader", 800, 600, 0);
     uiWindowSetMargined(g_gui.window, 1);
     uiWindowOnClosing(g_gui.window, on_window_close, NULL);
     uiOnShouldQuit(on_should_quit, NULL);
 
+#ifdef _WIN32
+    set_main_window_icon();
+#endif
+
     /* Root vertical box */
     uiBox *root = uiNewVerticalBox();
     uiBoxSetPadded(root, 1);
+
+    // uiLabel *title = uiNewLabel("Download Manager");
+    // uiBoxAppend(root, uiControl(title), 0);
+
+    /* ---- Toolbar ---- */
+    uiBox *toolbar = uiNewHorizontalBox();
+    uiBoxSetPadded(toolbar, 0);
+
+    g_gui.tb_add = uiNewButton("Add");
+    uiButtonOnClicked(g_gui.tb_add, on_add_clicked, NULL);
+    uiBoxAppend(toolbar, uiControl(g_gui.tb_add), 0);
+
+    g_gui.tb_pause = uiNewButton("Pause");
+    uiButtonOnClicked(g_gui.tb_pause, on_pause_clicked, NULL);
+    uiBoxAppend(toolbar, uiControl(g_gui.tb_pause), 0);
+
+    g_gui.tb_resume = uiNewButton("Resume");
+    uiButtonOnClicked(g_gui.tb_resume, on_resume_clicked, NULL);
+    uiBoxAppend(toolbar, uiControl(g_gui.tb_resume), 0);
+
+    g_gui.tb_remove = uiNewButton("Remove");
+    uiButtonOnClicked(g_gui.tb_remove, on_remove_clicked, NULL);
+    uiBoxAppend(toolbar, uiControl(g_gui.tb_remove), 0);
+
+    uiBoxAppend(toolbar, uiControl(uiNewVerticalSeparator()), 0);
+
+    g_gui.tb_plugin = uiNewButton("Plugin");
+    uiButtonOnClicked(g_gui.tb_plugin, on_plugin_clicked, NULL);
+    uiBoxAppend(toolbar, uiControl(g_gui.tb_plugin), 0);
+
+    g_gui.tb_setting = uiNewButton("Setting");
+    uiButtonOnClicked(g_gui.tb_setting, on_setting_clicked, NULL);
+    uiBoxAppend(toolbar, uiControl(g_gui.tb_setting), 0);
+
+    g_gui.tb_about = uiNewButton("About");
+    uiButtonOnClicked(g_gui.tb_about, on_about_clicked, NULL);
+    uiBoxAppend(toolbar, uiControl(g_gui.tb_about), 0);
+
+    uiBoxAppend(root, uiControl(toolbar), 0);
+
+#ifdef _WIN32
+    toolbar_icons_init();
+#endif
+
+    uiBoxAppend(root, uiControl(uiNewHorizontalSeparator()), 0);
 
     /* ---- URL input row ---- */
     uiBox *input_row = uiNewHorizontalBox();
@@ -274,29 +570,32 @@ void gui_create(void) {
     uiEntrySetText(g_gui.url_entry, "https://");
     uiBoxAppend(input_row, uiControl(g_gui.url_entry), 1 /* stretchy */);
 
-    g_gui.add_btn = uiNewButton("Add Download");
-    uiButtonOnClicked(g_gui.add_btn, on_add_clicked, NULL);
-    uiBoxAppend(input_row, uiControl(g_gui.add_btn), 0);
-
     uiBoxAppend(root, uiControl(input_row), 0);
 
     /* ---- Downloads list ---- */
     g_gui.downloads_box = uiNewVerticalBox();
     uiBoxSetPadded(g_gui.downloads_box, 1);
 
+    uiGroup *downloads_group = uiNewGroup("Downloads");
+    uiGroupSetMargined(downloads_group, 1);
+    uiGroupSetChild(downloads_group, uiControl(g_gui.downloads_box));
+
     /* Wrap in a scrollable area via a non-wrapping multiline entry is not
        ideal, but libui-ng lacks a ScrollView for arbitrary controls.
        Instead we place at most MAX_DOWNLOAD_ROWS rows and rely on the
        window being resizable. */
-    uiBoxAppend(root, uiControl(g_gui.downloads_box), 0);
+    uiBoxAppend(root, uiControl(downloads_group), 0);
 
-    /* ---- Separator label ---- */
-    uiBoxAppend(root, uiControl(uiNewLabel("── Log ──")), 0);
+    uiBoxAppend(root, uiControl(uiNewHorizontalSeparator()), 0);
 
     /* ---- Log area ---- */
     g_gui.log_view = uiNewMultilineEntry();
     uiMultilineEntrySetReadOnly(g_gui.log_view, 1);
-    uiBoxAppend(root, uiControl(g_gui.log_view), 1 /* stretchy */);
+
+    uiGroup *log_group = uiNewGroup("Activity Log");
+    uiGroupSetMargined(log_group, 1);
+    uiGroupSetChild(log_group, uiControl(g_gui.log_view));
+    uiBoxAppend(root, uiControl(log_group), 1 /* stretchy */);
 
     uiWindowSetChild(g_gui.window, uiControl(root));
     uiControlShow(uiControl(g_gui.window));
@@ -309,4 +608,6 @@ void gui_create(void) {
     ludo_thread_create(&worker, url_worker_thread, NULL);
     /* We intentionally don't join this thread — it exits when the queue
        is shut down during download_manager_shutdown(). */
+
+    gui_log(LOG_INFO, "Ready. Paste a URL and click Add.");
 }
