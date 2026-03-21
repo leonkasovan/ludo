@@ -15,6 +15,11 @@
 #include <stdlib.h>
 #include <string.h>
 #include <time.h>
+#include <ctype.h>
+
+#if defined(__linux__) || defined(__unix__)
+#include <gtk/gtk.h>
+#endif
 
 #ifdef _WIN32
 #include <windows.h>
@@ -47,11 +52,20 @@
 
 typedef struct {
     int             download_id;
-    uiBox          *row_box;       /* horizontal container for this row */
-    uiLabel        *label_name;    /* filename or URL snippet           */
-    uiLabel        *label_status;  /* status text                       */
-    uiProgressBar  *progress_bar;
+    int             selected;      /* checkbox selection state */
+    char            filename[512]; /* filename or URL snippet */
+    DownloadState   state;
+    int             progress_pct;  /* 0-100 */
+    double          speed_bps;
+    int64_t         total_bytes;
+    int64_t         downloaded_bytes;
+    time_t          start_time;
 } DownloadRow;
+
+/* Table model for downloads */
+static uiTableModel *g_downloads_model = NULL;
+static uiTable *g_downloads_table = NULL;
+static uiTableModelHandler g_downloads_mh;
 
 /* Context structs for test windows (file scope so callbacks may be static) */
 typedef struct HttpTestCtx {
@@ -125,6 +139,129 @@ static void *url_worker_thread(void *arg) {
         }
     }
     return NULL;
+}
+
+/* Auto-size table columns based on content (simple char-count heuristic) */
+static void autosize_downloads_table(void) {
+    if (!g_downloads_table) return;
+    if (!g_gui.window) return;
+
+    /* Desired percentage widths for columns 0..6: id,name,size,status,started,speed,progress */
+    const int percents[7] = {4,35,15,12,10,10,14};
+
+    int win_w = 0, win_h = 0;
+    uiWindowContentSize(g_gui.window, &win_w, &win_h);
+    if (win_w <= 0) return;
+
+    /* Account for some padding/margins inside the window */
+    int available = win_w - 40; if (available < 200) available = win_w;
+
+    for (int col = 0; col < 7; col++) {
+        int w = (available * percents[col]) / 100;
+        /* Enforce sensible minimums */
+        if (col == 0) { if (w < 40) w = 40; }
+        else if (col == 1) { if (w < 140) w = 140; }
+        else if (col == 2) { if (w < 80) w = 80; }
+        else if (col == 3) { if (w < 80) w = 80; }
+        else if (col == 4) { if (w < 80) w = 80; }
+        else if (col == 5) { if (w < 80) w = 80; }
+        else if (col == 6) { if (w < 100) w = 100; }
+        uiTableColumnSetWidth(g_downloads_table, col, w);
+    }
+}
+
+/* Window position/size changed handler — recompute column widths */
+static void on_main_window_pos_changed(uiWindow *w, void *data) {
+    (void)w; (void)data;
+    autosize_downloads_table();
+}
+
+/* When the main window gains focus, check clipboard for a URL and paste it into the URL entry
+   if the entry is currently empty. Only implemented on Windows for now. */
+static void on_main_window_focus_changed(uiWindow *w, void *data) {
+    (void)w; (void)data;
+    /* Only act when window is focused */
+    if (!uiWindowFocused(g_gui.window)) return;
+
+    /* If user already entered something, do not overwrite */
+    char *cur = uiEntryText(g_gui.url_entry);
+    int should_paste = 0;
+    if (!cur || cur[0] == '\0') should_paste = 1;
+    if (cur) uiFreeText(cur);
+    if (!should_paste) return;
+    /* Paste from clipboard if it contains a valid URL */
+    /* This uses the shared helper below. */
+    /* Note: helper will re-check entry emptiness to avoid race conditions. */
+    (void)w;
+    extern void paste_clipboard_url_if_valid(void);
+    paste_clipboard_url_if_valid();
+}
+
+/* Simple URL validator used before pasting clipboard contents. */
+static int is_valid_url(const char *s) {
+    if (!s) return 0;
+    while (*s && isspace((unsigned char)*s)) s++;
+    if (strncmp(s, "http://", 7) == 0) s += 7;
+    else if (strncmp(s, "https://", 8) == 0) s += 8;
+    else return 0;
+    if (strchr(s, ' ') || strchr(s, '\t') || strchr(s, '\n')) return 0;
+    if (!strchr(s, '.')) return 0;
+    if (strlen(s) < 3) return 0;
+    return 1;
+}
+
+/* Read clipboard (platform-specific) and paste URL into the URL entry if valid and if
+   the entry is currently empty. This is safe to call at startup or on focus. */
+void paste_clipboard_url_if_valid(void) {
+    if (!g_gui.url_entry) return;
+    char *cur = uiEntryText(g_gui.url_entry);
+    int should_paste = 0;
+    if (!cur || cur[0] == '\0') should_paste = 1;
+    if (cur) uiFreeText(cur);
+    if (!should_paste) return;
+
+    /* Platform-specific clipboard retrieval */
+#ifdef _WIN32
+    if (!IsClipboardFormatAvailable(CF_UNICODETEXT) && !IsClipboardFormatAvailable(CF_TEXT)) return;
+    if (!OpenClipboard(NULL)) return;
+    char *utf8 = NULL;
+    HANDLE h = GetClipboardData(CF_UNICODETEXT);
+    if (h) {
+        wchar_t *wtext = (wchar_t *)GlobalLock(h);
+        if (wtext) {
+            int needed = WideCharToMultiByte(CP_UTF8, 0, wtext, -1, NULL, 0, NULL, NULL);
+            if (needed > 0) {
+                utf8 = (char *)malloc((size_t)needed);
+                if (utf8) WideCharToMultiByte(CP_UTF8, 0, wtext, -1, utf8, needed, NULL, NULL);
+            }
+            GlobalUnlock(h);
+        }
+    } else {
+        HANDLE h2 = GetClipboardData(CF_TEXT);
+        if (h2) {
+            char *ansi = (char *)GlobalLock(h2);
+            if (ansi) {
+                utf8 = _strdup(ansi);
+                GlobalUnlock(h2);
+            }
+        }
+    }
+    CloseClipboard();
+    if (!utf8) return;
+    char *s = utf8;
+    while (*s && isspace((unsigned char)*s)) s++;
+    if (is_valid_url(s)) uiEntrySetText(g_gui.url_entry, s);
+    free(utf8);
+#elif defined(__linux__) || defined(__unix__)
+    gchar *txt = gtk_clipboard_wait_for_text(gtk_clipboard_get(GDK_SELECTION_CLIPBOARD));
+    if (!txt) return;
+    char *s = txt;
+    while (*s && isspace((unsigned char)*s)) s++;
+    if (is_valid_url(s)) uiEntrySetText(g_gui.url_entry, s);
+    g_free(txt);
+#else
+    /* macOS or other platforms: not implemented */
+#endif
 }
 
 /* ------------------------------------------------------------------ */
@@ -342,6 +479,113 @@ static DownloadRow *find_row(int id) {
     return NULL;
 }
 
+static int find_row_index(int id) {
+    for (int i = 0; i < g_gui.row_count; i++) {
+        if (g_gui.rows[i].download_id == id) return i;
+    }
+    return -1;
+}
+
+/* ------------------------------------------------------------------ */
+/* Downloads table model handlers                                      */
+/* ------------------------------------------------------------------ */
+static int downloads_modelNumColumns(uiTableModelHandler *mh, uiTableModel *m) {
+    (void)mh; (void)m; return 7;
+}
+
+static uiTableValueType downloads_modelColumnType(uiTableModelHandler *mh, uiTableModel *m, int column) {
+    (void)mh; (void)m;
+    switch (column) {
+        case 0: return uiTableValueTypeInt;    /* checkbox */
+        case 1: return uiTableValueTypeString; /* Name */
+        case 2: return uiTableValueTypeString; /* Size */
+        case 3: return uiTableValueTypeString; /* Status */
+        case 4: return uiTableValueTypeString; /* Started */
+        case 5: return uiTableValueTypeString; /* Speed */
+        case 6: return uiTableValueTypeInt;    /* Progress */
+    }
+    return uiTableValueTypeString;
+}
+
+static int downloads_modelNumRows(uiTableModelHandler *mh, uiTableModel *m) {
+    (void)mh; (void)m;
+    return g_gui.row_count;
+}
+
+static uiTableValue *downloads_modelCellValue(uiTableModelHandler *mh, uiTableModel *m, int row, int column) {
+    (void)mh; (void)m;
+    if (row < 0 || row >= g_gui.row_count) return NULL;
+    DownloadRow *r = &g_gui.rows[row];
+    char buf[128];
+    switch (column) {
+        case 0: return uiNewTableValueInt(r->selected);
+        case 1: return uiNewTableValueString(r->filename[0] ? r->filename : "");
+        case 2: {
+            /* Show downloaded / total if available */
+            if (r->total_bytes > 0) {
+                double dl = (double)r->downloaded_bytes;
+                double tot = (double)r->total_bytes;
+                if (tot >= (1LL<<30)) {
+                    snprintf(buf, sizeof(buf), "%.2f GB / %.2f GB", dl/1024.0/1024.0/1024.0, tot/1024.0/1024.0/1024.0);
+                } else if (tot >= (1LL<<20)) {
+                    snprintf(buf, sizeof(buf), "%.2f MB / %.2f MB", dl/1024.0/1024.0, tot/1024.0/1024.0);
+                } else {
+                    snprintf(buf, sizeof(buf), "%lld B / %lld B", (long long)r->downloaded_bytes, (long long)r->total_bytes);
+                }
+            } else if (r->downloaded_bytes > 0) {
+                /* Only downloaded known */
+                if (r->downloaded_bytes >= (1LL<<20))
+                    snprintf(buf, sizeof(buf), "%.2f MB", r->downloaded_bytes/1024.0/1024.0);
+                else
+                    snprintf(buf, sizeof(buf), "%lld B", (long long)r->downloaded_bytes);
+            } else {
+                snprintf(buf, sizeof(buf), "-");
+            }
+            return uiNewTableValueString(buf);
+        }
+        case 3: {
+            /* Status string */
+            const char *st = "?";
+            switch (r->state) {
+                case DOWNLOAD_STATE_QUEUED: st = "Queued"; break;
+                case DOWNLOAD_STATE_RUNNING: st = "Running"; break;
+                case DOWNLOAD_STATE_PAUSED: st = "Paused"; break;
+                case DOWNLOAD_STATE_COMPLETED: st = "Completed"; break;
+                case DOWNLOAD_STATE_FAILED: st = "Failed"; break;
+                default: st = "Unknown"; break;
+            }
+            return uiNewTableValueString(st);
+        }
+        case 4: {
+            if (r->start_time) {
+                struct tm *t = localtime(&r->start_time);
+                snprintf(buf, sizeof(buf), "%02d:%02d:%02d", t->tm_hour, t->tm_min, t->tm_sec);
+            } else snprintf(buf, sizeof(buf), "-");
+            return uiNewTableValueString(buf);
+        }
+        case 5: {
+            if (r->speed_bps > 0.0) {
+                if (r->speed_bps >= 1024.0*1024.0) snprintf(buf, sizeof(buf), "%.2f MB/s", r->speed_bps/1024.0/1024.0);
+                else if (r->speed_bps >= 1024.0) snprintf(buf, sizeof(buf), "%.2f KB/s", r->speed_bps/1024.0);
+                else snprintf(buf, sizeof(buf), "%.0f B/s", r->speed_bps);
+            } else snprintf(buf, sizeof(buf), "-");
+            return uiNewTableValueString(buf);
+        }
+        case 6: return uiNewTableValueInt(r->progress_pct);
+    }
+    return NULL;
+}
+
+static void downloads_modelSetCellValue(uiTableModelHandler *mh, uiTableModel *m, int row, int column, const uiTableValue *val) {
+    (void)mh; (void)m;
+    if (row < 0 || row >= g_gui.row_count) return;
+    DownloadRow *r = &g_gui.rows[row];
+    if (column == 0) {
+        r->selected = uiTableValueInt(val);
+        if (g_downloads_model) uiTableModelRowChanged(g_downloads_model, row);
+    }
+}
+
 /* Select latest active download for pause/resume/remove actions. */
 static int pick_target_download_id(void) {
     if (g_gui.active_download_id > 0) {
@@ -489,24 +733,23 @@ static void toolbar_icons_shutdown(void) {
 static DownloadRow *add_row(int id, const char *filename) {
     if (g_gui.row_count >= MAX_DOWNLOAD_ROWS) return NULL;
 
-    DownloadRow *r = &g_gui.rows[g_gui.row_count++];
+    DownloadRow *r = &g_gui.rows[g_gui.row_count];
     r->download_id = id;
-
-    /* Row: [filename label (stretchy)] [status label] [progress bar] */
-    r->row_box = uiNewHorizontalBox();
-    uiBoxSetPadded(r->row_box, 1);
-
-    r->label_name = uiNewLabel(filename[0] ? filename : "...");
-    uiBoxAppend(r->row_box, uiControl(r->label_name), 1 /* stretchy */);
-
-    r->label_status = uiNewLabel("Queued");
-    uiBoxAppend(r->row_box, uiControl(r->label_status), 0);
-
-    r->progress_bar = uiNewProgressBar();
-    uiProgressBarSetValue(r->progress_bar, 0);
-    uiBoxAppend(r->row_box, uiControl(r->progress_bar), 0);
-
-    uiBoxAppend(g_gui.downloads_box, uiControl(r->row_box), 0);
+    r->selected = 0;
+    strncpy(r->filename, filename ? filename : "", sizeof(r->filename)-1);
+    r->filename[sizeof(r->filename)-1] = '\0';
+    r->state = DOWNLOAD_STATE_QUEUED;
+    r->progress_pct = 0;
+    r->speed_bps = 0.0;
+    r->total_bytes = 0;
+    r->downloaded_bytes = 0;
+    r->start_time = 0;
+    int idx = g_gui.row_count;
+    g_gui.row_count++;
+    if (g_downloads_model)
+        uiTableModelRowInserted(g_downloads_model, idx);
+    /* Adjust column widths to fit content */
+    autosize_downloads_table();
     return r;
 }
 
@@ -538,13 +781,23 @@ static void on_add_clicked(uiButton *sender, void *data) {
 
 static void on_pause_clicked(uiButton *sender, void *data) {
     (void)sender; (void)data;
-    int id = pick_target_download_id();
-    if (id <= 0) {
-        gui_log(LOG_ERROR, "Pause failed: no active download");
-        return;
+    int acted = 0;
+    for (int i = 0; i < g_gui.row_count; i++) {
+        DownloadRow *r = &g_gui.rows[i];
+        if (r->selected) {
+            if (r->download_id > 0) {
+                download_manager_pause(r->download_id);
+                acted++;
+            }
+            r->selected = 0; /* clear selection */
+        }
     }
-    download_manager_pause(id);
-    gui_log(LOG_INFO, "Paused selected download");
+        if (acted > 0) {
+        gui_log(LOG_INFO, "Paused checked downloads");
+        if (g_downloads_model) for (int j = 0; j < g_gui.row_count; j++) uiTableModelRowChanged(g_downloads_model, j);
+    } else {
+        gui_log(LOG_ERROR, "Pause failed: no checked downloads");
+    }
 }
 
 static void on_resume_clicked(uiButton *sender, void *data) {
@@ -560,13 +813,25 @@ static void on_resume_clicked(uiButton *sender, void *data) {
 
 static void on_remove_clicked(uiButton *sender, void *data) {
     (void)sender; (void)data;
-    int id = pick_target_download_id();
-    if (id <= 0) {
-        gui_log(LOG_ERROR, "Remove failed: no download selected");
-        return;
+    int acted = 0;
+    for (int i = 0; i < g_gui.row_count; i++) {
+        DownloadRow *r = &g_gui.rows[i];
+        if (r->selected) {
+            if (r->download_id > 0) {
+                /* attempt to pause before removing to be safe */
+                download_manager_pause(r->download_id);
+                download_manager_remove(r->download_id);
+                acted++;
+            }
+            r->selected = 0;
+        }
     }
-    download_manager_remove(id);
-    gui_log(LOG_INFO, "Removed selected download from list");
+    if (acted > 0) {
+        gui_log(LOG_INFO, "Removed checked downloads");
+        if (g_downloads_model) for (int j = 0; j < g_gui.row_count; j++) uiTableModelRowChanged(g_downloads_model, j);
+    } else {
+        gui_log(LOG_ERROR, "Remove failed: no checked downloads");
+    }
 }
 
 static void on_plugin_clicked(uiButton *sender, void *data) {
@@ -696,48 +961,34 @@ void gui_on_progress(const ProgressUpdate *update, void *user_data) {
 
     DownloadRow *r = find_row(update->status.id);
     if (!r) {
-        /* New entry — create a row for it */
         r = add_row(update->status.id, update->status.filename);
         if (!r) return;
     }
 
-    /* Update filename label if we now know it */
-    if (update->status.filename[0]) {
-        uiLabelSetText(r->label_name, update->status.filename);
-    }
-
-    /* Progress bar (0–100) */
+    /* Update stored data fields */
+    if (update->status.filename[0]) strncpy(r->filename, update->status.filename, sizeof(r->filename)-1);
+    r->filename[sizeof(r->filename)-1] = '\0';
+    DownloadState prev_state = r->state;
+    r->state = update->status.state;
     int pct = (int)update->status.progress;
-    if (pct < 0)   pct = 0;
-    if (pct > 100) pct = 100;
-    uiProgressBarSetValue(r->progress_bar, pct);
-
-    /* Status label */
-    switch (update->status.state) {
-        case DOWNLOAD_STATE_QUEUED:
-            uiLabelSetText(r->label_status, "Queued");
-            break;
-        case DOWNLOAD_STATE_RUNNING: {
-            char buf[64];
-            snprintf(buf, sizeof(buf), "%d%%", pct);
-            uiLabelSetText(r->label_status, buf);
-            break;
+    if (pct < 0) pct = 0; if (pct > 100) pct = 100;
+    r->progress_pct = pct;
+    r->speed_bps = update->status.speed_bps;
+    r->total_bytes = update->status.total_bytes;
+    r->downloaded_bytes = update->status.downloaded_bytes;
+    /* Ensure start_time is set when download transitions to RUNNING */
+    if (r->start_time == 0) {
+        if (r->state == DOWNLOAD_STATE_RUNNING) {
+            r->start_time = update->status.start_time ? update->status.start_time : time(NULL);
         }
-        case DOWNLOAD_STATE_PAUSED:
-            uiLabelSetText(r->label_status, "Paused");
-            break;
-        case DOWNLOAD_STATE_COMPLETED:
-            uiLabelSetText(r->label_status, "Done");
-            uiProgressBarSetValue(r->progress_bar, 100);
-            break;
-        case DOWNLOAD_STATE_FAILED: {
-            char buf[288];
-            snprintf(buf, sizeof(buf), "Failed: %s", update->error_msg);
-            uiLabelSetText(r->label_status, buf);
-            uiProgressBarSetValue(r->progress_bar, 0); /* indeterminate */
-            break;
-        }
+    } else {
+        /* keep existing start_time */
     }
+
+    int idx = find_row_index(update->status.id);
+    if (idx >= 0 && g_downloads_model) uiTableModelRowChanged(g_downloads_model, idx);
+    /* Recompute column widths when content changes */
+    autosize_downloads_table();
 }
 
 /* ------------------------------------------------------------------ */
@@ -843,24 +1094,44 @@ void gui_create(void) {
     uiBoxSetPadded(input_row, 1);
 
     g_gui.url_entry = uiNewEntry();
-    uiEntrySetText(g_gui.url_entry, "https://");
+    uiEntrySetText(g_gui.url_entry, "");
     uiBoxAppend(input_row, uiControl(g_gui.url_entry), 1 /* stretchy */);
 
     uiBoxAppend(root, uiControl(input_row), 0);
 
     /* ---- Downloads list ---- */
-    g_gui.downloads_box = uiNewVerticalBox();
-    uiBoxSetPadded(g_gui.downloads_box, 1);
+        /* Downloads table (replaces vertical rows) */
+        uiGroup *downloads_group = uiNewGroup("Downloads");
+        uiGroupSetMargined(downloads_group, 1);
 
-    uiGroup *downloads_group = uiNewGroup("Downloads");
-    uiGroupSetMargined(downloads_group, 1);
-    uiGroupSetChild(downloads_group, uiControl(g_gui.downloads_box));
+        /* Table model handler */
+        memset(&g_downloads_mh, 0, sizeof(g_downloads_mh));
+        g_downloads_mh.NumColumns = downloads_modelNumColumns;
+        g_downloads_mh.ColumnType = downloads_modelColumnType;
+        g_downloads_mh.NumRows = downloads_modelNumRows;
+        g_downloads_mh.CellValue = downloads_modelCellValue;
+        g_downloads_mh.SetCellValue = downloads_modelSetCellValue;
 
-    /* Wrap in a scrollable area via a non-wrapping multiline entry is not
-       ideal, but libui-ng lacks a ScrollView for arbitrary controls.
-       Instead we place at most MAX_DOWNLOAD_ROWS rows and rely on the
-       window being resizable. */
-    uiBoxAppend(root, uiControl(downloads_group), 0);
+        /* Create the table model and table */
+        g_downloads_model = uiNewTableModel(&g_downloads_mh);
+        uiTableParams tp;
+        memset(&tp, 0, sizeof(tp));
+        tp.Model = g_downloads_model;
+        tp.RowBackgroundColorModelColumn = -1;
+        uiTable *t = uiNewTable(&tp);
+        g_downloads_table = t;
+
+        /* Append columns in new order: id, name, size, status, started, speed, progress */
+        uiTableAppendCheckboxColumn(t, "ID", 0, uiTableModelColumnAlwaysEditable);
+        uiTableAppendTextColumn(t, "Name", 1, uiTableModelColumnNeverEditable, NULL);
+        uiTableAppendTextColumn(t, "Size", 2, uiTableModelColumnNeverEditable, NULL);
+        uiTableAppendTextColumn(t, "Status", 3, uiTableModelColumnNeverEditable, NULL);
+        uiTableAppendTextColumn(t, "Started", 4, uiTableModelColumnNeverEditable, NULL);
+        uiTableAppendTextColumn(t, "Speed", 5, uiTableModelColumnNeverEditable, NULL);
+        uiTableAppendProgressBarColumn(t, "Progress", 6);
+
+        uiGroupSetChild(downloads_group, uiControl(t));
+        uiBoxAppend(root, uiControl(downloads_group), 1);
 
     uiBoxAppend(root, uiControl(uiNewHorizontalSeparator()), 0);
 
@@ -875,6 +1146,12 @@ void gui_create(void) {
 
     uiWindowSetChild(g_gui.window, uiControl(root));
     uiControlShow(uiControl(g_gui.window));
+    /* Apply percentage column widths initially and on resize */
+    uiWindowOnPositionChanged(g_gui.window, on_main_window_pos_changed, NULL);
+    autosize_downloads_table();
+    /* Apply clipboard check now (on creation) and also when window is focused */
+    paste_clipboard_url_if_valid();
+    uiWindowOnFocusChanged(g_gui.window, on_main_window_focus_changed, NULL);
 
     /* Register progress callback with the download manager */
     download_manager_set_progress_cb(gui_on_progress, NULL);

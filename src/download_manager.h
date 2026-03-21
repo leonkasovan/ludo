@@ -2,6 +2,7 @@
 #define LUDO_DOWNLOAD_MANAGER_H
 
 #include <stdint.h>
+#include <stdio.h>
 #include "thread_queue.h"
 
 /* ------------------------------------------------------------------ */
@@ -43,6 +44,8 @@ typedef struct Download {
     DownloadStatus   status;
     char             url[4096];
     char             output_dir[1024];
+    void            *curl_handle;    /* opaque pointer to active CURL handle, if any */
+    FILE            *fp;             /* active file handle for writing, if any */
     struct Download *next;
 } Download;
 

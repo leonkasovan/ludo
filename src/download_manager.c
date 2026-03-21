@@ -94,6 +94,7 @@ typedef struct {
     int   *cancel_flag;
     int64_t resume_offset;  /* bytes already on disk before CURLOPT_RESUME_FROM_LARGE */
     time_t  last_ui_tick;   /* wall-clock second of last GUI dispatch */
+    int64_t last_abs_now;   /* last absolute downloaded bytes seen (for speed calc) */
 } WriteCtx;
 
 /* curl debug callback — routes libcurl verbose output to dm_log
@@ -119,8 +120,13 @@ static int curl_debug_cb(CURL *handle, curl_infotype type,
 typedef struct {
     char filename[512];   /* set if Content-Disposition provides one */
     int  has_filename;
+    int  download_id;     /* filled by perform_download so header_cb can dispatch */
+    int64_t content_length; /* parsed or obtained from HEAD */
 } HeaderCtx;
 
+/* Forward declare gui_dispatch_update so header_cb may call it before its
+   static definition later in this file. */
+static void gui_dispatch_update(const ProgressUpdate *update);
 /* curl header callback — extracts filename from Content-Disposition */
 static size_t header_cb(char *buf, size_t size, size_t nitems, void *userdata)
 {
@@ -172,8 +178,17 @@ static size_t header_cb(char *buf, size_t size, size_t nitems, void *userdata)
                         if (len >= sizeof(hctx->filename)) len = sizeof(hctx->filename) - 1;
                         memcpy(hctx->filename, fn, len);
                         hctx->filename[len] = '\0';
-                        hctx->has_filename  = 1;
-                        dm_log("[header_cb] parsed filename (quoted): %s", hctx->filename);
+                        if (!hctx->has_filename) {
+                            hctx->has_filename  = 1;
+                            dm_log("[header_cb] parsed filename (quoted): %s", hctx->filename);
+                            /* Notify GUI immediately so Name column updates without waiting */
+                            ProgressUpdate upd = {0};
+                            upd.status.id = hctx->download_id;
+                            strncpy(upd.status.filename, hctx->filename, sizeof(upd.status.filename) - 1);
+                            upd.status.filename[sizeof(upd.status.filename) - 1] = '\0';
+                            upd.status.state = DOWNLOAD_STATE_RUNNING;
+                            gui_dispatch_update(&upd);
+                        }
                     }
                 } else {
                     /* unquoted value — ends at whitespace or ; */
@@ -182,8 +197,17 @@ static size_t header_cb(char *buf, size_t size, size_t nitems, void *userdata)
                         if (len >= sizeof(hctx->filename)) len = sizeof(hctx->filename) - 1;
                         memcpy(hctx->filename, fn, len);
                         hctx->filename[len] = '\0';
-                        hctx->has_filename  = 1;
-                        dm_log("[header_cb] parsed filename (unquoted): %s", hctx->filename);
+                        if (!hctx->has_filename) {
+                            hctx->has_filename  = 1;
+                            dm_log("[header_cb] parsed filename (unquoted): %s", hctx->filename);
+                            /* Notify GUI immediately so Name column updates without waiting */
+                            ProgressUpdate upd = {0};
+                            upd.status.id = hctx->download_id;
+                            strncpy(upd.status.filename, hctx->filename, sizeof(upd.status.filename) - 1);
+                            upd.status.filename[sizeof(upd.status.filename) - 1] = '\0';
+                            upd.status.state = DOWNLOAD_STATE_RUNNING;
+                            gui_dispatch_update(&upd);
+                        }
                     }
                 }
             }
@@ -271,12 +295,10 @@ static int xfer_info_cb(void *clientp, curl_off_t dltotal, curl_off_t dlnow,
     /* Check cancellation */
     if (*ctx->cancel_flag) return 1; /* aborts transfer */
 
-    /* Pause if requested */
-    if (*ctx->pause_flag) return CURL_PROGRESSFUNC_CONTINUE;
-
     /* Throttle GUI updates to once per second to avoid flooding uiQueueMain */
     time_t now = time(NULL);
     if (now == ctx->last_ui_tick) return 0;
+    time_t prev_tick = ctx->last_ui_tick;
     ctx->last_ui_tick = now;
 
     ludo_mutex_lock(&g_mgr.list_mutex);
@@ -285,6 +307,11 @@ static int xfer_info_cb(void *clientp, curl_off_t dltotal, curl_off_t dlnow,
         if (it->status.id == ctx->download_id) { d = it; break; }
     }
     if (d) {
+        /* Honor requested pause set via download_manager_pause() */
+        if (d->status.state == DOWNLOAD_STATE_PAUSED) {
+            ludo_mutex_unlock(&g_mgr.list_mutex);
+            return CURL_PROGRESSFUNC_CONTINUE;
+        }
         /* dlnow/dltotal are relative to this request (post-resume);
            add the already-downloaded offset to get absolute counts. */
         int64_t abs_now   = (int64_t)dlnow   + ctx->resume_offset;
@@ -296,15 +323,33 @@ static int xfer_info_cb(void *clientp, curl_off_t dltotal, curl_off_t dlnow,
         d->status.progress = (d->status.total_bytes > 0)
                         ? (100.0 * (double)abs_now / (double)d->status.total_bytes)
                         : 0.0;
+        /* Only mark RUNNING if not paused (checked above) */
         d->status.state = DOWNLOAD_STATE_RUNNING;
+
+        /* Compute instantaneous speed (bytes/sec) using previous sample */
+        double speed = 0.0;
+        if (ctx->last_abs_now > 0 && prev_tick > 0) {
+            time_t dt = now - prev_tick;
+            if (dt > 0) {
+                int64_t delta = abs_now - ctx->last_abs_now;
+                if (delta < 0) delta = 0;
+                speed = (double)delta / (double)dt;
+            }
+        }
+        d->status.speed_bps = speed;
+        ctx->last_abs_now = abs_now;
     }
     ludo_mutex_unlock(&g_mgr.list_mutex);
 
     if (d) {
         ProgressUpdate upd = {0};
-        upd.status.id       = ctx->download_id;
-        upd.status.state    = DOWNLOAD_STATE_RUNNING;
-        upd.status.progress = d->status.progress;
+        upd.status.id            = ctx->download_id;
+        upd.status.state         = DOWNLOAD_STATE_RUNNING;
+        upd.status.progress      = d->status.progress;
+        upd.status.downloaded_bytes = d->status.downloaded_bytes;
+        upd.status.total_bytes   = d->status.total_bytes;
+        upd.status.speed_bps     = d->status.speed_bps;
+        upd.status.start_time    = d->status.start_time;
         gui_dispatch_update(&upd);
     }
 
@@ -327,6 +372,7 @@ static size_t write_cb(char *ptr, size_t size, size_t nmemb, void *userdata) {
         dm_log("[write_cb] id=%d fwrite partial: expected %zu, wrote %zu (errno=%d)",
                ctx->download_id, nmemb, written, errno);
     }
+    dm_log("[write_cb] id=%d wrote %zu bytes", ctx->download_id, (size_t)(written * size));
     return written;
 }
 
@@ -335,22 +381,73 @@ static void perform_download(Download *d) {
     dm_log("[perform_download] id=%d url=%s", d->status.id, d->url);
     dm_log("[perform_download] output_dir=%s  filename=%s", d->output_dir, d->status.filename);
 
-    /* ---- Build output path ---- */
+    /* ---- Preflight HEAD request to obtain filename and content-length ---- */
     const char *sep = "";
     size_t dlen = strlen(d->output_dir);
     if (dlen > 0) {
         char last = d->output_dir[dlen - 1];
         if (last != '/' && last != '\\') sep = "/";
     }
+
+    HeaderCtx hctx;
+    memset(&hctx, 0, sizeof(hctx));
+    hctx.download_id = d->status.id;
+
+    CURL *head = curl_easy_init();
+    if (head) {
+        curl_easy_setopt(head, CURLOPT_URL, d->url);
+        curl_easy_setopt(head, CURLOPT_NOBODY, 1L);
+        curl_easy_setopt(head, CURLOPT_HEADERFUNCTION, header_cb);
+        curl_easy_setopt(head, CURLOPT_HEADERDATA, &hctx);
+        curl_easy_setopt(head, CURLOPT_FOLLOWLOCATION, 1L);
+        curl_easy_setopt(head, CURLOPT_USERAGENT,
+                         "Mozilla/5.0 (Windows NT 10.0; Win64; x64)");
+        curl_easy_perform(head);
+        curl_off_t cl = 0;
+        if (curl_easy_getinfo(head, CURLINFO_CONTENT_LENGTH_DOWNLOAD_T, &cl) == CURLE_OK) {
+            if (cl > 0) hctx.content_length = (int64_t)cl;
+        }
+        /* If header parsing provided a filename, update the download record */
+        if (hctx.has_filename) {
+            ludo_mutex_lock(&g_mgr.list_mutex);
+            strncpy(d->status.filename, hctx.filename, sizeof(d->status.filename)-1);
+            d->status.filename[sizeof(d->status.filename)-1] = '\0';
+            ludo_mutex_unlock(&g_mgr.list_mutex);
+        }
+        curl_easy_cleanup(head);
+    }
+
+    /* Build final output path (may have been updated from headers) */
     char path[2048];
     snprintf(path, sizeof(path), "%s%s%s", d->output_dir, sep, d->status.filename);
     dm_log("[perform_download] id=%d output path=%s", d->status.id, path);
 
-    /* ---- Resume support: check if partial file exists ---- */
+    /* Decide whether to skip, resume, or start fresh based on existing file */
     curl_off_t resume_from = 0;
     {
         struct stat st;
         if (stat(path, &st) == 0 && st.st_size > 0) {
+            if (hctx.content_length > 0 && (int64_t)st.st_size == hctx.content_length) {
+                /* File already complete — mark completed and notify GUI */
+                ludo_mutex_lock(&g_mgr.list_mutex);
+                d->status.downloaded_bytes = (int64_t)st.st_size;
+                d->status.total_bytes = (int64_t)st.st_size;
+                d->status.state = DOWNLOAD_STATE_COMPLETED;
+                d->status.progress = 100.0;
+                ludo_mutex_unlock(&g_mgr.list_mutex);
+
+                ProgressUpdate upd = {0};
+                upd.status.id = d->status.id;
+                upd.status.state = DOWNLOAD_STATE_COMPLETED;
+                upd.status.progress = 100.0;
+                upd.status.downloaded_bytes = d->status.downloaded_bytes;
+                upd.status.total_bytes = d->status.total_bytes;
+                strncpy(upd.status.filename, d->status.filename, sizeof(upd.status.filename)-1);
+                gui_dispatch_update(&upd);
+                dm_log("[perform_download] id=%d existing file matches content-length; skipping download", d->status.id);
+                return;
+            }
+            /* Otherwise attempt resume from existing size */
             resume_from = (curl_off_t)st.st_size;
             dm_log("[perform_download] id=%d partial file found, resume_from=%lld",
                    d->status.id, (long long)resume_from);
@@ -380,9 +477,11 @@ static void perform_download(Download *d) {
     int pause_flag  = 0;
     int cancel_flag = 0;
 
-    WriteCtx ctx = { fp, d->status.id, &pause_flag, &cancel_flag, (int64_t)resume_from, 0 };
-    HeaderCtx hctx;
-    memset(&hctx, 0, sizeof(hctx));
+    WriteCtx ctx = { fp, d->status.id, &pause_flag, &cancel_flag, (int64_t)resume_from, 0, 0 };
+    HeaderCtx hctx_local;
+    /* Seed main-transfer header context with any info learned from the HEAD preflight */
+    memcpy(&hctx_local, &hctx, sizeof(hctx_local));
+    hctx_local.download_id = d->status.id;
 
     CURL *curl = curl_easy_init();
     if (!curl) {
@@ -390,6 +489,11 @@ static void perform_download(Download *d) {
         fclose(fp);
         return;
     }
+    /* Publish handle so other threads can pause/resume via curl_easy_pause */
+    ludo_mutex_lock(&g_mgr.list_mutex);
+    d->curl_handle = (void *)curl;
+    d->fp = fp; /* also publish file handle for pause logic */
+    ludo_mutex_unlock(&g_mgr.list_mutex);
     dm_log("[perform_download] id=%d curl handle ok, setting options", d->status.id);
 
     curl_easy_setopt(curl, CURLOPT_URL,               d->url);
@@ -404,7 +508,7 @@ static void perform_download(Download *d) {
     curl_easy_setopt(curl, CURLOPT_USERAGENT,
                      "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/146.0.0.0 Safari/537.36 Edg/146.0.0.0");
     curl_easy_setopt(curl, CURLOPT_HEADERFUNCTION,    header_cb);
-    curl_easy_setopt(curl, CURLOPT_HEADERDATA,        &hctx);
+    curl_easy_setopt(curl, CURLOPT_HEADERDATA,        &hctx_local);
     /* Route libcurl verbose output to dm_log instead of stderr
        (stderr is NULL in a WIN32/no-console app and would crash) */
     curl_easy_setopt(curl, CURLOPT_VERBOSE,           1L);
@@ -455,6 +559,31 @@ static void perform_download(Download *d) {
             int rv = rename(path, new_path);
             dm_log("[perform_download] id=%d rename() returned %d (errno=%d)",
                    d->status.id, rv, errno);
+            if (rv != 0) {
+                if (errno == EEXIST) {
+                    /* Target exists — compare sizes. If identical, remove the
+                       temp file we wrote and treat download as finished. */
+                    struct stat st_new, st_old;
+                    if (stat(new_path, &st_new) == 0 && stat(path, &st_old) == 0) {
+                        if (st_new.st_size == st_old.st_size) {
+                            dm_log("[perform_download] id=%d target exists with same size; removing temp %s",
+                                   d->status.id, path);
+                            if (remove(path) == 0) {
+                                dm_log("[perform_download] id=%d removed temp file %s", d->status.id, path);
+                            } else {
+                                dm_log("[perform_download] id=%d failed to remove temp %s (errno=%d)",
+                                       d->status.id, path, errno);
+                            }
+                        } else {
+                            dm_log("[perform_download] id=%d target exists with different size; keeping temp %s",
+                                   d->status.id, path);
+                        }
+                    } else {
+                        dm_log("[perform_download] id=%d stat failed when handling existing target (errno=%d)",
+                               d->status.id, errno);
+                    }
+                }
+            }
         } else {
             dm_log("[perform_download] id=%d paths identical, no rename needed", d->status.id);
         }
@@ -483,7 +612,29 @@ static void perform_download(Download *d) {
         fp = NULL;
     }
     curl_easy_cleanup(curl);
+    ludo_mutex_lock(&g_mgr.list_mutex);
+    d->curl_handle = NULL;
+    ludo_mutex_unlock(&g_mgr.list_mutex);
     dm_log("[perform_download] id=%d curl cleaned up", d->status.id);
+
+    /* If finished successfully, probe the final file size on disk and
+       ensure downloaded_bytes/total_bytes reflect the actual size so the
+       GUI shows "size/size" when completed. */
+    if (res == CURLE_OK) {
+        char final_path[2048];
+        snprintf(final_path, sizeof(final_path), "%s%s%s",
+                 d->output_dir, sep, d->status.filename);
+        struct stat st;
+        if (stat(final_path, &st) == 0) {
+            ludo_mutex_lock(&g_mgr.list_mutex);
+            d->status.downloaded_bytes = (int64_t)st.st_size;
+            d->status.total_bytes = (int64_t)st.st_size;
+            ludo_mutex_unlock(&g_mgr.list_mutex);
+            dm_log("[perform_download] id=%d final file size = %lld", d->status.id, (long long)st.st_size);
+        } else {
+            dm_log("[perform_download] id=%d stat failed for %s (errno=%d)", d->status.id, final_path, errno);
+        }
+    }
 
     /* Record finish time and final state */
     ludo_mutex_lock(&g_mgr.list_mutex);
@@ -508,6 +659,10 @@ static void perform_download(Download *d) {
     upd.status.progress   = (final_state == DOWNLOAD_STATE_COMPLETED) ? 100.0 : d->status.progress;
     upd.status.start_time = start_ts;
     upd.status.end_time   = finish_ts;
+    /* Preserve totals/speeds so GUI can show Size/Speed after completion */
+    upd.status.downloaded_bytes = d->status.downloaded_bytes;
+    upd.status.total_bytes = d->status.total_bytes;
+    upd.status.speed_bps = d->status.speed_bps;
     if (res != CURLE_OK) {
         strncpy(upd.error_msg, curl_easy_strerror(res), sizeof(upd.error_msg) - 1);
     }
@@ -759,6 +914,17 @@ void download_manager_pause(int id) {
     for (Download *d = g_mgr.list; d; d = d->next) {
         if (d->status.id == id && d->status.state == DOWNLOAD_STATE_RUNNING) {
             d->status.state = DOWNLOAD_STATE_PAUSED;
+            /* If there's an active CURL handle, pause it immediately */
+            if (d->curl_handle) {
+                CURL *h = (CURL *)d->curl_handle;
+                dm_log("[download_manager_pause] id=%d calling curl_easy_pause", d->status.id);
+                curl_easy_pause(h, CURLPAUSE_ALL);
+            }
+            if (d->fp) {
+                dm_log("[download_manager_pause] id=%d closing file due to pause", d->status.id);
+                fclose(d->fp);
+                d->fp = NULL;
+            }
             break;
         }
     }
@@ -769,8 +935,22 @@ void download_manager_resume(int id) {
     ludo_mutex_lock(&g_mgr.list_mutex);
     for (Download *d = g_mgr.list; d; d = d->next) {
         if (d->status.id == id && d->status.state == DOWNLOAD_STATE_PAUSED) {
-            d->status.state = DOWNLOAD_STATE_QUEUED;
-            task_queue_push(&g_mgr.queue, d->url);
+            /* If transfer is active and handle exists, unpause directly, reopen file */
+            if (d->curl_handle) {
+                CURL *h = (CURL *)d->curl_handle;
+                dm_log("[download_manager_resume] id=%d calling curl_easy_pause(CONT)", d->status.id);
+                curl_easy_pause(h, CURLPAUSE_CONT);
+                if (!d->fp && d->output_path[0] != '\0') {
+                    d->fp = fopen(d->output_path, "ab");
+                    if (!d->fp) {
+                        dm_log("[download_manager_resume] id=%d failed to reopen file: %s", d->status.id, d->output_path);
+                    }
+                }
+                d->status.state = DOWNLOAD_STATE_RUNNING;
+            } else {
+                d->status.state = DOWNLOAD_STATE_QUEUED;
+                task_queue_push(&g_mgr.queue, d->url);
+            }
             break;
         }
     }
