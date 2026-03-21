@@ -1,5 +1,11 @@
 #include "gui.h"
 #include "lua_engine.h"
+#include "http_module.h"
+#include "ludo_module.h"
+#include "../third_party/libuilua/libuilua.h"
+#include "../third_party/lua-5.2.4/src/lua.h"
+#include "../third_party/lua-5.2.4/src/lauxlib.h"
+#include "../third_party/lua-5.2.4/src/lualib.h"
 #include "download_manager.h"
 #include "thread_queue.h"
 
@@ -29,6 +35,8 @@
 #define ICON_REMOVE   "remove.png"
 #define ICON_PLUGIN   "plugin.png"
 #define ICON_SETTING  "setting.png"
+#define ICON_HTTP     "http.png"
+#define ICON_LUA      "lua.png"
 #define ICON_ABOUT    "about.png"
 
 #define TOOLBAR_BUTTON_SIZE 40
@@ -45,6 +53,21 @@ typedef struct {
     uiProgressBar  *progress_bar;
 } DownloadRow;
 
+/* Context structs for test windows (file scope so callbacks may be static) */
+typedef struct HttpTestCtx {
+    uiEntry *url_entry;
+    uiMultilineEntry *header_entry;
+    uiMultilineEntry *header_resp_entry;
+    uiMultilineEntry *output_entry;
+    uiWindow *win;
+} HttpTestCtx;
+
+typedef struct LuaTestCtx {
+    uiMultilineEntry *script_entry;
+    uiMultilineEntry *output_entry;
+    uiWindow *win;
+} LuaTestCtx;
+
 /* ------------------------------------------------------------------ */
 /* GUI state                                                            */
 /* ------------------------------------------------------------------ */
@@ -58,6 +81,8 @@ static struct {
     uiButton        *tb_remove;
     uiButton        *tb_plugin;
     uiButton        *tb_setting;
+    uiButton        *tb_http;
+    uiButton        *tb_lua;
     uiButton        *tb_about;
     uiBox           *downloads_box; /* vbox; one row per download       */
     uiMultilineEntry *log_view;
@@ -136,7 +161,174 @@ void gui_log(LogLevel level, const char *msg) {
     pkt->level = level;
     strncpy(pkt->msg, msg, sizeof(pkt->msg) - 1);
     pkt->msg[sizeof(pkt->msg) - 1] = '\0';
+    // Also log to stderr for crash diagnosis
+    fprintf(stderr, "[gui_log][%d] %s\n", (int)level, msg);
+    fflush(stderr);
     uiQueueMain(log_on_main, pkt);
+}
+
+/* Static callbacks for test windows (must be file-level, not nested) */
+static void http_test_on_send(uiButton *b, void *ud) {
+    (void)b;
+    HttpTestCtx *ctx = (HttpTestCtx *)ud;
+    if (!ctx) return;
+    const char *url = uiEntryText(ctx->url_entry);
+    const char *headers = uiMultilineEntryText(ctx->header_entry);
+
+    lua_State *L = luaL_newstate();
+    if (!L) {
+        gui_log(LOG_ERROR, "[HTTP DEBUG] luaL_newstate failed");
+        if (url) uiFreeText((char*)url);
+        if (headers) uiFreeText((char*)headers);
+        return;
+    }
+    luaL_openlibs(L);
+    http_module_register(L);
+
+    lua_getglobal(L, "http");
+    lua_getfield(L, -1, "get");
+    lua_pushstring(L, url ? url : "");
+    lua_newtable(L); /* options */
+    if (headers && headers[0]) {
+        lua_newtable(L);
+        char *lines = strdup(headers);
+        char *saveptr = NULL;
+        char *line = strtok_r(lines, "\n", &saveptr);
+        while (line) {
+            char *colon = strchr(line, ':');
+            if (colon) {
+                *colon = '\0';
+                const char *k = line;
+                const char *v = colon + 1;
+                while (*v == ' ') v++;
+                lua_pushstring(L, k);
+                lua_pushstring(L, v);
+                lua_settable(L, -3);
+            }
+            line = strtok_r(NULL, "\n", &saveptr);
+        }
+        free(lines);
+        lua_setfield(L, -2, "headers");
+    }
+
+    int res = lua_pcall(L, 2, 3, 0);
+    if (res != LUA_OK) {
+        const char *err = lua_tostring(L, -1);
+        gui_log(LOG_ERROR, err ? err : "(nil)");
+        uiMultilineEntrySetText(ctx->output_entry, err ? err : "Lua error");
+        lua_close(L);
+        if (url) uiFreeText((char*)url);
+        if (headers) uiFreeText((char*)headers);
+        return;
+    }
+
+    /* Build header response string from headers table (stack -1) */
+    if (lua_istable(L, -1)) {
+        int hdr_idx = lua_gettop(L);
+        char *hdr_out = NULL;
+        size_t hdr_len = 0;
+        lua_pushnil(L);
+        while (lua_next(L, hdr_idx) != 0) {
+            const char *k = lua_tostring(L, -2);
+            const char *v = lua_tostring(L, -1);
+            size_t klen = k ? strlen(k) : 0;
+            size_t vlen = v ? strlen(v) : 0;
+            size_t pair_len = klen + 2 + vlen + 1; /* "Key: Value\n" */
+            char *tmp = (char *)realloc(hdr_out, hdr_len + pair_len + 1);
+            if (!tmp) { free(hdr_out); hdr_out = NULL; hdr_len = 0; break; }
+            hdr_out = tmp;
+            if (klen) memcpy(hdr_out + hdr_len, k, klen);
+            hdr_len += klen;
+            hdr_out[hdr_len++] = ':';
+            hdr_out[hdr_len++] = ' ';
+            if (vlen) memcpy(hdr_out + hdr_len, v, vlen);
+            hdr_len += vlen;
+            hdr_out[hdr_len++] = '\n';
+            hdr_out[hdr_len] = '\0';
+            lua_pop(L, 1); /* pop value, keep key for next */
+        }
+        uiMultilineEntrySetText(ctx->header_resp_entry, hdr_out ? hdr_out : "");
+        free(hdr_out);
+    } else {
+        uiMultilineEntrySetText(ctx->header_resp_entry, "");
+    }
+
+    size_t body_len = 0;
+    const char *body = lua_tolstring(L, -3, &body_len);
+    int status = (int)lua_tointeger(L, -2);
+
+    /* Build dynamic output: [HTTP <code>]\n<body>. Avoid fixed-size truncation. */
+    const char *status_fmt = "[HTTP %d]\n";
+    char status_hdr[64];
+    int hdr_len = snprintf(status_hdr, sizeof(status_hdr), status_fmt, status);
+    if (hdr_len < 0) hdr_len = 0;
+
+    size_t out_len = (size_t)hdr_len + (body_len ? body_len : 0);
+    char *out = (char *)malloc(out_len + 1);
+    if (out) {
+        if (hdr_len > 0) memcpy(out, status_hdr, (size_t)hdr_len);
+        if (body && body_len > 0) memcpy(out + hdr_len, body, body_len);
+        out[out_len] = '\0';
+        uiMultilineEntrySetText(ctx->output_entry, out);
+        free(out);
+    } else {
+        /* Fallback: show status only */
+        uiMultilineEntrySetText(ctx->output_entry, status_hdr);
+    }
+
+    lua_close(L);
+    if (url) uiFreeText((char*)url);
+    if (headers) uiFreeText((char*)headers);
+}
+
+static void lua_test_on_exec(uiButton *b, void *ud) {
+    (void)b;
+    LuaTestCtx *ctx = (LuaTestCtx *)ud;
+    if (!ctx) return;
+    const char *script = uiMultilineEntryText(ctx->script_entry);
+    if (!script) return;
+
+    lua_State *L = luaL_newstate();
+    if (!L) {
+        gui_log(LOG_ERROR, "[LUA DEBUG] luaL_newstate failed");
+        uiFreeText((char*)script);
+        return;
+    }
+    luaL_openlibs(L);
+    http_module_register(L);
+    ludo_module_register(L);
+    luaL_requiref(L, "ui", luaopen_libuilua, 1);
+    lua_pop(L, 1);
+
+    int res = luaL_loadstring(L, script);
+    if (res == LUA_OK) res = lua_pcall(L, 0, LUA_MULTRET, 0);
+    if (res != LUA_OK) {
+        const char *err = lua_tostring(L, -1);
+        gui_log(LOG_ERROR, err ? err : "(nil)");
+        uiMultilineEntrySetText(ctx->output_entry, err ? err : "Lua error");
+        lua_close(L);
+        uiFreeText((char*)script);
+        return;
+    }
+
+    int nret = lua_gettop(L);
+    char buf[4096] = {0};
+    for (int i = 1; i <= nret; i++) {
+        size_t len;
+        const char *s = lua_tolstring(L, i, &len);
+        if (!s) {
+            luaL_tolstring(L, i, &len);
+            s = lua_tostring(L, -1);
+            lua_pop(L, 1);
+        }
+        if (s) {
+            strncat(buf, s, sizeof(buf) - strlen(buf) - 2);
+            if (i < nret) strncat(buf, "\t", sizeof(buf) - strlen(buf) - 2);
+        }
+    }
+    uiMultilineEntrySetText(ctx->output_entry, buf);
+    lua_close(L);
+    uiFreeText((char*)script);
 }
 
 /* ------------------------------------------------------------------ */
@@ -233,6 +425,8 @@ static void toolbar_icons_init(void) {
     ludo_icons_set_button_size((uintptr_t)uiControlHandle(uiControl(g_gui.tb_remove)), TOOLBAR_BUTTON_SIZE, TOOLBAR_BUTTON_SIZE);
     ludo_icons_set_button_size((uintptr_t)uiControlHandle(uiControl(g_gui.tb_plugin)), TOOLBAR_BUTTON_SIZE, TOOLBAR_BUTTON_SIZE);
     ludo_icons_set_button_size((uintptr_t)uiControlHandle(uiControl(g_gui.tb_setting)), TOOLBAR_BUTTON_SIZE, TOOLBAR_BUTTON_SIZE);
+    ludo_icons_set_button_size((uintptr_t)uiControlHandle(uiControl(g_gui.tb_http)), TOOLBAR_BUTTON_SIZE, TOOLBAR_BUTTON_SIZE);
+    ludo_icons_set_button_size((uintptr_t)uiControlHandle(uiControl(g_gui.tb_lua)), TOOLBAR_BUTTON_SIZE, TOOLBAR_BUTTON_SIZE);
     ludo_icons_set_button_size((uintptr_t)uiControlHandle(uiControl(g_gui.tb_about)), TOOLBAR_BUTTON_SIZE, TOOLBAR_BUTTON_SIZE);
 
     char path[512];
@@ -264,6 +458,17 @@ static void toolbar_icons_init(void) {
     if (resolve_toolbar_png_path(ICON_SETTING, path, sizeof(path))) {
         ludo_icons_set_button_png(g_gui.toolbar_icon_ctx,
                                   (uintptr_t)uiControlHandle(uiControl(g_gui.tb_setting)),
+                                  path);
+    
+    }
+    if (resolve_toolbar_png_path(ICON_HTTP, path, sizeof(path))) {
+        ludo_icons_set_button_png(g_gui.toolbar_icon_ctx,
+                                  (uintptr_t)uiControlHandle(uiControl(g_gui.tb_http)),
+                                  path);
+    }
+    if (resolve_toolbar_png_path(ICON_LUA, path, sizeof(path))) {
+        ludo_icons_set_button_png(g_gui.toolbar_icon_ctx,
+                                  (uintptr_t)uiControlHandle(uiControl(g_gui.tb_lua)),
                                   path);
     }
     if (resolve_toolbar_png_path(ICON_ABOUT, path, sizeof(path))) {
@@ -305,65 +510,6 @@ static DownloadRow *add_row(int id, const char *filename) {
     return r;
 }
 
-/* ------------------------------------------------------------------ */
-/* Progress callback (invoked on main thread via uiQueueMain)          */
-/* ------------------------------------------------------------------ */
-
-void gui_on_progress(const ProgressUpdate *update, void *user_data) {
-    (void)user_data;
-
-    g_gui.active_download_id = update->status.id;
-
-    DownloadRow *r = find_row(update->status.id);
-    if (!r) {
-        /* New entry — create a row for it */
-        r = add_row(update->status.id, update->status.filename);
-        if (!r) return;
-    }
-
-    /* Update filename label if we now know it */
-    if (update->status.filename[0]) {
-        uiLabelSetText(r->label_name, update->status.filename);
-    }
-
-    /* Progress bar (0–100) */
-    int pct = (int)update->status.progress;
-    if (pct < 0)   pct = 0;
-    if (pct > 100) pct = 100;
-    uiProgressBarSetValue(r->progress_bar, pct);
-
-    /* Status label */
-    switch (update->status.state) {
-        case DOWNLOAD_STATE_QUEUED:
-            uiLabelSetText(r->label_status, "Queued");
-            break;
-        case DOWNLOAD_STATE_RUNNING: {
-            char buf[64];
-            snprintf(buf, sizeof(buf), "%d%%", pct);
-            uiLabelSetText(r->label_status, buf);
-            break;
-        }
-        case DOWNLOAD_STATE_PAUSED:
-            uiLabelSetText(r->label_status, "Paused");
-            break;
-        case DOWNLOAD_STATE_COMPLETED:
-            uiLabelSetText(r->label_status, "Done");
-            uiProgressBarSetValue(r->progress_bar, 100);
-            break;
-        case DOWNLOAD_STATE_FAILED: {
-            char buf[288];
-            snprintf(buf, sizeof(buf), "Failed: %s", update->error_msg);
-            uiLabelSetText(r->label_status, buf);
-            uiProgressBarSetValue(r->progress_bar, 0); /* indeterminate */
-            break;
-        }
-    }
-}
-
-/* ------------------------------------------------------------------ */
-/* Button callback                                                      */
-/* ------------------------------------------------------------------ */
-
 static void on_add_clicked(uiButton *sender, void *data) {
     (void)sender; (void)data;
 
@@ -373,26 +519,18 @@ static void on_add_clicked(uiButton *sender, void *data) {
         return;
     }
 
-    /* Trim leading/trailing whitespace */
     char url[4096];
     strncpy(url, url_text, sizeof(url) - 1);
     url[sizeof(url) - 1] = '\0';
     uiFreeText(url_text);
 
-    /* Reject obviously non-URL strings */
-    if (strncmp(url, "http://", 7) != 0 &&
-        strncmp(url, "https://", 8) != 0)
-    {
+    if (strncmp(url, "http://", 7) != 0 && strncmp(url, "https://", 8) != 0) {
         gui_log(LOG_ERROR, "Invalid URL — must start with http:// or https://");
         return;
     }
 
-    /* Push to the worker queue */
     task_queue_push(&g_url_queue, url);
-
-    /* Clear the entry field */
     uiEntrySetText(g_gui.url_entry, "");
-
     char msg[512];
     snprintf(msg, sizeof(msg), "Queued: %s", url);
     gui_log(LOG_INFO, msg);
@@ -463,6 +601,81 @@ static void on_setting_clicked(uiButton *sender, void *data) {
     uiFreeText(folder);
 }
 
+static void on_http_clicked(uiButton *sender, void *data) {
+    (void)sender; (void)data;
+
+    // --- HTTP Test Window ---
+    uiWindow *win = uiNewWindow("HTTP Request Tester", 900, 700, 0);
+    uiWindowSetMargined(win, 1);
+
+    uiBox *vbox = uiNewVerticalBox();
+    uiBoxSetPadded(vbox, 1);
+
+    uiEntry *url_entry = uiNewEntry();
+    uiEntrySetText(url_entry, "https://facebook.com");
+    uiBoxAppend(vbox, uiControl(url_entry), 0);
+
+    uiMultilineEntry *header_entry = uiNewMultilineEntry();
+    uiBoxAppend(vbox, uiControl(header_entry), 0);
+
+    uiButton *send_btn = uiNewButton("Send HTTP Request");
+    uiBoxAppend(vbox, uiControl(send_btn), 0);
+
+    uiMultilineEntry *header_resp_entry = uiNewMultilineEntry();
+    uiMultilineEntrySetReadOnly(header_resp_entry, 1);
+    uiBoxAppend(vbox, uiControl(header_resp_entry), 1);
+
+    uiMultilineEntry *output_entry = uiNewMultilineEntry();
+    uiMultilineEntrySetReadOnly(output_entry, 1);
+    uiBoxAppend(vbox, uiControl(output_entry), 1);
+
+    HttpTestCtx *ctx = malloc(sizeof(HttpTestCtx));
+    if (!ctx) { gui_log(LOG_ERROR, "[HTTP DEBUG] ctx alloc failed"); return; }
+    ctx->url_entry = url_entry;
+    ctx->header_entry = header_entry;
+    ctx->header_resp_entry = header_resp_entry;
+    ctx->output_entry = output_entry;
+    ctx->win = win;
+
+    uiButtonOnClicked(send_btn, http_test_on_send, ctx);
+    uiWindowSetChild(win, uiControl(vbox));
+    uiControlShow(uiControl(win));
+    uiWindowOnClosing(win, (int (*)(uiWindow *, void *))free, ctx);
+}
+
+static void on_lua_clicked(uiButton *sender, void *data) {
+    (void)sender; (void)data;
+    // --- Lua Test Window ---
+    uiWindow *win = uiNewWindow("Lua Script Tester", 520, 420, 0);
+    uiWindowSetMargined(win, 1);
+
+    uiBox *vbox = uiNewVerticalBox();
+    uiBoxSetPadded(vbox, 1);
+
+    uiMultilineEntry *script_entry = uiNewMultilineEntry();
+    // uiMultilineEntrySetPlaceholder(script_entry, ...) is not available in libui-ng; skip placeholder.
+    uiBoxAppend(vbox, uiControl(script_entry), 1);
+
+    uiButton *exec_btn = uiNewButton("Execute Lua Script");
+    uiBoxAppend(vbox, uiControl(exec_btn), 0);
+
+    uiMultilineEntry *output_entry = uiNewMultilineEntry();
+    uiMultilineEntrySetReadOnly(output_entry, 1);
+    uiBoxAppend(vbox, uiControl(output_entry), 1);
+
+    LuaTestCtx *ctx = malloc(sizeof(LuaTestCtx));
+    if (!ctx) { gui_log(LOG_ERROR, "[LUA DEBUG] ctx alloc failed"); return; }
+    ctx->script_entry = script_entry;
+    ctx->output_entry = output_entry;
+    ctx->win = win;
+
+    uiButtonOnClicked(exec_btn, lua_test_on_exec, ctx);
+
+    uiWindowSetChild(win, uiControl(vbox));
+    uiControlShow(uiControl(win));
+    uiWindowOnClosing(win, (int (*)(uiWindow *, void *))free, ctx);
+}
+
 static void on_about_clicked(uiButton *sender, void *data) {
     (void)sender; (void)data;
     uiMsgBox(g_gui.window,
@@ -470,6 +683,61 @@ static void on_about_clicked(uiButton *sender, void *data) {
              "LUDO - LUa DOwnloader\n\n"
              "A lightweight download manager with plugin support,\n"
              "resume, progress tracking, and session persistence.");
+}
+
+/* ------------------------------------------------------------------ */
+/* Progress callback (invoked on main thread via uiQueueMain)          */
+/* ------------------------------------------------------------------ */
+
+void gui_on_progress(const ProgressUpdate *update, void *user_data) {
+    (void)user_data;
+
+    g_gui.active_download_id = update->status.id;
+
+    DownloadRow *r = find_row(update->status.id);
+    if (!r) {
+        /* New entry — create a row for it */
+        r = add_row(update->status.id, update->status.filename);
+        if (!r) return;
+    }
+
+    /* Update filename label if we now know it */
+    if (update->status.filename[0]) {
+        uiLabelSetText(r->label_name, update->status.filename);
+    }
+
+    /* Progress bar (0–100) */
+    int pct = (int)update->status.progress;
+    if (pct < 0)   pct = 0;
+    if (pct > 100) pct = 100;
+    uiProgressBarSetValue(r->progress_bar, pct);
+
+    /* Status label */
+    switch (update->status.state) {
+        case DOWNLOAD_STATE_QUEUED:
+            uiLabelSetText(r->label_status, "Queued");
+            break;
+        case DOWNLOAD_STATE_RUNNING: {
+            char buf[64];
+            snprintf(buf, sizeof(buf), "%d%%", pct);
+            uiLabelSetText(r->label_status, buf);
+            break;
+        }
+        case DOWNLOAD_STATE_PAUSED:
+            uiLabelSetText(r->label_status, "Paused");
+            break;
+        case DOWNLOAD_STATE_COMPLETED:
+            uiLabelSetText(r->label_status, "Done");
+            uiProgressBarSetValue(r->progress_bar, 100);
+            break;
+        case DOWNLOAD_STATE_FAILED: {
+            char buf[288];
+            snprintf(buf, sizeof(buf), "Failed: %s", update->error_msg);
+            uiLabelSetText(r->label_status, buf);
+            uiProgressBarSetValue(r->progress_bar, 0); /* indeterminate */
+            break;
+        }
+    }
 }
 
 /* ------------------------------------------------------------------ */
@@ -549,6 +817,14 @@ void gui_create(void) {
     g_gui.tb_setting = uiNewButton("Setting");
     uiButtonOnClicked(g_gui.tb_setting, on_setting_clicked, NULL);
     uiBoxAppend(toolbar, uiControl(g_gui.tb_setting), 0);
+
+    g_gui.tb_http = uiNewButton("HTTP");
+    uiButtonOnClicked(g_gui.tb_http, on_http_clicked, NULL);
+    uiBoxAppend(toolbar, uiControl(g_gui.tb_http), 0);
+
+    g_gui.tb_lua = uiNewButton("Lua");
+    uiButtonOnClicked(g_gui.tb_lua, on_lua_clicked, NULL);
+    uiBoxAppend(toolbar, uiControl(g_gui.tb_lua), 0);
 
     g_gui.tb_about = uiNewButton("About");
     uiButtonOnClicked(g_gui.tb_about, on_about_clicked, NULL);

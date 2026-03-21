@@ -78,9 +78,83 @@ elseif(APPLE)
     target_link_libraries(lua PUBLIC m dl)
 endif()
 
+
 # ------------------------------------------------------------
 # libcurl (built from source)
 # ------------------------------------------------------------
+include(ExternalProject)
+set(BROTLI_BUILD_DIR ${CMAKE_BINARY_DIR}/brotli_build)
+set(BROTLI_INSTALL_DIR ${CMAKE_BINARY_DIR}/brotli_install)
+
+if(MINGW)
+    set(BROTLI_LIB_NAME libbrotlidec-static.a)
+elseif(WIN32)
+    set(BROTLI_LIB_NAME brotlidec-static.lib)
+else()
+    set(BROTLI_LIB_NAME libbrotlidec-static.a)
+endif()
+
+ExternalProject_Add(brotli_ext
+    SOURCE_DIR ${CMAKE_SOURCE_DIR}/third_party/brotli
+    BINARY_DIR ${BROTLI_BUILD_DIR}
+    CMAKE_ARGS
+        -DCMAKE_BUILD_TYPE=${CMAKE_BUILD_TYPE}
+        -DCMAKE_INSTALL_PREFIX=${BROTLI_INSTALL_DIR}
+        -DBROTLI_DISABLE_TESTS=ON
+        -DBROTLI_BUNDLED_MODE=OFF
+        -DBROTLI_BUILD_TOOLS=OFF
+        -DBROTLI_BUILD_TESTS=OFF
+        -DBROTLI_BUILD_SHARED_LIBS=OFF
+        -DBROTLI_BUILD_STATIC_LIBS=ON
+        -DBROTLI_BUILD_FOR_PACKAGE=ON
+    INSTALL_COMMAND ${CMAKE_COMMAND} --install ${BROTLI_BUILD_DIR}
+    BUILD_BYPRODUCTS ${BROTLI_INSTALL_DIR}/lib/${BROTLI_LIB_NAME}
+)
+
+
+# Import all brotli static libraries
+add_library(brotlidec_static STATIC IMPORTED GLOBAL)
+add_library(brotlienc_static STATIC IMPORTED GLOBAL)
+add_library(brotlicommon_static STATIC IMPORTED GLOBAL)
+add_dependencies(brotlidec_static brotli_ext)
+add_dependencies(brotlienc_static brotli_ext)
+add_dependencies(brotlicommon_static brotli_ext)
+set_target_properties(brotlidec_static PROPERTIES IMPORTED_LOCATION ${BROTLI_INSTALL_DIR}/lib/libbrotlidec-static.a)
+set_target_properties(brotlienc_static PROPERTIES IMPORTED_LOCATION ${BROTLI_INSTALL_DIR}/lib/libbrotlienc-static.a)
+set_target_properties(brotlicommon_static PROPERTIES IMPORTED_LOCATION ${BROTLI_INSTALL_DIR}/lib/libbrotlicommon-static.a)
+
+set(ZSTD_BUILD_DIR ${CMAKE_BINARY_DIR}/zstd_build)
+set(ZSTD_INSTALL_DIR ${CMAKE_BINARY_DIR}/zstd_install)
+
+if(MINGW)
+    set(ZSTD_LIB_NAME libzstd.a)
+elseif(WIN32)
+    set(ZSTD_LIB_NAME zstd_static.lib)
+else()
+    set(ZSTD_LIB_NAME libzstd.a)
+endif()
+
+ExternalProject_Add(zstd_ext
+    SOURCE_DIR ${CMAKE_SOURCE_DIR}/third_party/zstd-dev
+    BINARY_DIR ${ZSTD_BUILD_DIR}
+    CMAKE_ARGS
+        -DCMAKE_BUILD_TYPE=${CMAKE_BUILD_TYPE}
+        -DCMAKE_INSTALL_PREFIX=${ZSTD_INSTALL_DIR}
+        -DZSTD_BUILD_PROGRAMS=OFF
+        -DZSTD_BUILD_TESTS=OFF
+        -DZSTD_BUILD_SHARED=OFF
+        -DZSTD_BUILD_STATIC=ON
+    INSTALL_COMMAND ${CMAKE_COMMAND} --install ${ZSTD_BUILD_DIR}
+    BUILD_BYPRODUCTS ${ZSTD_INSTALL_DIR}/lib/${ZSTD_LIB_NAME}
+)
+
+add_library(zstd_static STATIC IMPORTED GLOBAL)
+add_dependencies(zstd_static zstd_ext)
+
+set_target_properties(zstd_static PROPERTIES
+    IMPORTED_LOCATION ${ZSTD_INSTALL_DIR}/lib/${ZSTD_LIB_NAME}
+)
+
 set(CURL_BUILD_DIR ${CMAKE_BINARY_DIR}/curl_build)
 set(CURL_INSTALL_DIR ${CMAKE_BINARY_DIR}/curl_install)
 
@@ -97,10 +171,10 @@ else()
 endif()
 
 # Configure and build curl as an external project
-include(ExternalProject)
 ExternalProject_Add(curl_ext
     SOURCE_DIR ${CMAKE_SOURCE_DIR}/third_party/curl-8.19.0
     BINARY_DIR ${CURL_BUILD_DIR}
+    DEPENDS zstd_ext brotli_ext
     CMAKE_ARGS
         -DCMAKE_BUILD_TYPE=${CMAKE_BUILD_TYPE}
         -DCMAKE_INSTALL_PREFIX=${CURL_INSTALL_DIR}
@@ -118,9 +192,12 @@ ExternalProject_Add(curl_ext
         -DCURL_USE_LIBSSH=OFF
         -DCURL_USE_LIBPSL=OFF
         -DUSE_LIBIDN2=OFF
-        -DCURL_BROTLI=OFF
-        -DCURL_ZSTD=OFF
-        -DCURL_ZLIB=OFF
+        -DCURL_BROTLI=ON
+        -DCURL_ZSTD=ON
+        -DCURL_ZLIB=ON
+        -DCURL_USE_PKGCONFIG=OFF
+        -DCMAKE_INCLUDE_PATH=${ZSTD_INSTALL_DIR}/include;${BROTLI_INSTALL_DIR}/include
+        -DCMAKE_LIBRARY_PATH=${ZSTD_INSTALL_DIR}/lib;${BROTLI_INSTALL_DIR}/lib
         -DCURL_ENABLE_SSL=ON
     INSTALL_COMMAND ${CMAKE_COMMAND} --install ${CURL_BUILD_DIR}
     BUILD_BYPRODUCTS ${CURL_INSTALL_DIR}/lib/${CURL_LIB_NAME}
@@ -227,6 +304,10 @@ target_include_directories(ludo PRIVATE
 target_link_libraries(ludo PRIVATE
     libui_static
     libcurl_static
+    zstd_static
+    brotlidec_static
+    brotlienc_static
+    brotlicommon_static
     lua
     z
 )

@@ -600,6 +600,43 @@ end
 return plugin
 ```
 
+### 3.12 `http.base64_encode(str)` → string
+
+Base64-encode a string (binary-safe).
+
+**Parameters:**
+- `str` (string) — The string or binary data to encode.
+
+**Returns:**
+- `encoded` (string) — Base64-encoded string.
+
+```lua
+local b64 = http.base64_encode("hello world")
+print(b64)  --> aGVsbG8gd29ybGQ=
+```
+
+### 3.13 `http.base64_decode(str)` → string
+
+Decode a base64-encoded string (binary-safe).
+
+**Parameters:**
+- `str` (string) — The base64-encoded string.
+
+**Returns:**
+- `decoded` (string) — Decoded string or binary data.
+
+```lua
+local raw = http.base64_decode("aGVsbG8gd29ybGQ=")
+print(raw)  --> hello world
+```
+
+---
+
+#### Note on Compression Support
+
+Ludo's HTTP engine supports transparent decompression for responses with
+`Accept-Encoding: gzip, deflate, zstd, br` (brotli). Brotli is supported if built with brotli libraries.
+
 ---
 
 ## 4. Ludo Library

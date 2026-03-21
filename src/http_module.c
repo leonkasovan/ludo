@@ -188,6 +188,63 @@ static void push_headers_table(lua_State *L, const char *raw) {
  *   2/3 [options] (table, optional)
  * Returns: body (or "") , status_code , headers_table
  */
+static int http_base64_encode(lua_State *L) {
+    size_t in_len;
+    const unsigned char *in = (const unsigned char *)luaL_checklstring(L, 1, &in_len);
+    static const char tbl[] = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+    luaL_Buffer b;
+    luaL_buffinit(L, &b);
+    size_t i = 0;
+    while (i + 2 < in_len) {
+        unsigned v = (in[i] << 16) | (in[i+1] << 8) | in[i+2];
+        luaL_addchar(&b, tbl[(v >> 18) & 0x3F]);
+        luaL_addchar(&b, tbl[(v >> 12) & 0x3F]);
+        luaL_addchar(&b, tbl[(v >> 6) & 0x3F]);
+        luaL_addchar(&b, tbl[v & 0x3F]);
+        i += 3;
+    }
+    if (i < in_len) {
+        unsigned v = in[i] << 16;
+        luaL_addchar(&b, tbl[(v >> 18) & 0x3F]);
+        if (i + 1 < in_len) {
+            v |= in[i+1] << 8;
+            luaL_addchar(&b, tbl[(v >> 12) & 0x3F]);
+            luaL_addchar(&b, tbl[(v >> 6) & 0x3F]);
+            luaL_addchar(&b, '=');
+        } else {
+            luaL_addchar(&b, tbl[(v >> 12) & 0x3F]);
+            luaL_addchar(&b, '=');
+            luaL_addchar(&b, '=');
+        }
+    }
+    luaL_pushresult(&b);
+    return 1;
+}
+
+static int http_base64_decode(lua_State *L) {
+    size_t in_len;
+    const char *in = luaL_checklstring(L, 1, &in_len);
+    unsigned char dtable[256] = {0};
+    for (int i = 0; i < 64; i++) dtable[(unsigned char)"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/"[i]] = i + 1;
+    luaL_Buffer b;
+    luaL_buffinit(L, &b);
+    size_t i = 0;
+    unsigned v = 0, valb = 0;
+    while (i < in_len) {
+        unsigned char c = (unsigned char)in[i++];
+        if (c == '=') break;
+        if (!dtable[c]) continue;
+        v = (v << 6) | (dtable[c] - 1);
+        valb += 6;
+        if (valb >= 8) {
+            valb -= 8;
+            luaL_addchar(&b, (char)((v >> valb) & 0xFF));
+        }
+    }
+    luaL_pushresult(&b);
+    return 1;
+}
+
 static int http_request(lua_State *L, int method) {
     const char *url = luaL_checkstring(L, 1);
 
@@ -216,6 +273,7 @@ static int http_request(lua_State *L, int method) {
     curl_easy_setopt(curl, CURLOPT_HEADERDATA,     &headers_buf);
     curl_easy_setopt(curl, CURLOPT_FOLLOWLOCATION, 1L);
     curl_easy_setopt(curl, CURLOPT_MAXREDIRS,      10L);
+    curl_easy_setopt(curl, CURLOPT_ACCEPT_ENCODING, "gzip, deflate, zstd, br");
     curl_easy_setopt(curl, CURLOPT_USERAGENT,
                      "Mozilla/5.0 LUDO/1.0");
     /* Always enable cookie engine */
@@ -409,6 +467,8 @@ static const luaL_Reg http_funcs[] = {
     { "url_encode",   lua_http_url_encode  },
     { "url_decode",   lua_http_url_decode  },
     { "parse_url",    lua_http_parse_url   },
+    { "base64_encode", http_base64_encode  },
+    { "base64_decode", http_base64_decode  },
     { NULL,           NULL                 }
 };
 

@@ -25,8 +25,9 @@
 /* ------------------------------------------------------------------ */
 
 #include <stdarg.h>
+#include "dm_log.h"
 
-static FILE *g_log_fp = NULL;
+FILE *g_log_fp = NULL;
 
 #ifdef _WIN32
 #include <windows.h>   /* for CRITICAL_SECTION */
@@ -34,7 +35,7 @@ static CRITICAL_SECTION g_log_cs;
 static int g_log_cs_init = 0;
 #endif
 
-static void dm_log_init(void) {
+void dm_log_init(void) {
 #ifdef _WIN32
     if (!g_log_cs_init) { InitializeCriticalSection(&g_log_cs); g_log_cs_init = 1; }
 #endif
@@ -45,7 +46,7 @@ static void dm_log_init(void) {
     fflush(g_log_fp);
 }
 
-static void dm_log(const char *fmt, ...) {
+void dm_log(const char *fmt, ...) {
     if (!g_log_fp) return;
 #ifdef _WIN32
     if (g_log_cs_init) EnterCriticalSection(&g_log_cs);
@@ -68,7 +69,7 @@ static void dm_log(const char *fmt, ...) {
 #endif
 }
 
-static void dm_log_close(void) {
+void dm_log_close(void) {
     if (!g_log_fp) return;
 #ifdef _WIN32
     if (g_log_cs_init) EnterCriticalSection(&g_log_cs);
@@ -399,8 +400,9 @@ static void perform_download(Download *d) {
     curl_easy_setopt(curl, CURLOPT_NOPROGRESS,        0L);
     curl_easy_setopt(curl, CURLOPT_FOLLOWLOCATION,    1L);
     curl_easy_setopt(curl, CURLOPT_MAXREDIRS,         10L);
+    curl_easy_setopt(curl, CURLOPT_ACCEPT_ENCODING,   "gzip, deflate, zstd, br");
     curl_easy_setopt(curl, CURLOPT_USERAGENT,
-                     "LUDO/1.0 (LUa DOwnloader)");
+                     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/146.0.0.0 Safari/537.36 Edg/146.0.0.0");
     curl_easy_setopt(curl, CURLOPT_HEADERFUNCTION,    header_cb);
     curl_easy_setopt(curl, CURLOPT_HEADERDATA,        &hctx);
     /* Route libcurl verbose output to dm_log instead of stderr
@@ -685,6 +687,13 @@ void download_manager_init(int num_workers, const char *output_dir) {
     task_queue_init(&g_mgr.queue, 256);
 
     curl_global_init(CURL_GLOBAL_DEFAULT);
+    {
+        const curl_version_info_data *vi = curl_version_info(CURLVERSION_NOW);
+        dm_log("[init] curl encodings: zlib=%s zstd=%s brotli=%s",
+               (vi && (vi->features & CURL_VERSION_LIBZ)) ? "on" : "off",
+               (vi && (vi->features & CURL_VERSION_ZSTD)) ? "on" : "off",
+               (vi && (vi->features & CURL_VERSION_BROTLI)) ? "on" : "off");
+    }
 
     /* Restore previous session */
     dm_log("[init] loading db: %s", DB_PATH);
