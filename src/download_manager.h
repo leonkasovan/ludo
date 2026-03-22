@@ -17,8 +17,9 @@ typedef enum {
 typedef enum {
     DOWNLOAD_STATE_QUEUED    = 0,
     DOWNLOAD_STATE_RUNNING   = 1,
-    DOWNLOAD_STATE_COMPLETED = 2,
-    DOWNLOAD_STATE_FAILED    = 3
+    DOWNLOAD_STATE_PAUSED    = 2,
+    DOWNLOAD_STATE_COMPLETED = 3,
+    DOWNLOAD_STATE_FAILED    = 4
 } DownloadState;
 
 /* ------------------------------------------------------------------ */

@@ -322,8 +322,8 @@ static int xfer_info_cb(void *clientp, curl_off_t dltotal, curl_off_t dlnow,
         if (it->status.id == ctx->download_id) { d = it; break; }
     }
     if (d) {
-        /* Honor requested pause (now represented by QUEUED) set via download_manager_pause() */
-        if (d->status.state == DOWNLOAD_STATE_QUEUED) {
+        /* Honor requested pause set via download_manager_pause() */
+        if (d->status.state == DOWNLOAD_STATE_PAUSED) {
             ludo_mutex_unlock(&g_mgr.list_mutex);
             return 1; /* Returning non-zero aborts the libcurl transfer gracefully */
         }
@@ -849,16 +849,7 @@ static void db_load(const char *path) {
         d->output_dir[sizeof(d->output_dir)-1] = '\0';
         strncpy(d->status.filename, fields[3], sizeof(d->status.filename)-1);
         d->status.filename[sizeof(d->status.filename)-1] = '\0';
-        /* Handle legacy on-disk state values: previously PAUSED==2, COMPLETED==3, FAILED==4
-           New enum removes PAUSED and shifts values. Map legacy values to new ones. */
-        {
-            int s = atoi(fields[4]);
-            if (s == 0) d->status.state = DOWNLOAD_STATE_QUEUED;
-            else if (s == 1) d->status.state = DOWNLOAD_STATE_RUNNING;
-            else if (s == 2) d->status.state = DOWNLOAD_STATE_QUEUED; /* legacy PAUSED -> QUEUED */
-            else if (s == 3) d->status.state = DOWNLOAD_STATE_COMPLETED; /* legacy COMPLETED */
-            else d->status.state = DOWNLOAD_STATE_FAILED;
-        }
+        d->status.state = (DownloadState)atoi(fields[4]);
         d->status.progress = atof(fields[5]);
         d->status.speed_bps = atof(fields[6]);
         d->status.total_bytes = atoll(fields[7]);
@@ -1065,12 +1056,8 @@ void download_manager_pause(int id) {
     ludo_mutex_lock(&g_mgr.list_mutex);
     for (Download *d = g_mgr.list; d; d = d->next) {
         if (d->status.id == id && (d->status.state == DOWNLOAD_STATE_RUNNING || d->status.state == DOWNLOAD_STATE_QUEUED)) {
-            d->status.state = DOWNLOAD_STATE_QUEUED;
+            d->status.state = DOWNLOAD_STATE_PAUSED;
             dm_log("[download_manager_pause] id=%d marked as paused", d->status.id);
-            /* We DO NOT touch d->fp or d->curl_handle here. 
-               The worker thread's xfer_info_cb will detect the PAUSED state,
-               cleanly abort the transfer, and close the file safely.
-            */
             break;
         }
     }
@@ -1080,7 +1067,8 @@ void download_manager_pause(int id) {
 void download_manager_resume(int id) {
     ludo_mutex_lock(&g_mgr.list_mutex);
     for (Download *d = g_mgr.list; d; d = d->next) {
-        if (d->status.id == id && d->status.state == DOWNLOAD_STATE_QUEUED) {
+        if (d->status.id == id && d->status.state == DOWNLOAD_STATE_PAUSED) {
+            d->status.state = DOWNLOAD_STATE_QUEUED;
             dm_log("[download_manager_resume] id=%d queued for resume", d->status.id);
 
             /* Push an internal task to tell the worker thread to resume this ID */
@@ -1111,7 +1099,7 @@ void download_manager_remove(int id) {
                 if (target->status.state == DOWNLOAD_STATE_RUNNING || 
                 target->status.state == DOWNLOAD_STATE_QUEUED) {
                 
-                target->status.state = DOWNLOAD_STATE_QUEUED; /* Forces curl to abort */
+                target->status.state = DOWNLOAD_STATE_PAUSED; /* Forces curl to abort */
                 target->marked_for_removal = 1;               /* Tells worker to free it */
                 dm_log("[Remove] ID %d is active. Marked for garbage collection.", id);
                 
