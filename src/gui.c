@@ -147,7 +147,7 @@ static void autosize_downloads_table(void) {
     if (!g_gui.window) return;
 
     /* Desired percentage widths for columns 0..6: id,name,size,status,started,speed,progress */
-    const int percents[7] = {4,35,15,12,10,10,14};
+    const int percents[7] = {0,35,15,8,8,10,14};
 
     int win_w = 0, win_h = 0;
     uiWindowContentSize(g_gui.window, &win_w, &win_h);
@@ -816,21 +816,34 @@ static void on_resume_clicked(uiButton *sender, void *data) {
 static void on_remove_clicked(uiButton *sender, void *data) {
     (void)sender; (void)data;
     int acted = 0;
-    for (int i = 0; i < g_gui.row_count; i++) {
+
+    /* BEST PRACTICE: Iterate backwards when deleting from an array */
+    for (int i = g_gui.row_count - 1; i >= 0; i--) {
         DownloadRow *r = &g_gui.rows[i];
         if (r->selected) {
             if (r->download_id > 0) {
-                /* attempt to pause before removing to be safe */
+                /* 1. Tell backend to pause and safely remove */
                 download_manager_pause(r->download_id);
                 download_manager_remove(r->download_id);
                 acted++;
             }
-            r->selected = 0;
+            
+            /* 2. Remove from GUI array by shifting remaining elements left */
+            for (int j = i; j < g_gui.row_count - 1; j++) {
+                g_gui.rows[j] = g_gui.rows[j + 1];
+            }
+            g_gui.row_count--;
+
+            /* 3. Notify the table model that this exact row index was deleted */
+            if (g_downloads_model) {
+                uiTableModelRowDeleted(g_downloads_model, i);
+            }
         }
     }
+
     if (acted > 0) {
         gui_log(LOG_INFO, "Removed checked downloads");
-        if (g_downloads_model) for (int j = 0; j < g_gui.row_count; j++) uiTableModelRowChanged(g_downloads_model, j);
+        autosize_downloads_table(); /* Re-adjust column sizing */
     } else {
         gui_log(LOG_ERROR, "Remove failed: no checked downloads");
     }
@@ -866,6 +879,12 @@ static void on_setting_clicked(uiButton *sender, void *data) {
     snprintf(msg, sizeof(msg), "Default output directory changed to: %s", folder);
     gui_log(LOG_SUCCESS, msg);
     uiFreeText(folder);
+}
+
+static int on_child_window_closing(uiWindow *w, void *data) {
+    (void)data;
+    uiControlDestroy(uiControl(w));
+    return 0; /* Returning 0 is important; it tells libui not to do default processing */
 }
 
 static void on_http_clicked(uiButton *sender, void *data) {
@@ -907,7 +926,7 @@ static void on_http_clicked(uiButton *sender, void *data) {
     uiButtonOnClicked(send_btn, http_test_on_send, ctx);
     uiWindowSetChild(win, uiControl(vbox));
     uiControlShow(uiControl(win));
-    uiWindowOnClosing(win, (int (*)(uiWindow *, void *))free, ctx);
+    uiWindowOnClosing(win, (int (*)(uiWindow *, void *))on_child_window_closing, ctx);
 }
 
 static void on_lua_clicked(uiButton *sender, void *data) {
@@ -940,7 +959,7 @@ static void on_lua_clicked(uiButton *sender, void *data) {
 
     uiWindowSetChild(win, uiControl(vbox));
     uiControlShow(uiControl(win));
-    uiWindowOnClosing(win, (int (*)(uiWindow *, void *))free, ctx);
+    uiWindowOnClosing(win, (int (*)(uiWindow *, void *))on_child_window_closing, ctx);
 }
 
 static void on_about_clicked(uiButton *sender, void *data) {
@@ -1124,7 +1143,7 @@ void gui_create(void) {
         g_downloads_table = t;
 
         /* Append columns in new order: id, name, size, status, started, speed, progress */
-        uiTableAppendCheckboxColumn(t, "ID", 0, uiTableModelColumnAlwaysEditable);
+        uiTableAppendCheckboxColumn(t, "#", 0, uiTableModelColumnAlwaysEditable);
         uiTableAppendTextColumn(t, "Name", 1, uiTableModelColumnNeverEditable, NULL);
         uiTableAppendTextColumn(t, "Size", 2, uiTableModelColumnNeverEditable, NULL);
         uiTableAppendTextColumn(t, "Status", 3, uiTableModelColumnNeverEditable, NULL);

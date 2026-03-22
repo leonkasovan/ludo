@@ -47,6 +47,7 @@ typedef struct Download {
     void            *curl_handle;    /* opaque pointer to active CURL handle, if any */
     FILE            *fp;             /* active file handle for writing, if any */
     size_t           bytes_since_last_flush;
+    int              marked_for_removal;
     struct Download *next;
 } Download;
 
@@ -94,5 +95,8 @@ void download_manager_set_output_dir(const char *output_dir);
 
 /* Lookup a single download by id (thread-safe read) */
 Download *download_manager_find(int id);
+
+/* Re-dispatch the current status of all downloads to the GUI */
+void download_manager_sync_ui(void);
 
 #endif /* LUDO_DOWNLOAD_MANAGER_H */

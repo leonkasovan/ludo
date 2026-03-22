@@ -648,11 +648,32 @@ static void perform_download(Download *d) {
     } else if (d->status.state != DOWNLOAD_STATE_PAUSED) {
         d->status.state = DOWNLOAD_STATE_FAILED;
     }
+    
+    /* GARBAGE COLLECTION CHECK */
+    int is_deleted = d->marked_for_removal;
+    if (is_deleted) {
+        /* Unlink from the master list safely */
+        Download **prev = &g_mgr.list;
+        while (*prev) {
+            if (*prev == d) {
+                *prev = d->next;
+                break;
+            }
+            prev = &(*prev)->next;
+        }
+    }
+
     DownloadState final_state = d->status.state;
     time_t start_ts  = d->status.start_time;
     time_t finish_ts = d->status.end_time;
     ludo_mutex_unlock(&g_mgr.list_mutex);
 
+    if (is_deleted) {
+        dm_log("[perform_download] ID %d collected. Freeing memory safely.", d->status.id);
+        free(d);
+        return; /* CRITICAL: Do not dispatch GUI updates for deleted memory */
+    }
+    
     dm_log("[perform_download] id=%d final state=%d filename=%s",
            d->status.id, (int)final_state, d->status.filename);
 
@@ -716,38 +737,45 @@ static void db_load(const char *path) {
         Download *d = (Download *)calloc(1, sizeof(Download));
         if (!d) break;
 
-        int    state;
-        long long start_ll, end_ll, total_ll, dl_ll;
-        int parsed = sscanf(line,
-            "%d\t%4095[^\t]\t%1023[^\t]\t%511[^\t]\t%d\t%lf\t%lf\t%lld\t%lld\t%lld\t%lld",
-            &d->status.id,
-            d->url,
-            d->output_dir,
-            d->status.filename,
-            &state,
-            &d->status.progress,
-            &d->status.speed_bps,
-            &total_ll,
-            &dl_ll,
-            &start_ll,
-            &end_ll);
+        /* Strip newline */
+        line[strcspn(line, "\r\n")] = 0;
 
-        if (parsed < 11) {
-            free(d);
-            continue;
+        char *p = line;
+        char *fields[11];
+        for (int i = 0; i < 11; i++) {
+            fields[i] = p;
+            if (p) {
+                p = strchr(p, '\t');
+                if (p) { *p = '\0'; p++; }
+            }
         }
 
-        d->status.state            = (DownloadState)state;
-        d->status.total_bytes      = (int64_t)total_ll;
-        d->status.downloaded_bytes = (int64_t)dl_ll;
-        d->status.start_time       = (time_t)start_ll;
-        d->status.end_time         = (time_t)end_ll;
+        /* If we didn't find all 11 fields, skip it */
+        if (!fields[10]) { 
+            free(d); 
+            continue; 
+        }
 
-        /* Keep next_id ahead of any loaded id */
+        d->status.id = atoi(fields[0]);
+        strncpy(d->url, fields[1], sizeof(d->url)-1);
+        strncpy(d->output_dir, fields[2], sizeof(d->output_dir)-1);
+        strncpy(d->status.filename, fields[3], sizeof(d->status.filename)-1);
+        d->status.state = (DownloadState)atoi(fields[4]);
+        d->status.progress = atof(fields[5]);
+        d->status.speed_bps = atof(fields[6]);
+        d->status.total_bytes = atoll(fields[7]);
+        d->status.downloaded_bytes = atoll(fields[8]);
+        d->status.start_time = (time_t)atoll(fields[9]);
+        d->status.end_time = (time_t)atoll(fields[10]);
+
+        /* SAFETY: If the app crashed, reset active states so they can be resumed */
+        if (d->status.state == DOWNLOAD_STATE_RUNNING || d->status.state == DOWNLOAD_STATE_QUEUED) {
+            d->status.state = DOWNLOAD_STATE_PAUSED;
+        }
+
         if (d->status.id >= g_mgr.next_id) g_mgr.next_id = d->status.id + 1;
 
-        /* Prepend to list (order reversed, but acceptable) */
-        d->next    = g_mgr.list;
+        d->next = g_mgr.list;
         g_mgr.list = d;
     }
     fclose(f);
@@ -973,9 +1001,22 @@ void download_manager_remove(int id) {
     Download **prev = &g_mgr.list;
     while (*prev) {
         if ((*prev)->status.id == id) {
-            Download *to_free = *prev;
-            *prev = to_free->next;
-            free(to_free);
+            Download *target = *prev;
+            
+            /* If a worker thread is touching this, defer the free() */
+            if (target->status.state == DOWNLOAD_STATE_RUNNING || 
+                target->status.state == DOWNLOAD_STATE_QUEUED) {
+                
+                target->status.state = DOWNLOAD_STATE_PAUSED; /* Forces curl to abort */
+                target->marked_for_removal = 1;               /* Tells worker to free it */
+                dm_log("[Remove] ID %d is active. Marked for garbage collection.", id);
+                
+            } else {
+                /* Safe to delete immediately */
+                *prev = target->next;
+                free(target);
+                dm_log("[Remove] ID %d removed immediately.", id);
+            }
             break;
         }
         prev = &(*prev)->next;
@@ -1013,4 +1054,15 @@ Download *download_manager_find(int id) {
     }
     ludo_mutex_unlock(&g_mgr.list_mutex);
     return found;
+}
+
+void download_manager_sync_ui(void) {
+    ludo_mutex_lock(&g_mgr.list_mutex);
+    for (Download *d = g_mgr.list; d; d = d->next) {
+        ProgressUpdate upd = {0};
+        upd.status = d->status;
+        /* Re-dispatch the loaded status to the GUI */
+        gui_dispatch_update(&upd);
+    }
+    ludo_mutex_unlock(&g_mgr.list_mutex);
 }

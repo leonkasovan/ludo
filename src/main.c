@@ -67,11 +67,35 @@ int main(int argc, char *argv[])
     lua_engine_init();
     lua_engine_load_plugins("plugins");
 
-    /* -------------------------------------------------------------- */
-    /* 5. Build and display the GUI                                     */
-    /* -------------------------------------------------------------- */
+    /* --------------------------------------------------------------------- */
+    /* 5. Build, display the GUI and sync it with the download manager state */
+    /* --------------------------------------------------------------------- */
     gui_create();
+    download_manager_sync_ui();
 
+    /* --------------------------------------------------------------------- */
+    /* 5b. Process command-line arguments (URLs)                             */
+    /* --------------------------------------------------------------------- */
+#ifdef _WIN32
+    /* On Windows with WinMain, __argc and __argv are globally provided by MSVCRT */
+    for (int i = 1; i < __argc; i++) {
+        if (__argv[i] && strlen(__argv[i]) > 0) {
+            task_queue_push(&g_url_queue, __argv[i]);
+        }
+    }
+#else
+    /* On Linux/macOS, use standard argc/argv from main() */
+    for (int i = 1; i < argc; i++) {
+        if (argv[i] && strlen(argv[i]) > 0) {
+            task_queue_push(&g_url_queue, argv[i]);
+        }
+    }
+#endif
+
+    /* -------------------------------------------------------------- */
+    /* 6. Enter the libui event loop (blocks until window is closed)  */
+    /* -------------------------------------------------------------- */
+    uiMain();
     /* -------------------------------------------------------------- */
     /* 6. Enter the libui event loop (blocks until window is closed)   */
     /* -------------------------------------------------------------- */
