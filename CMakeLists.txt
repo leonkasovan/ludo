@@ -4,6 +4,30 @@ project(ludo C CXX RC)
 set(CMAKE_C_STANDARD 11)
 set(CMAKE_C_STANDARD_REQUIRED ON)
 
+# -------------------------
+# Versioning (auto-increment build)
+# -------------------------
+set(LUDO_VERSION_MAJOR 0)
+set(LUDO_VERSION_MINOR 6)
+set(LUDO_VERSION_PATCH 0)
+
+set(LUDO_VERSION_FILE "${CMAKE_SOURCE_DIR}/build_version.txt")
+if(EXISTS "${LUDO_VERSION_FILE}")
+    file(READ "${LUDO_VERSION_FILE}" _build_val)
+    string(STRIP "${_build_val}" _build_val)
+    if(_build_val STREQUAL "")
+        set(_build_val 0)
+    endif()
+    math(EXPR _build_val "${_build_val} + 1")
+else()
+    set(_build_val 1)
+endif()
+file(WRITE "${LUDO_VERSION_FILE}" "${_build_val}\n")
+set(LUDO_VERSION_BUILD ${_build_val})
+set(LUDO_VERSION_STR "${LUDO_VERSION_MAJOR}.${LUDO_VERSION_MINOR}.${LUDO_VERSION_PATCH}.${LUDO_VERSION_BUILD}")
+set(LUDO_COMPANY "leonkasovan@gmail.com")
+set(LUDO_DESCRIPTION "Lua powered and streamlined download manager")
+
 # ------------------------------------------------------------
 # Build configurations
 # ------------------------------------------------------------
@@ -283,8 +307,12 @@ set(LUDO_SOURCES
     src/download_manager.c
     src/thread_queue.c
     third_party/libuilua/libuilua.c
-    src/ludo.rc
+    ${CMAKE_BINARY_DIR}/ludo.rc
 )
+
+# Generate version header and resource file
+configure_file(${CMAKE_SOURCE_DIR}/src/version.h.in ${CMAKE_BINARY_DIR}/generated/version.h @ONLY)
+configure_file(${CMAKE_SOURCE_DIR}/src/ludo.rc.in ${CMAKE_BINARY_DIR}/ludo.rc @ONLY)
 
 if(WIN32)
     # Windows application (no console window in release)
@@ -299,6 +327,7 @@ target_include_directories(ludo PRIVATE
     ${CMAKE_SOURCE_DIR}/third_party/libuilua
     ${LUA_SRC_DIR}
     "$<BUILD_INTERFACE:${CMAKE_BINARY_DIR}/curl_install/include>"
+    "$<BUILD_INTERFACE:${CMAKE_BINARY_DIR}/generated>"
 )
 
 target_link_libraries(ludo PRIVATE

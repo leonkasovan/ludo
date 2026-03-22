@@ -22,11 +22,7 @@
         "echo": true,
         "reveal": "always",
         "panel": "shared"
-      },
-      "problemMatcher": [
-        "$gcc",
-        "$msCompile"
-      ]
+      }
     },
     {
       "label": "Build (Configure + Build)",

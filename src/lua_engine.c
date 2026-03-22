@@ -140,11 +140,6 @@ void lua_engine_load_plugins(const char *plugin_dir) {
     }
     closedir(dir);
 #endif
-
-    char msg[256];
-    snprintf(msg, sizeof(msg), "[lua_engine] loaded %d plugin(s) from %s",
-             g_engine.count, plugin_dir);
-    gui_log(LOG_INFO, msg);
 }
 
 int lua_engine_process_url(const char *url) {
@@ -245,4 +240,10 @@ int lua_engine_process_url(const char *url) {
 
 void lua_engine_shutdown(void) {
     ludo_mutex_destroy(&g_engine.mutex);
+}
+
+void lua_engine_info(void) {
+    char msg[256];
+    snprintf(msg, sizeof(msg), "%d plugin(s) loaded ", g_engine.count);
+    gui_log(LOG_INFO, msg);
 }

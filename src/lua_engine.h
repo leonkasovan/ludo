@@ -39,4 +39,7 @@ int lua_engine_process_url(const char *url);
 /* Release all engine resources. */
 void lua_engine_shutdown(void);
 
+/* Log basic info about loaded plugins to the GUI log. */
+void lua_engine_info(void);
+
 #endif /* LUDO_LUA_ENGINE_H */

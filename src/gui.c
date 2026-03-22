@@ -10,6 +10,7 @@
 #include "thread_queue.h"
 
 #include "ui.h"
+#include "version.h"
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -147,7 +148,7 @@ static void autosize_downloads_table(void) {
     if (!g_gui.window) return;
 
     /* Desired percentage widths for columns 0..6: id,name,size,status,started,speed,progress */
-    const int percents[7] = {0,35,15,8,8,10,14};
+    const int percents[7] = {1,35,20,8,8,10,14};
 
     int win_w = 0, win_h = 0;
     uiWindowContentSize(g_gui.window, &win_w, &win_h);
@@ -159,13 +160,13 @@ static void autosize_downloads_table(void) {
     for (int col = 0; col < 7; col++) {
         int w = (available * percents[col]) / 100;
         /* Enforce sensible minimums */
-        if (col == 0) { if (w < 40) w = 40; }
+        if (col == 0) { if (w < 20) w = 20; }
         else if (col == 1) { if (w < 140) w = 140; }
         else if (col == 2) { if (w < 80) w = 80; }
-        else if (col == 3) { if (w < 80) w = 80; }
-        else if (col == 4) { if (w < 80) w = 80; }
+        else if (col == 3) { if (w < 70) w = 70; }
+        else if (col == 4) { if (w < 70) w = 70; }
         else if (col == 5) { if (w < 80) w = 80; }
-        else if (col == 6) { if (w < 100) w = 100; }
+        else if (col == 6) { if (w < 110) w = 110; }
         uiTableColumnSetWidth(g_downloads_table, col, w);
     }
 }
@@ -963,9 +964,8 @@ static void on_about_clicked(uiButton *sender, void *data) {
     (void)sender; (void)data;
     uiMsgBox(g_gui.window,
              "About LUDO",
-             "LUDO - LUa DOwnloader\n\n"
-             "A lightweight download manager with plugin support,\n"
-             "resume, progress tracking, and session persistence.");
+             "LUDO\n\n"
+             "Lua powered and streamlined download manager");
 }
 
 /* ------------------------------------------------------------------ */
@@ -1033,15 +1033,77 @@ static int on_should_quit(void *data) {
     return 1;
 }
 
+/* ========================================================================= */
+/* Menu Wrappers & Callbacks                                                 */
+/* ========================================================================= */
+
+static void menu_pause_cb(uiMenuItem *sender, uiWindow *w, void *data)   { on_pause_clicked(NULL, NULL); }
+static void menu_resume_cb(uiMenuItem *sender, uiWindow *w, void *data)  { on_resume_clicked(NULL, NULL); }
+static void menu_remove_cb(uiMenuItem *sender, uiWindow *w, void *data)  { on_remove_clicked(NULL, NULL); }
+static void menu_setting_cb(uiMenuItem *sender, uiWindow *w, void *data) { on_setting_clicked(NULL, NULL); }
+static void menu_plugin_cb(uiMenuItem *sender, uiWindow *w, void *data)  { on_plugin_clicked(NULL, NULL); }
+static void menu_http_cb(uiMenuItem *sender, uiWindow *w, void *data) { on_http_clicked(NULL, NULL); }
+static void menu_lua_cb(uiMenuItem *sender, uiWindow *w, void *data)  { on_lua_clicked(NULL, NULL); }
+static void menu_lua_ref_cb(uiMenuItem *sender, uiWindow *w, void *data) {
+    uiMsgBox(w, "LUA Reference", "Ludo Lua API:\n- ludo.download(url, [dir])\n- ludo.log(msg)\n- ludo.get_clipboard()");
+}
+
+static void menu_about_cb(uiMenuItem *sender, uiWindow *w, void *data) {
+    uiMsgBox(w, "About", "Ludo Lua powered Download Manager\nVersion 1.0\nA lightweight C/Lua download manager.");
+}
+
+/* ========================================================================= */
+/* Menu Initialization (Must run BEFORE uiNewWindow)                         */
+/* ========================================================================= */
+
+static void setup_menus(void) {
+    uiMenu *menu;
+    uiMenuItem *item;
+
+    /* ---- 1. Download Menu ---- */
+    menu = uiNewMenu("Download");
+    item = uiMenuAppendItem(menu, "Pause\tCtrl+P");
+    uiMenuItemOnClicked(item, menu_pause_cb, NULL);
+    item = uiMenuAppendItem(menu, "Resume\tCtrl+R");
+    uiMenuItemOnClicked(item, menu_resume_cb, NULL);
+    item = uiMenuAppendItem(menu, "Remove\tDel");
+    uiMenuItemOnClicked(item, menu_remove_cb, NULL);
+
+    /* ---- 2. Tools Menu ---- */
+    menu = uiNewMenu("Tools");
+    item = uiMenuAppendItem(menu, "Setting\tCtrl+S");
+    uiMenuItemOnClicked(item, menu_setting_cb, NULL);
+    item = uiMenuAppendItem(menu, "Plugins\tCtrl+Shift+P");
+    uiMenuItemOnClicked(item, menu_plugin_cb, NULL);
+    
+    /* Assuming on_http_clicked and on_lua_clicked were already updated to menu signatures */
+    item = uiMenuAppendItem(menu, "HTTP Tester\tCtrl+H");
+    uiMenuItemOnClicked(item, menu_http_cb, NULL);
+    item = uiMenuAppendItem(menu, "LUA Tester\tCtrl+L");
+    uiMenuItemOnClicked(item, menu_lua_cb, NULL);
+
+    /* ---- 3. Help Menu ---- */
+    menu = uiNewMenu("Help");
+    item = uiMenuAppendItem(menu, "LUA Reference\tF1");
+    uiMenuItemOnClicked(item, menu_lua_ref_cb, NULL);
+    
+    /* Cross-platform native standard for About */
+    item = uiMenuAppendAboutItem(menu); 
+    uiMenuItemOnClicked(item, menu_about_cb, NULL);
+}
+
 /* ------------------------------------------------------------------ */
 /* gui_create                                                           */
 /* ------------------------------------------------------------------ */
 
 void gui_create(void) {
+    /* IMPORTANT: Setup menus BEFORE creating the main window, as some platforms (e.g. macOS) require the menu to exist first for proper integration. */
+    setup_menus();
+    
     memset(&g_gui, 0, sizeof(g_gui));
 
     /* Outer window */
-    g_gui.window = uiNewWindow("LUDO - LUa DOwnloader", 800, 600, 0);
+    g_gui.window = uiNewWindow("LUDO - LUa DOwnloader", 800, 600, 1);
     uiWindowSetMargined(g_gui.window, 1);
     uiWindowOnClosing(g_gui.window, on_window_close, NULL);
     uiOnShouldQuit(on_should_quit, NULL);
@@ -1058,98 +1120,101 @@ void gui_create(void) {
     // uiBoxAppend(root, uiControl(title), 0);
 
     /* ---- Toolbar ---- */
-    uiBox *toolbar = uiNewHorizontalBox();
-    uiBoxSetPadded(toolbar, 0);
+    // uiBox *toolbar = uiNewHorizontalBox();
+    // uiBoxSetPadded(toolbar, 0);
 
-    g_gui.tb_add = uiNewButton("Add");
-    uiButtonOnClicked(g_gui.tb_add, on_add_clicked, NULL);
-    uiBoxAppend(toolbar, uiControl(g_gui.tb_add), 0);
+    // g_gui.tb_add = uiNewButton("Add");
+    // uiButtonOnClicked(g_gui.tb_add, on_add_clicked, NULL);
+    // uiBoxAppend(toolbar, uiControl(g_gui.tb_add), 0);
 
-    g_gui.tb_pause = uiNewButton("Pause");
-    uiButtonOnClicked(g_gui.tb_pause, on_pause_clicked, NULL);
-    uiBoxAppend(toolbar, uiControl(g_gui.tb_pause), 0);
+    // g_gui.tb_pause = uiNewButton("Pause");
+    // uiButtonOnClicked(g_gui.tb_pause, on_pause_clicked, NULL);
+    // uiBoxAppend(toolbar, uiControl(g_gui.tb_pause), 0);
 
-    g_gui.tb_resume = uiNewButton("Resume");
-    uiButtonOnClicked(g_gui.tb_resume, on_resume_clicked, NULL);
-    uiBoxAppend(toolbar, uiControl(g_gui.tb_resume), 0);
+    // g_gui.tb_resume = uiNewButton("Resume");
+    // uiButtonOnClicked(g_gui.tb_resume, on_resume_clicked, NULL);
+    // uiBoxAppend(toolbar, uiControl(g_gui.tb_resume), 0);
 
-    g_gui.tb_remove = uiNewButton("Remove");
-    uiButtonOnClicked(g_gui.tb_remove, on_remove_clicked, NULL);
-    uiBoxAppend(toolbar, uiControl(g_gui.tb_remove), 0);
+    // g_gui.tb_remove = uiNewButton("Remove");
+    // uiButtonOnClicked(g_gui.tb_remove, on_remove_clicked, NULL);
+    // uiBoxAppend(toolbar, uiControl(g_gui.tb_remove), 0);
 
-    uiBoxAppend(toolbar, uiControl(uiNewVerticalSeparator()), 0);
+    // uiBoxAppend(toolbar, uiControl(uiNewVerticalSeparator()), 0);
 
-    g_gui.tb_plugin = uiNewButton("Plugin");
-    uiButtonOnClicked(g_gui.tb_plugin, on_plugin_clicked, NULL);
-    uiBoxAppend(toolbar, uiControl(g_gui.tb_plugin), 0);
+    // g_gui.tb_plugin = uiNewButton("Plugin");
+    // uiButtonOnClicked(g_gui.tb_plugin, on_plugin_clicked, NULL);
+    // uiBoxAppend(toolbar, uiControl(g_gui.tb_plugin), 0);
 
-    g_gui.tb_setting = uiNewButton("Setting");
-    uiButtonOnClicked(g_gui.tb_setting, on_setting_clicked, NULL);
-    uiBoxAppend(toolbar, uiControl(g_gui.tb_setting), 0);
+    // g_gui.tb_setting = uiNewButton("Setting");
+    // uiButtonOnClicked(g_gui.tb_setting, on_setting_clicked, NULL);
+    // uiBoxAppend(toolbar, uiControl(g_gui.tb_setting), 0);
 
-    g_gui.tb_http = uiNewButton("HTTP");
-    uiButtonOnClicked(g_gui.tb_http, on_http_clicked, NULL);
-    uiBoxAppend(toolbar, uiControl(g_gui.tb_http), 0);
+    // g_gui.tb_http = uiNewButton("HTTP");
+    // uiButtonOnClicked(g_gui.tb_http, on_http_clicked, NULL);
+    // uiBoxAppend(toolbar, uiControl(g_gui.tb_http), 0);
 
-    g_gui.tb_lua = uiNewButton("Lua");
-    uiButtonOnClicked(g_gui.tb_lua, on_lua_clicked, NULL);
-    uiBoxAppend(toolbar, uiControl(g_gui.tb_lua), 0);
+    // g_gui.tb_lua = uiNewButton("Lua");
+    // uiButtonOnClicked(g_gui.tb_lua, on_lua_clicked, NULL);
+    // uiBoxAppend(toolbar, uiControl(g_gui.tb_lua), 0);
 
-    g_gui.tb_about = uiNewButton("About");
-    uiButtonOnClicked(g_gui.tb_about, on_about_clicked, NULL);
-    uiBoxAppend(toolbar, uiControl(g_gui.tb_about), 0);
+    // g_gui.tb_about = uiNewButton("About");
+    // uiButtonOnClicked(g_gui.tb_about, on_about_clicked, NULL);
+    // uiBoxAppend(toolbar, uiControl(g_gui.tb_about), 0);
 
-    uiBoxAppend(root, uiControl(toolbar), 0);
+    // uiBoxAppend(root, uiControl(toolbar), 0);
 
 #ifdef _WIN32
-    toolbar_icons_init();
+    // toolbar_icons_init();
 #endif
 
-    uiBoxAppend(root, uiControl(uiNewHorizontalSeparator()), 0);
+    // uiBoxAppend(root, uiControl(uiNewHorizontalSeparator()), 0);
 
     /* ---- URL input row ---- */
     uiBox *input_row = uiNewHorizontalBox();
     uiBoxSetPadded(input_row, 1);
 
+    /* ---- URL Label ---- */
+    uiLabel *url_label = uiNewLabel("URL");
+    uiBoxAppend(input_row, uiControl(url_label), 0);
+
+    /* ---- URL Entry and Add Button ---- */
     g_gui.url_entry = uiNewEntry();
     uiEntrySetText(g_gui.url_entry, "");
     uiBoxAppend(input_row, uiControl(g_gui.url_entry), 1 /* stretchy */);
 
+    g_gui.tb_add = uiNewButton(" +  Add Download ");
+    uiButtonOnClicked(g_gui.tb_add, on_add_clicked, NULL);
+    uiBoxAppend(input_row, uiControl(g_gui.tb_add), 0);
+
     uiBoxAppend(root, uiControl(input_row), 0);
 
-    /* ---- Downloads list ---- */
-        /* Downloads table (replaces vertical rows) */
-        uiGroup *downloads_group = uiNewGroup("Downloads");
-        uiGroupSetMargined(downloads_group, 1);
+    /* Table model handler */
+    memset(&g_downloads_mh, 0, sizeof(g_downloads_mh));
+    g_downloads_mh.NumColumns = downloads_modelNumColumns;
+    g_downloads_mh.ColumnType = downloads_modelColumnType;
+    g_downloads_mh.NumRows = downloads_modelNumRows;
+    g_downloads_mh.CellValue = downloads_modelCellValue;
+    g_downloads_mh.SetCellValue = downloads_modelSetCellValue;
 
-        /* Table model handler */
-        memset(&g_downloads_mh, 0, sizeof(g_downloads_mh));
-        g_downloads_mh.NumColumns = downloads_modelNumColumns;
-        g_downloads_mh.ColumnType = downloads_modelColumnType;
-        g_downloads_mh.NumRows = downloads_modelNumRows;
-        g_downloads_mh.CellValue = downloads_modelCellValue;
-        g_downloads_mh.SetCellValue = downloads_modelSetCellValue;
+    /* Create the table model and table */
+    g_downloads_model = uiNewTableModel(&g_downloads_mh);
+    uiTableParams tp;
+    memset(&tp, 0, sizeof(tp));
+    tp.Model = g_downloads_model;
+    tp.RowBackgroundColorModelColumn = -1;
+    uiTable *t = uiNewTable(&tp);
+    g_downloads_table = t;
 
-        /* Create the table model and table */
-        g_downloads_model = uiNewTableModel(&g_downloads_mh);
-        uiTableParams tp;
-        memset(&tp, 0, sizeof(tp));
-        tp.Model = g_downloads_model;
-        tp.RowBackgroundColorModelColumn = -1;
-        uiTable *t = uiNewTable(&tp);
-        g_downloads_table = t;
+    /* Append columns in new order: id, name, size, status, started, speed, progress */
+    uiTableAppendCheckboxColumn(t, "#", 0, uiTableModelColumnAlwaysEditable);
+    uiTableAppendTextColumn(t, "Name", 1, uiTableModelColumnNeverEditable, NULL);
+    uiTableAppendTextColumn(t, "Size", 2, uiTableModelColumnNeverEditable, NULL);
+    uiTableAppendTextColumn(t, "Status", 3, uiTableModelColumnNeverEditable, NULL);
+    uiTableAppendTextColumn(t, "Started", 4, uiTableModelColumnNeverEditable, NULL);
+    uiTableAppendTextColumn(t, "Speed", 5, uiTableModelColumnNeverEditable, NULL);
+    uiTableAppendProgressBarColumn(t, "Progress", 6);
 
-        /* Append columns in new order: id, name, size, status, started, speed, progress */
-        uiTableAppendCheckboxColumn(t, "#", 0, uiTableModelColumnAlwaysEditable);
-        uiTableAppendTextColumn(t, "Name", 1, uiTableModelColumnNeverEditable, NULL);
-        uiTableAppendTextColumn(t, "Size", 2, uiTableModelColumnNeverEditable, NULL);
-        uiTableAppendTextColumn(t, "Status", 3, uiTableModelColumnNeverEditable, NULL);
-        uiTableAppendTextColumn(t, "Started", 4, uiTableModelColumnNeverEditable, NULL);
-        uiTableAppendTextColumn(t, "Speed", 5, uiTableModelColumnNeverEditable, NULL);
-        uiTableAppendProgressBarColumn(t, "Progress", 6);
-
-        uiGroupSetChild(downloads_group, uiControl(t));
-        uiBoxAppend(root, uiControl(downloads_group), 1);
+    uiBoxAppend(root, uiControl(t), 1);
 
     uiBoxAppend(root, uiControl(uiNewHorizontalSeparator()), 0);
 
@@ -1179,6 +1244,13 @@ void gui_create(void) {
     ludo_thread_create(&worker, url_worker_thread, NULL);
     /* We intentionally don't join this thread — it exits when the queue
        is shut down during download_manager_shutdown(). */
-
-    gui_log(LOG_INFO, "Ready. Paste a URL and click Add.");
+    
+    {
+        char msg[256];
+        snprintf(msg, sizeof(msg), "LUDO v%s - %s (%s)", LUDO_VERSION_STR, LUDO_DESCRIPTION, LUDO_COMPANY);
+        gui_log(LOG_INFO, msg);
+        lua_engine_info();
+    }
+    
+    gui_log(LOG_INFO, "Ready. Paste a URL and click [Add Download].");
 }
