@@ -4,6 +4,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <time.h>
+#include <errno.h>
 #include <zlib.h>
 
 #ifdef _WIN32
@@ -86,6 +87,8 @@ void dm_log_close(void) {
 /* Internal types                                                       */
 /* ------------------------------------------------------------------ */
 
+typedef struct HeaderCtx HeaderCtx;
+
 /* WriteCtx extended: includes offset already on disk before this request */
 typedef struct {
     FILE  *fp;
@@ -96,6 +99,9 @@ typedef struct {
     time_t  last_ui_tick;   
     CURL   *curl;                   /* ADDED: For speed optimization */
     size_t  bytes_since_last_flush; /* ADDED: Flush tracker */
+    HeaderCtx *header_ctx;
+    const char *path;
+    int     resume_checked;
 } WriteCtx;
 
 /* curl debug callback — routes libcurl verbose output to dm_log
@@ -118,12 +124,13 @@ static int curl_debug_cb(CURL *handle, curl_infotype type,
 }
 
 /* Context for the response-header callback */
-typedef struct {
+struct HeaderCtx {
     char filename[512];   /* set if Content-Disposition provides one */
     int  has_filename;
     int  download_id;     /* filled by perform_download so header_cb can dispatch */
     int64_t content_length; /* parsed or obtained from HEAD */
-} HeaderCtx;
+    long response_code;   /* parsed from the HTTP status line */
+};
 
 /* Forward declare gui_dispatch_update so header_cb may call it before its
    static definition later in this file. */
@@ -146,6 +153,13 @@ static size_t header_cb(char *buf, size_t size, size_t nitems, void *userdata)
     }
 
     dm_log("[header_cb] %s", line);
+
+    if (strncmp(line, "HTTP/", 5) == 0) {
+        long code = 0;
+        if (sscanf(line, "HTTP/%*s %ld", &code) == 1) {
+            hctx->response_code = code;
+        }
+    }
 
     /* Content-Disposition: ...; filename="foo.zip" or filename=foo.zip
      * Skip RFC 5987 extended notation (filename*=) — only handle plain filename= */
@@ -364,6 +378,26 @@ static size_t write_cb(char *ptr, size_t size, size_t nmemb, void *userdata) {
         dm_log("[write_cb] id=%d fp is NULL!", ctx->download_id);
         return 0;
     }
+
+    if (ctx->resume_offset > 0 && !ctx->resume_checked) {
+        long response_code = ctx->header_ctx ? ctx->header_ctx->response_code : 0;
+        if (response_code == 200) {
+            dm_log("[write_cb] id=%d server ignored resume request; restarting from byte 0", ctx->download_id);
+            fclose(ctx->fp);
+            ctx->fp = fopen(ctx->path, "wb");
+            if (!ctx->fp) {
+                dm_log("[write_cb] id=%d reopen failed for fresh download: %s (errno=%d)",
+                       ctx->download_id, ctx->path, errno);
+                return 0;
+            }
+            ctx->resume_offset = 0;
+        } else if (response_code != 206) {
+            dm_log("[write_cb] id=%d unexpected resume response code %ld; aborting to avoid corruption",
+                   ctx->download_id, response_code);
+            return 0;
+        }
+        ctx->resume_checked = 1;
+    }
     
     size_t written = fwrite(ptr, size, nmemb, ctx->fp);
     size_t bytes_written = written * size;
@@ -492,11 +526,20 @@ static void perform_download(Download *d) {
     if (!curl) {
         dm_log("[perform_download] id=%d curl_easy_init() returned NULL", d->status.id);
         fclose(fp);
+        ProgressUpdate upd = {0};
+        upd.status.id = d->status.id;
+        upd.status.state = DOWNLOAD_STATE_FAILED;
+        strncpy(upd.status.filename, d->status.filename, sizeof(upd.status.filename) - 1);
+        snprintf(upd.error_msg, sizeof(upd.error_msg), "Failed to initialize curl");
+        ludo_mutex_lock(&g_mgr.list_mutex);
+        d->status.state = DOWNLOAD_STATE_FAILED;
+        ludo_mutex_unlock(&g_mgr.list_mutex);
+        gui_dispatch_update(&upd);
         return;
     }
     /* Publish handle so other threads can pause/resume via curl_easy_pause */
     ludo_mutex_lock(&g_mgr.list_mutex);
-    WriteCtx ctx = { fp, d->status.id, &pause_flag, &cancel_flag, (int64_t)resume_from, 0, curl, 0 };
+    WriteCtx ctx = { fp, d->status.id, &pause_flag, &cancel_flag, (int64_t)resume_from, 0, curl, 0, &hctx_local, path, 0 };
     d->curl_handle = (void *)curl;
     d->fp = fp; /* also publish file handle for pause logic */
     ludo_mutex_unlock(&g_mgr.list_mutex);
@@ -553,10 +596,10 @@ static void perform_download(Download *d) {
     }
 
     /* Update filename from Content-Disposition if server provided one */
-    if (res == CURLE_OK && hctx.has_filename) {
+    if (res == CURLE_OK && hctx_local.has_filename) {
         char new_path[2048];
         snprintf(new_path, sizeof(new_path), "%s%s%s",
-                 d->output_dir, sep, hctx.filename);
+                 d->output_dir, sep, hctx_local.filename);
         dm_log("[perform_download] id=%d renaming  %s  ->  %s", d->status.id, path, new_path);
         /* Only rename if different */
         if (strcmp(new_path, path) != 0) {
@@ -591,7 +634,7 @@ static void perform_download(Download *d) {
             dm_log("[perform_download] id=%d paths identical, no rename needed", d->status.id);
         }
         ludo_mutex_lock(&g_mgr.list_mutex);
-        strncpy(d->status.filename, hctx.filename, sizeof(d->status.filename) - 1);
+        strncpy(d->status.filename, hctx_local.filename, sizeof(d->status.filename) - 1);
         d->status.filename[sizeof(d->status.filename) - 1] = '\0';
         ludo_mutex_unlock(&g_mgr.list_mutex);
     }
@@ -617,6 +660,7 @@ static void perform_download(Download *d) {
     curl_easy_cleanup(curl);
     ludo_mutex_lock(&g_mgr.list_mutex);
     d->curl_handle = NULL;
+    d->fp = NULL;
     ludo_mutex_unlock(&g_mgr.list_mutex);
     dm_log("[perform_download] id=%d curl cleaned up", d->status.id);
 
@@ -663,36 +707,44 @@ static void perform_download(Download *d) {
         }
     }
 
+    int final_id = d->status.id;
     DownloadState final_state = d->status.state;
     time_t start_ts  = d->status.start_time;
     time_t finish_ts = d->status.end_time;
+    double final_progress = d->status.progress;
+    int64_t final_downloaded_bytes = d->status.downloaded_bytes;
+    int64_t final_total_bytes = d->status.total_bytes;
+    double final_speed_bps = d->status.speed_bps;
+    char final_filename[sizeof(d->status.filename)];
+    strncpy(final_filename, d->status.filename, sizeof(final_filename) - 1);
+    final_filename[sizeof(final_filename) - 1] = '\0';
     ludo_mutex_unlock(&g_mgr.list_mutex);
 
     if (is_deleted) {
-        dm_log("[perform_download] ID %d collected. Freeing memory safely.", d->status.id);
+        dm_log("[perform_download] ID %d collected. Freeing memory safely.", final_id);
         free(d);
         return; /* CRITICAL: Do not dispatch GUI updates for deleted memory */
     }
     
     dm_log("[perform_download] id=%d final state=%d filename=%s",
-           d->status.id, (int)final_state, d->status.filename);
+           final_id, (int)final_state, final_filename);
 
     ProgressUpdate upd = {0};
-    upd.status.id         = d->status.id;
+    upd.status.id         = final_id;
     upd.status.state      = final_state;
-    upd.status.progress   = (final_state == DOWNLOAD_STATE_COMPLETED) ? 100.0 : d->status.progress;
+    upd.status.progress   = (final_state == DOWNLOAD_STATE_COMPLETED) ? 100.0 : final_progress;
     upd.status.start_time = start_ts;
     upd.status.end_time   = finish_ts;
     /* Preserve totals/speeds so GUI can show Size/Speed after completion */
-    upd.status.downloaded_bytes = d->status.downloaded_bytes;
-    upd.status.total_bytes = d->status.total_bytes;
-    upd.status.speed_bps = d->status.speed_bps;
+    upd.status.downloaded_bytes = final_downloaded_bytes;
+    upd.status.total_bytes = final_total_bytes;
+    upd.status.speed_bps = final_speed_bps;
     if (res != CURLE_OK) {
         strncpy(upd.error_msg, curl_easy_strerror(res), sizeof(upd.error_msg) - 1);
     }
-    strncpy(upd.status.filename, d->status.filename, sizeof(upd.status.filename) - 1);
+    strncpy(upd.status.filename, final_filename, sizeof(upd.status.filename) - 1);
     gui_dispatch_update(&upd);
-    dm_log("[perform_download] id=%d done", d->status.id);
+    dm_log("[perform_download] id=%d done", final_id);
 }
 
 /* ------------------------------------------------------------------ */
@@ -729,16 +781,46 @@ static void db_save(const char *path) {
 }
 
 static void db_load(const char *path) {
+    /* Robust loader that can handle very long lines (long URLs with large
+       query strings). Uses a dynamically growing buffer to read one logical
+       line at a time. */
     FILE *f = fopen(path, "rb");
     if (!f) return;
 
-    char line[8192];
-    while (fgets(line, sizeof(line), f)) {
+    char *line = NULL;
+    size_t cap = 0;
+    while (1) {
+        /* Read a line into a dynamic buffer, growing until a newline or EOF */
+        if (line == NULL) {
+            cap = 8192;
+            line = (char *)malloc(cap);
+            if (!line) break;
+            line[0] = '\0';
+        }
+        size_t len = strlen(line);
+        char *res = fgets(line + len, (int)(cap - len), f);
+        if (!res) {
+            if (len == 0) break; /* EOF */
+            /* last line without newline — proceed */
+        } else {
+            /* If the buffer didn't end with a newline and we filled it, grow */
+            len = strlen(line);
+            if (len > 0 && line[len-1] != '\n') {
+                /* Need more space */
+                size_t newcap = cap * 2;
+                char *tmp = (char *)realloc(line, newcap);
+                if (!tmp) break;
+                line = tmp;
+                cap = newcap;
+                continue; /* continue reading into enlarged buffer */
+            }
+        }
+
+        /* Strip trailing CR/LF */
+        line[strcspn(line, "\r\n")] = 0;
+
         Download *d = (Download *)calloc(1, sizeof(Download));
         if (!d) break;
-
-        /* Strip newline */
-        line[strcspn(line, "\r\n")] = 0;
 
         char *p = line;
         char *fields[11];
@@ -751,15 +833,22 @@ static void db_load(const char *path) {
         }
 
         /* If we didn't find all 11 fields, skip it */
-        if (!fields[10]) { 
-            free(d); 
-            continue; 
+        if (!fields[10]) {
+            free(d);
+            /* reset buffer for next iteration */
+            free(line);
+            line = NULL;
+            cap = 0;
+            continue;
         }
 
         d->status.id = atoi(fields[0]);
         strncpy(d->url, fields[1], sizeof(d->url)-1);
+        d->url[sizeof(d->url)-1] = '\0';
         strncpy(d->output_dir, fields[2], sizeof(d->output_dir)-1);
+        d->output_dir[sizeof(d->output_dir)-1] = '\0';
         strncpy(d->status.filename, fields[3], sizeof(d->status.filename)-1);
+        d->status.filename[sizeof(d->status.filename)-1] = '\0';
         d->status.state = (DownloadState)atoi(fields[4]);
         d->status.progress = atof(fields[5]);
         d->status.speed_bps = atof(fields[6]);
@@ -777,7 +866,14 @@ static void db_load(const char *path) {
 
         d->next = g_mgr.list;
         g_mgr.list = d;
+
+        /* reset buffer for next line */
+        free(line);
+        line = NULL;
+        cap = 0;
     }
+
+    free(line);
     fclose(f);
 }
 

@@ -96,10 +96,6 @@ int main(int argc, char *argv[])
     /* 6. Enter the libui event loop (blocks until window is closed)  */
     /* -------------------------------------------------------------- */
     uiMain();
-    /* -------------------------------------------------------------- */
-    /* 6. Enter the libui event loop (blocks until window is closed)   */
-    /* -------------------------------------------------------------- */
-    uiMain();
 
     /* -------------------------------------------------------------- */
     /* 7. Tear down (in reverse order)                                  */
