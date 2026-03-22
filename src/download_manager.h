@@ -46,6 +46,7 @@ typedef struct Download {
     char             output_dir[1024];
     void            *curl_handle;    /* opaque pointer to active CURL handle, if any */
     FILE            *fp;             /* active file handle for writing, if any */
+    size_t           bytes_since_last_flush;
     struct Download *next;
 } Download;
 

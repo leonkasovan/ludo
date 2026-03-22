@@ -92,9 +92,10 @@ typedef struct {
     int    download_id;
     int   *pause_flag;
     int   *cancel_flag;
-    int64_t resume_offset;  /* bytes already on disk before CURLOPT_RESUME_FROM_LARGE */
-    time_t  last_ui_tick;   /* wall-clock second of last GUI dispatch */
-    int64_t last_abs_now;   /* last absolute downloaded bytes seen (for speed calc) */
+    int64_t resume_offset;  
+    time_t  last_ui_tick;   
+    CURL   *curl;                   /* ADDED: For speed optimization */
+    size_t  bytes_since_last_flush; /* ADDED: Flush tracker */
 } WriteCtx;
 
 /* curl debug callback — routes libcurl verbose output to dm_log
@@ -310,7 +311,7 @@ static int xfer_info_cb(void *clientp, curl_off_t dltotal, curl_off_t dlnow,
         /* Honor requested pause set via download_manager_pause() */
         if (d->status.state == DOWNLOAD_STATE_PAUSED) {
             ludo_mutex_unlock(&g_mgr.list_mutex);
-            return CURL_PROGRESSFUNC_CONTINUE;
+            return 1; /* Returning non-zero aborts the libcurl transfer gracefully */
         }
         /* dlnow/dltotal are relative to this request (post-resume);
            add the already-downloaded offset to get absolute counts. */
@@ -326,18 +327,13 @@ static int xfer_info_cb(void *clientp, curl_off_t dltotal, curl_off_t dlnow,
         /* Only mark RUNNING if not paused (checked above) */
         d->status.state = DOWNLOAD_STATE_RUNNING;
 
-        /* Compute instantaneous speed (bytes/sec) using previous sample */
-        double speed = 0.0;
-        if (ctx->last_abs_now > 0 && prev_tick > 0) {
-            time_t dt = now - prev_tick;
-            if (dt > 0) {
-                int64_t delta = abs_now - ctx->last_abs_now;
-                if (delta < 0) delta = 0;
-                speed = (double)delta / (double)dt;
-            }
+        /* Compute instantaneous speed (bytes/sec) via libcurl's moving average */
+        curl_off_t curl_speed = 0;
+        if (curl_easy_getinfo(ctx->curl, CURLINFO_SPEED_DOWNLOAD_T, &curl_speed) == CURLE_OK) {
+            d->status.speed_bps = (double)curl_speed;
+        } else {
+            d->status.speed_bps = 0.0;
         }
-        d->status.speed_bps = speed;
-        ctx->last_abs_now = abs_now;
     }
     ludo_mutex_unlock(&g_mgr.list_mutex);
 
@@ -350,6 +346,7 @@ static int xfer_info_cb(void *clientp, curl_off_t dltotal, curl_off_t dlnow,
         upd.status.total_bytes   = d->status.total_bytes;
         upd.status.speed_bps     = d->status.speed_bps;
         upd.status.start_time    = d->status.start_time;
+        fflush(ctx->fp); /* ensure progress is saved to disk in case of crash */
         gui_dispatch_update(&upd);
     }
 
@@ -367,12 +364,21 @@ static size_t write_cb(char *ptr, size_t size, size_t nmemb, void *userdata) {
         dm_log("[write_cb] id=%d fp is NULL!", ctx->download_id);
         return 0;
     }
+    
     size_t written = fwrite(ptr, size, nmemb, ctx->fp);
-    if (written != nmemb) {
-        dm_log("[write_cb] id=%d fwrite partial: expected %zu, wrote %zu (errno=%d)",
-               ctx->download_id, nmemb, written, errno);
+    size_t bytes_written = written * size;
+    
+    /* BEST PRACTICE: Periodic Flushing */
+    ctx->bytes_since_last_flush += bytes_written;
+    if (ctx->bytes_since_last_flush >= 64 * 1024) {
+        fflush(ctx->fp);
+        ctx->bytes_since_last_flush = 0;
     }
-    dm_log("[write_cb] id=%d wrote %zu bytes", ctx->download_id, (size_t)(written * size));
+    
+    if (written != nmemb) {
+        dm_log("[write_cb] id=%d fwrite partial: expected %zu, wrote %zu",
+               ctx->download_id, nmemb, written);
+    }
     return written;
 }
 
@@ -477,7 +483,6 @@ static void perform_download(Download *d) {
     int pause_flag  = 0;
     int cancel_flag = 0;
 
-    WriteCtx ctx = { fp, d->status.id, &pause_flag, &cancel_flag, (int64_t)resume_from, 0, 0 };
     HeaderCtx hctx_local;
     /* Seed main-transfer header context with any info learned from the HEAD preflight */
     memcpy(&hctx_local, &hctx, sizeof(hctx_local));
@@ -491,6 +496,7 @@ static void perform_download(Download *d) {
     }
     /* Publish handle so other threads can pause/resume via curl_easy_pause */
     ludo_mutex_lock(&g_mgr.list_mutex);
+    WriteCtx ctx = { fp, d->status.id, &pause_flag, &cancel_flag, (int64_t)resume_from, 0, curl, 0 };
     d->curl_handle = (void *)curl;
     d->fp = fp; /* also publish file handle for pause logic */
     ludo_mutex_unlock(&g_mgr.list_mutex);
@@ -561,26 +567,23 @@ static void perform_download(Download *d) {
                    d->status.id, rv, errno);
             if (rv != 0) {
                 if (errno == EEXIST) {
-                    /* Target exists — compare sizes. If identical, remove the
-                       temp file we wrote and treat download as finished. */
-                    struct stat st_new, st_old;
-                    if (stat(new_path, &st_new) == 0 && stat(path, &st_old) == 0) {
-                        if (st_new.st_size == st_old.st_size) {
-                            dm_log("[perform_download] id=%d target exists with same size; removing temp %s",
-                                   d->status.id, path);
-                            if (remove(path) == 0) {
-                                dm_log("[perform_download] id=%d removed temp file %s", d->status.id, path);
+                    int rv = rename(path, new_path);
+                    dm_log("[perform_download] id=%d rename() returned %d (errno=%d)",
+                        d->status.id, rv, errno);
+                    
+                    if (rv != 0) {
+                        /* Handle file collision (common on Windows) */
+                        struct stat st_new, st_old;
+                        if (stat(new_path, &st_new) == 0 && stat(path, &st_old) == 0) {
+                            if (st_new.st_size == st_old.st_size) {
+                                dm_log("[perform_download] id=%d Target exists with exact same size. Discarding temp.", d->status.id);
+                                remove(path);
                             } else {
-                                dm_log("[perform_download] id=%d failed to remove temp %s (errno=%d)",
-                                       d->status.id, path, errno);
+                                dm_log("[perform_download] id=%d Target exists with different size. Overwriting...", d->status.id);
+                                remove(new_path);            // 1. Delete the old file
+                                rename(path, new_path);      // 2. Rename the new one
                             }
-                        } else {
-                            dm_log("[perform_download] id=%d target exists with different size; keeping temp %s",
-                                   d->status.id, path);
                         }
-                    } else {
-                        dm_log("[perform_download] id=%d stat failed when handling existing target (errno=%d)",
-                               d->status.id, errno);
                     }
                 }
             }
@@ -788,14 +791,30 @@ static void *worker_thread(void *arg) {
     (void)arg;
     URLTask task;
     while (task_queue_pop(&g_mgr.queue, &task)) {
-        /* Allocate new Download record */
+        
+        /* Check if this is a command to resume an existing download */
+        if (strncmp(task.url, "INTERNAL_RESUME:", 16) == 0) {
+            int resume_id = atoi(task.url + 16);
+            ludo_mutex_lock(&g_mgr.list_mutex);
+            Download *res_d = NULL;
+            for (Download *it = g_mgr.list; it; it = it->next) {
+                if (it->status.id == resume_id) { res_d = it; break; }
+            }
+            ludo_mutex_unlock(&g_mgr.list_mutex);
+            
+            if (res_d && res_d->status.state == DOWNLOAD_STATE_QUEUED) {
+                perform_download(res_d);
+            }
+            continue;
+        }
+
+        /* --- Standard logic for NEW downloads --- */
         Download *d = (Download *)calloc(1, sizeof(Download));
         if (!d) continue;
 
         ludo_mutex_lock(&g_mgr.list_mutex);
         d->status.id = g_mgr.next_id++;
         strncpy(d->url, task.url, sizeof(d->url) - 1);
-        /* Use per-task output_dir when provided, else the global default */
         if (task.output_dir[0] != '\0')
             strncpy(d->output_dir, task.output_dir, sizeof(d->output_dir) - 1);
         else
@@ -912,19 +931,13 @@ int download_manager_add(const char *url, const char *output_dir, DownloadMode m
 void download_manager_pause(int id) {
     ludo_mutex_lock(&g_mgr.list_mutex);
     for (Download *d = g_mgr.list; d; d = d->next) {
-        if (d->status.id == id && d->status.state == DOWNLOAD_STATE_RUNNING) {
+        if (d->status.id == id && (d->status.state == DOWNLOAD_STATE_RUNNING || d->status.state == DOWNLOAD_STATE_QUEUED)) {
             d->status.state = DOWNLOAD_STATE_PAUSED;
-            /* If there's an active CURL handle, pause it immediately */
-            if (d->curl_handle) {
-                CURL *h = (CURL *)d->curl_handle;
-                dm_log("[download_manager_pause] id=%d calling curl_easy_pause", d->status.id);
-                curl_easy_pause(h, CURLPAUSE_ALL);
-            }
-            if (d->fp) {
-                dm_log("[download_manager_pause] id=%d closing file due to pause", d->status.id);
-                fclose(d->fp);
-                d->fp = NULL;
-            }
+            dm_log("[download_manager_pause] id=%d marked as paused", d->status.id);
+            /* We DO NOT touch d->fp or d->curl_handle here. 
+               The worker thread's xfer_info_cb will detect the PAUSED state,
+               cleanly abort the transfer, and close the file safely.
+            */
             break;
         }
     }
@@ -935,22 +948,20 @@ void download_manager_resume(int id) {
     ludo_mutex_lock(&g_mgr.list_mutex);
     for (Download *d = g_mgr.list; d; d = d->next) {
         if (d->status.id == id && d->status.state == DOWNLOAD_STATE_PAUSED) {
-            /* If transfer is active and handle exists, unpause directly, reopen file */
-            if (d->curl_handle) {
-                CURL *h = (CURL *)d->curl_handle;
-                dm_log("[download_manager_resume] id=%d calling curl_easy_pause(CONT)", d->status.id);
-                curl_easy_pause(h, CURLPAUSE_CONT);
-                if (!d->fp && d->output_path[0] != '\0') {
-                    d->fp = fopen(d->output_path, "ab");
-                    if (!d->fp) {
-                        dm_log("[download_manager_resume] id=%d failed to reopen file: %s", d->status.id, d->output_path);
-                    }
-                }
-                d->status.state = DOWNLOAD_STATE_RUNNING;
-            } else {
-                d->status.state = DOWNLOAD_STATE_QUEUED;
-                task_queue_push(&g_mgr.queue, d->url);
-            }
+            d->status.state = DOWNLOAD_STATE_QUEUED;
+            dm_log("[download_manager_resume] id=%d queued for resume", d->status.id);
+
+            /* Push an internal task to tell the worker thread to resume this ID */
+            URLTask task;
+            memset(&task, 0, sizeof(task));
+            snprintf(task.url, sizeof(task.url), "INTERNAL_RESUME:%d", d->status.id);
+            task_queue_push_task(&g_mgr.queue, &task);
+            
+            /* Notify GUI to update UI state immediately */
+            ProgressUpdate upd = {0};
+            upd.status = d->status;
+            gui_dispatch_update(&upd);
+            
             break;
         }
     }

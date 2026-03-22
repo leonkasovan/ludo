@@ -592,17 +592,19 @@ static int pick_target_download_id(void) {
         return g_gui.active_download_id;
     }
 
-    Download *list = download_manager_get_list();
-    if (!list) return -1;
-
-    for (Download *d = list; d; d = d->next) {
-        if (d->status.state == DOWNLOAD_STATE_RUNNING ||
-            d->status.state == DOWNLOAD_STATE_QUEUED ||
-            d->status.state == DOWNLOAD_STATE_PAUSED) {
-            return d->status.id;
+    /* BEST PRACTICE: Iterate the local GUI state, not the shared backend list */
+    for (int i = 0; i < g_gui.row_count; i++) {
+        DownloadState state = g_gui.rows[i].state;
+        if (state == DOWNLOAD_STATE_RUNNING ||
+            state == DOWNLOAD_STATE_QUEUED ||
+            state == DOWNLOAD_STATE_PAUSED) {
+            return g_gui.rows[i].download_id;
         }
     }
-    return list->status.id;
+    
+    /* Fallback to the first row if nothing active */
+    if (g_gui.row_count > 0) return g_gui.rows[0].download_id;
+    return -1;
 }
 
 #ifdef _WIN32
