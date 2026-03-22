@@ -549,7 +549,6 @@ static uiTableValue *downloads_modelCellValue(uiTableModelHandler *mh, uiTableMo
             switch (r->state) {
                 case DOWNLOAD_STATE_QUEUED: st = "Queued"; break;
                 case DOWNLOAD_STATE_RUNNING: st = "Running"; break;
-                case DOWNLOAD_STATE_PAUSED: st = "Paused"; break;
                 case DOWNLOAD_STATE_COMPLETED: st = "Completed"; break;
                 case DOWNLOAD_STATE_FAILED: st = "Failed"; break;
                 default: st = "Unknown"; break;
@@ -595,9 +594,7 @@ static int pick_target_download_id(void) {
     /* BEST PRACTICE: Iterate the local GUI state, not the shared backend list */
     for (int i = 0; i < g_gui.row_count; i++) {
         DownloadState state = g_gui.rows[i].state;
-        if (state == DOWNLOAD_STATE_RUNNING ||
-            state == DOWNLOAD_STATE_QUEUED ||
-            state == DOWNLOAD_STATE_PAUSED) {
+        if (state == DOWNLOAD_STATE_RUNNING || state == DOWNLOAD_STATE_QUEUED) {
             return g_gui.rows[i].download_id;
         }
     }
