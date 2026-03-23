@@ -12,12 +12,115 @@
 #include <stdlib.h>
 #include <string.h>
 #include <stdio.h>
+#include <wchar.h>
 
 #ifdef _WIN32
 #include <windows.h>
+
+static wchar_t *utf8_to_wide_dup(const char *src) {
+    int needed;
+    wchar_t *dst;
+
+    if (!src) return NULL;
+    needed = MultiByteToWideChar(CP_UTF8, 0, src, -1, NULL, 0);
+    if (needed <= 0) return NULL;
+    dst = (wchar_t *)malloc((size_t)needed * sizeof(wchar_t));
+    if (!dst) return NULL;
+    if (MultiByteToWideChar(CP_UTF8, 0, src, -1, dst, needed) <= 0) {
+        free(dst);
+        return NULL;
+    }
+    return dst;
+}
+
+static int wide_to_utf8(const wchar_t *src, char *dst, size_t dst_sz) {
+    int needed;
+
+    if (!src || !dst || dst_sz == 0) return 0;
+    needed = WideCharToMultiByte(CP_UTF8, 0, src, -1, NULL, 0, NULL, NULL);
+    if (needed <= 0 || (size_t)needed > dst_sz) return 0;
+    return WideCharToMultiByte(CP_UTF8, 0, src, -1, dst, (int)dst_sz, NULL, NULL) > 0;
+}
+
+static FILE *fopen_utf8(const char *path, const char *mode) {
+    FILE *fp = NULL;
+    wchar_t *wpath = utf8_to_wide_dup(path);
+    wchar_t wmode[4] = {0};
+    size_t i;
+
+    if (!wpath) return NULL;
+    for (i = 0; mode[i] != '\0' && i + 1 < sizeof(wmode) / sizeof(wmode[0]); i++) {
+        wmode[i] = (wchar_t)(unsigned char)mode[i];
+    }
+    fp = _wfopen(wpath, wmode);
+    free(wpath);
+    return fp;
+}
 #else
 #include <dirent.h>
+
+static FILE *fopen_utf8(const char *path, const char *mode) {
+    return fopen(path, mode);
+}
 #endif
+
+static int lua_loadfile_utf8(lua_State *L, const char *path) {
+    FILE *f = fopen_utf8(path, "rb");
+    char *chunk = NULL;
+    char *chunkname = NULL;
+    long file_size;
+    int status = LUA_ERRFILE;
+
+    if (!f) {
+        lua_pushfstring(L, "failed to open %s", path);
+        return status;
+    }
+    if (fseek(f, 0, SEEK_END) != 0) {
+        fclose(f);
+        lua_pushfstring(L, "failed to seek %s", path);
+        return status;
+    }
+    file_size = ftell(f);
+    if (file_size < 0) {
+        fclose(f);
+        lua_pushfstring(L, "failed to size %s", path);
+        return status;
+    }
+    if (fseek(f, 0, SEEK_SET) != 0) {
+        fclose(f);
+        lua_pushfstring(L, "failed to rewind %s", path);
+        return status;
+    }
+
+    chunk = (char *)malloc((size_t)file_size + 1);
+    if (!chunk) {
+        fclose(f);
+        lua_pushliteral(L, "out of memory");
+        return LUA_ERRMEM;
+    }
+    if (file_size > 0 && fread(chunk, 1, (size_t)file_size, f) != (size_t)file_size) {
+        free(chunk);
+        fclose(f);
+        lua_pushfstring(L, "failed to read %s", path);
+        return status;
+    }
+    chunk[file_size] = '\0';
+    fclose(f);
+
+    chunkname = (char *)malloc(strlen(path) + 2);
+    if (!chunkname) {
+        free(chunk);
+        lua_pushliteral(L, "out of memory");
+        return LUA_ERRMEM;
+    }
+    chunkname[0] = '@';
+    strcpy(chunkname + 1, path);
+
+    status = luaL_loadbufferx(L, chunk, (size_t)file_size, chunkname, NULL);
+    free(chunkname);
+    free(chunk);
+    return status;
+}
 
 /* ------------------------------------------------------------------ */
 /* Plugin registry                                                      */
@@ -69,7 +172,10 @@ static lua_State *create_lua_state(void) {
  * functions (the plugin "contract"), 0 otherwise.
  */
 static int plugin_check_contract(lua_State *L, const char *path) {
-    if (luaL_dofile(L, path) != LUA_OK) {
+    int status;
+
+    status = lua_loadfile_utf8(L, path);
+    if (status != LUA_OK || lua_pcall(L, 0, 1, 0) != LUA_OK) {
         const char *err = lua_tostring(L, -1);
         char msg[1024];
         snprintf(msg, sizeof(msg), "[lua_engine] failed to load %s: %s",
@@ -106,23 +212,43 @@ void lua_engine_init(void) {
 
 void lua_engine_load_plugins(const char *plugin_dir) {
 #ifdef _WIN32
-    char pattern[512];
-    snprintf(pattern, sizeof(pattern), "%s\\*.lua", plugin_dir);
-    WIN32_FIND_DATAA fd;
-    HANDLE hFind = FindFirstFileA(pattern, &fd);
-    if (hFind == INVALID_HANDLE_VALUE) return;
+    wchar_t pattern[512];
+    wchar_t base_dir[512];
+    WIN32_FIND_DATAW fd;
+    wchar_t *plugin_dir_w = utf8_to_wide_dup(plugin_dir);
+    HANDLE hFind;
+
+    if (!plugin_dir_w) return;
+    if (_snwprintf(base_dir, sizeof(base_dir) / sizeof(base_dir[0]), L"%ls", plugin_dir_w) < 0) {
+        free(plugin_dir_w);
+        return;
+    }
+    if (_snwprintf(pattern, sizeof(pattern) / sizeof(pattern[0]), L"%ls\\*.lua", plugin_dir_w) < 0) {
+        free(plugin_dir_w);
+        return;
+    }
+
+    hFind = FindFirstFileW(pattern, &fd);
+    if (hFind == INVALID_HANDLE_VALUE) {
+        free(plugin_dir_w);
+        return;
+    }
     do {
         if (fd.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) continue;
         ludo_mutex_lock(&g_engine.mutex);
         if (g_engine.count < MAX_PLUGINS) {
-            snprintf(g_engine.plugins[g_engine.count].path,
-                     sizeof(g_engine.plugins[0].path),
-                     "%s\\%s", plugin_dir, fd.cFileName);
-            g_engine.count++;
+            wchar_t full_path[512];
+            if (_snwprintf(full_path, sizeof(full_path) / sizeof(full_path[0]), L"%ls\\%ls", base_dir, fd.cFileName) >= 0 &&
+                wide_to_utf8(full_path,
+                             g_engine.plugins[g_engine.count].path,
+                             sizeof(g_engine.plugins[g_engine.count].path))) {
+                g_engine.count++;
+            }
         }
         ludo_mutex_unlock(&g_engine.mutex);
-    } while (FindNextFileA(hFind, &fd));
+    } while (FindNextFileW(hFind, &fd));
     FindClose(hFind);
+    free(plugin_dir_w);
 #else
     DIR *dir = opendir(plugin_dir);
     if (!dir) return;
@@ -162,7 +288,7 @@ int lua_engine_process_url(const char *url) {
 
     for (int i = 0; i < count; i++) {
         /* Load the plugin file; it should return a table */
-        if (luaL_loadfile(L, plugins[i].path) != LUA_OK) {
+        if (lua_loadfile_utf8(L, plugins[i].path) != LUA_OK) {
             const char *e = lua_tostring(L, -1);
             char msg[512];
             snprintf(msg, sizeof(msg), "[lua_engine] load error %s: %s",

@@ -1,1 +1,4 @@
-1. Bug when runnning download then force closing the app while the download is still in progress. The download size is not saved, and when the app is restarted. Fix it by update the size based on the file size on disk if the download is in progress. (src/download_manager.c)
+1. Create config.lua and implement ludo.setting.maxThread, ludo.setting.maxDownloadRetry
+2. Implement ludo.http_tester.response.header(). ludo.http_tester.response.content() ludo.http_tester.request()
+3. Find downloads history
+4. Plugins LUA: convert output audio , convert images into cbs.

@@ -5,6 +5,7 @@
 #include <string.h>
 #include <time.h>
 #include <errno.h>
+#include <wchar.h>
 #include <zlib.h>
 
 #ifdef _WIN32
@@ -35,13 +36,22 @@ FILE *g_log_fp = NULL;
 #include <windows.h>   /* for CRITICAL_SECTION */
 static CRITICAL_SECTION g_log_cs;
 static int g_log_cs_init = 0;
+static FILE *dm_fopen_utf8(const char *path, const char *mode);
+static int dm_stat_utf8(const char *path, struct _stat64 *st);
+static int dm_rename_utf8(const char *old_path, const char *new_path);
+static int dm_remove_utf8(const char *path);
+#else
+static FILE *dm_fopen_utf8(const char *path, const char *mode);
+static int dm_stat_utf8(const char *path, struct stat *st);
+static int dm_rename_utf8(const char *old_path, const char *new_path);
+static int dm_remove_utf8(const char *path);
 #endif
 
 void dm_log_init(void) {
 #ifdef _WIN32
     if (!g_log_cs_init) { InitializeCriticalSection(&g_log_cs); g_log_cs_init = 1; }
 #endif
-    g_log_fp = fopen("dm_debug.log", "a");
+    g_log_fp = dm_fopen_utf8("dm_debug.log", "a");
     if (!g_log_fp) return;
     /* Header line so runs are separated */
     fprintf(g_log_fp, "\n===== dm session start =====\n");
@@ -315,14 +325,112 @@ static void build_download_path(const Download *d, char *path, size_t path_sz) {
     snprintf(path, path_sz, "%s%s%s", d->output_dir, sep, d->status.filename);
 }
 
+#ifdef _WIN32
+static wchar_t *dm_utf8_to_wide_dup(const char *src) {
+    int needed;
+    wchar_t *dst;
+
+    if (!src) return NULL;
+    needed = MultiByteToWideChar(CP_UTF8, 0, src, -1, NULL, 0);
+    if (needed <= 0) return NULL;
+    dst = (wchar_t *)malloc((size_t)needed * sizeof(wchar_t));
+    if (!dst) return NULL;
+    if (MultiByteToWideChar(CP_UTF8, 0, src, -1, dst, needed) <= 0) {
+        free(dst);
+        return NULL;
+    }
+    return dst;
+}
+
+static const wchar_t *dm_wmode(const char *mode) {
+    if (strcmp(mode, "rb") == 0) return L"rb";
+    if (strcmp(mode, "wb") == 0) return L"wb";
+    if (strcmp(mode, "ab") == 0) return L"ab";
+    if (strcmp(mode, "r") == 0) return L"r";
+    if (strcmp(mode, "w") == 0) return L"w";
+    if (strcmp(mode, "a") == 0) return L"a";
+    return NULL;
+}
+
+static FILE *dm_fopen_utf8(const char *path, const char *mode) {
+    FILE *fp = NULL;
+    wchar_t *wpath = dm_utf8_to_wide_dup(path);
+    const wchar_t *wmode = dm_wmode(mode);
+
+    if (!wpath || !wmode) {
+        free(wpath);
+        return NULL;
+    }
+    fp = _wfopen(wpath, wmode);
+    free(wpath);
+    return fp;
+}
+
+static int dm_stat_utf8(const char *path, struct _stat64 *st) {
+    int rv;
+    wchar_t *wpath = dm_utf8_to_wide_dup(path);
+
+    if (!wpath) return -1;
+    rv = _wstat64(wpath, st);
+    free(wpath);
+    return rv;
+}
+
+static int dm_rename_utf8(const char *old_path, const char *new_path) {
+    int rv;
+    wchar_t *wold = dm_utf8_to_wide_dup(old_path);
+    wchar_t *wnew = dm_utf8_to_wide_dup(new_path);
+
+    if (!wold || !wnew) {
+        free(wold);
+        free(wnew);
+        return -1;
+    }
+    rv = _wrename(wold, wnew);
+    free(wold);
+    free(wnew);
+    return rv;
+}
+
+static int dm_remove_utf8(const char *path) {
+    int rv;
+    wchar_t *wpath = dm_utf8_to_wide_dup(path);
+
+    if (!wpath) return -1;
+    rv = _wremove(wpath);
+    free(wpath);
+    return rv;
+}
+#else
+static FILE *dm_fopen_utf8(const char *path, const char *mode) {
+    return fopen(path, mode);
+}
+
+static int dm_stat_utf8(const char *path, struct stat *st) {
+    return stat(path, st);
+}
+
+static int dm_rename_utf8(const char *old_path, const char *new_path) {
+    return rename(old_path, new_path);
+}
+
+static int dm_remove_utf8(const char *path) {
+    return remove(path);
+}
+#endif
+
 static void sync_download_size_from_disk(Download *d) {
     if (!d || d->status.filename[0] == '\0') return;
 
     char path[2048];
+#ifdef _WIN32
+    struct _stat64 st;
+#else
     struct stat st;
+#endif
 
     build_download_path(d, path, sizeof(path));
-    if (stat(path, &st) != 0) return;
+    if (dm_stat_utf8(path, &st) != 0) return;
 
     d->status.downloaded_bytes = (int64_t)st.st_size;
     if (d->status.total_bytes > 0) {
@@ -421,7 +529,7 @@ static size_t write_cb(char *ptr, size_t size, size_t nmemb, void *userdata) {
         if (response_code == 200) {
             dm_log("[write_cb] id=%d server ignored resume request; restarting from byte 0", ctx->download_id);
             fclose(ctx->fp);
-            ctx->fp = fopen(ctx->path, "wb");
+            ctx->fp = dm_fopen_utf8(ctx->path, "wb");
             if (!ctx->fp) {
                 dm_log("[write_cb] id=%d reopen failed for fresh download: %s (errno=%d)",
                        ctx->download_id, ctx->path, errno);
@@ -510,8 +618,12 @@ static void perform_download(Download *d) {
     /* Decide whether to skip, resume, or start fresh based on existing file */
     curl_off_t resume_from = 0;
     {
+#ifdef _WIN32
+        struct _stat64 st;
+#else
         struct stat st;
-        if (stat(path, &st) == 0 && st.st_size > 0) {
+#endif
+        if (dm_stat_utf8(path, &st) == 0 && st.st_size > 0) {
             if (hctx.content_length > 0 && (int64_t)st.st_size == hctx.content_length) {
                 /* File already complete — mark completed and notify GUI */
                 ludo_mutex_lock(&g_mgr.list_mutex);
@@ -541,7 +653,7 @@ static void perform_download(Download *d) {
         }
     }
 
-    FILE *fp = fopen(path, resume_from > 0 ? "ab" : "wb");
+    FILE *fp = dm_fopen_utf8(path, resume_from > 0 ? "ab" : "wb");
     if (!fp) {
         dm_log("[perform_download] id=%d fopen failed for: %s (errno=%d)",
                d->status.id, path, errno);
@@ -651,26 +763,30 @@ static void perform_download(Download *d) {
         if (strcmp(new_path, path) != 0) {
             fclose(fp);
             fp = NULL;
-            int rv = rename(path, new_path);
+            int rv = dm_rename_utf8(path, new_path);
             dm_log("[perform_download] id=%d rename() returned %d (errno=%d)",
                    d->status.id, rv, errno);
             if (rv != 0) {
                 if (errno == EEXIST) {
-                    int rv = rename(path, new_path);
+                    int rv = dm_rename_utf8(path, new_path);
                     dm_log("[perform_download] id=%d rename() returned %d (errno=%d)",
                         d->status.id, rv, errno);
                     
                     if (rv != 0) {
                         /* Handle file collision (common on Windows) */
+#ifdef _WIN32
+                        struct _stat64 st_new, st_old;
+#else
                         struct stat st_new, st_old;
-                        if (stat(new_path, &st_new) == 0 && stat(path, &st_old) == 0) {
+#endif
+                        if (dm_stat_utf8(new_path, &st_new) == 0 && dm_stat_utf8(path, &st_old) == 0) {
                             if (st_new.st_size == st_old.st_size) {
                                 dm_log("[perform_download] id=%d Target exists with exact same size. Discarding temp.", d->status.id);
-                                remove(path);
+                                dm_remove_utf8(path);
                             } else {
                                 dm_log("[perform_download] id=%d Target exists with different size. Overwriting...", d->status.id);
-                                remove(new_path);            // 1. Delete the old file
-                                rename(path, new_path);      // 2. Rename the new one
+                                dm_remove_utf8(new_path);    // 1. Delete the old file
+                                dm_rename_utf8(path, new_path); // 2. Rename the new one
                             }
                         }
                     }
@@ -717,8 +833,12 @@ static void perform_download(Download *d) {
         char final_path[2048];
         snprintf(final_path, sizeof(final_path), "%s%s%s",
                  d->output_dir, sep, d->status.filename);
+#ifdef _WIN32
+        struct _stat64 st;
+#else
         struct stat st;
-        if (stat(final_path, &st) == 0) {
+#endif
+        if (dm_stat_utf8(final_path, &st) == 0) {
             ludo_mutex_lock(&g_mgr.list_mutex);
             d->status.downloaded_bytes = (int64_t)st.st_size;
             d->status.total_bytes = (int64_t)st.st_size;
@@ -807,11 +927,17 @@ static void perform_download(Download *d) {
  */
 static void db_save_and_archive(void) {
     /* Check if the existing DB has crossed the archive threshold */
+#ifdef _WIN32
+    struct _stat64 st;
+#else
     struct stat st;
-    int trigger_archive = (stat(DB_PATH, &st) == 0 && st.st_size >= DB_MAX_BYTES);
+#endif
+    int trigger_archive = (dm_stat_utf8(DB_PATH, &st) == 0 && st.st_size >= DB_MAX_BYTES);
 
-    /* Write to a temporary file first for atomic safety against crashes */
-    FILE *f_db = fopen(DB_PATH ".tmp", "wb");
+     /* Write to a temporary file first for atomic safety against crashes.
+         Use text mode so newline semantics are consistent with db_load on
+         Windows (CRLF normalization when writing/reading in text mode). */
+     FILE *f_db = dm_fopen_utf8(DB_PATH ".tmp", "w");
     if (!f_db) return;
 
     gzFile f_gz = NULL;
@@ -847,42 +973,60 @@ static void db_save_and_archive(void) {
     if (f_gz) gzclose(f_gz);
 
     /* Atomic replace: ensures data isn't corrupted if power is lost during save */
-    remove(DB_PATH);
-    rename(DB_PATH ".tmp", DB_PATH);
+    dm_remove_utf8(DB_PATH);
+    dm_rename_utf8(DB_PATH ".tmp", DB_PATH);
 }
 
 static void db_load(const char *path) {
     /* Robust loader that can handle very long lines (long URLs with large
        query strings). Uses a dynamically growing buffer to read one logical
        line at a time. */
-    FILE *f = fopen(path, "rb");
+    /* Open in text mode so CRLF is normalized on Windows. We still
+       defensively strip CR/LF later to be robust on all platforms. */
+    FILE *f = dm_fopen_utf8(path, "r");
     if (!f) return;
 
     char *line = NULL;
     size_t cap = 0;
     while (1) {
-        /* Read a line into a dynamic buffer, growing until a newline or EOF */
+        /* Ensure buffer exists */
         if (line == NULL) {
             cap = 8192;
             line = (char *)malloc(cap);
             if (!line) break;
             line[0] = '\0';
         }
+
+        /* Determine how much space remains and read into it */
         size_t len = strlen(line);
-        char *res = fgets(line + len, (int)(cap - len), f);
+        size_t avail = cap - len;
+        if (avail < 2) {
+            /* Need at least space for one char + NUL */
+            size_t newcap = cap * 2;
+            char *tmp = (char *)realloc(line, newcap);
+            if (!tmp) { free(line); line = NULL; cap = 0; break; }
+            line = tmp; cap = newcap; len = strlen(line); avail = cap - len;
+        }
+
+        char *res = fgets(line + len, (int)avail, f);
         if (!res) {
-            if (len == 0) break; /* EOF */
-            /* last line without newline — proceed */
+            if (feof(f)) {
+                if (len == 0) break; /* clean EOF */
+                /* EOF after a partial line: process what we have */
+            } else {
+                /* I/O error: abort parsing */
+                free(line); line = NULL; cap = 0; break;
+            }
         } else {
-            /* If the buffer didn't end with a newline and we filled it, grow */
+            /* If we read data but didn't encounter a newline and the buffer
+               was filled, grow and continue reading the logical line. */
             len = strlen(line);
-            if (len > 0 && line[len-1] != '\n') {
-                /* Need more space */
+            if (len > 0 && line[len - 1] != '\n' && !feof(f)) {
+                /* Buffer filled without newline => enlarge and keep reading */
                 size_t newcap = cap * 2;
                 char *tmp = (char *)realloc(line, newcap);
-                if (!tmp) break;
-                line = tmp;
-                cap = newcap;
+                if (!tmp) { free(line); line = NULL; cap = 0; break; }
+                line = tmp; cap = newcap;
                 continue; /* continue reading into enlarged buffer */
             }
         }
@@ -944,8 +1088,12 @@ static void db_load(const char *path) {
                     if (last != '/' && last != '\\') sep = "/";
                 }
                 snprintf(path, sizeof(path), "%s%s%s", d->output_dir, sep, d->status.filename);
+#ifdef _WIN32
+                struct _stat64 st;
+#else
                 struct stat st;
-                if (stat(path, &st) == 0) {
+#endif
+                if (dm_stat_utf8(path, &st) == 0) {
                     d->status.downloaded_bytes = (int64_t)st.st_size;
                     if (d->status.total_bytes > 0) {
                         d->status.progress = (100.0 * (double)st.st_size) / (double)d->status.total_bytes;
@@ -1065,9 +1213,18 @@ void download_manager_init(int num_workers, const char *output_dir) {
     dm_log("[init] db loaded");
 
     g_mgr.workers = (ludo_thread_t *)calloc((size_t)num_workers,
-                                             sizeof(ludo_thread_t));
+                                            sizeof(ludo_thread_t));
+    if (!g_mgr.workers) {
+        g_mgr.num_workers = 0;
+        dm_log("[init] failed to allocate worker handles");
+        return;
+    }
     for (int i = 0; i < num_workers; i++) {
-        ludo_thread_create(&g_mgr.workers[i], worker_thread, NULL);
+        if (ludo_thread_create(&g_mgr.workers[i], worker_thread, NULL) != 0) {
+            g_mgr.num_workers = i;
+            dm_log("[init] failed to start worker %d", i);
+            break;
+        }
     }
 }
 

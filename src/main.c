@@ -21,6 +21,35 @@ TaskQueue g_url_queue;
 
 #ifdef _WIN32
 #include <windows.h>
+#include <shellapi.h>
+
+static int wide_to_utf8(const wchar_t *src, char *dst, size_t dst_sz)
+{
+    int needed;
+
+    if (!src || !dst || dst_sz == 0) return 0;
+    needed = WideCharToMultiByte(CP_UTF8, 0, src, -1, NULL, 0, NULL, NULL);
+    if (needed <= 0 || (size_t)needed > dst_sz) return 0;
+    return WideCharToMultiByte(CP_UTF8, 0, src, -1, dst, (int)dst_sz, NULL, NULL) > 0;
+}
+
+static wchar_t *utf8_to_wide_dup(const char *src)
+{
+    int needed;
+    wchar_t *dst;
+
+    if (!src) return NULL;
+    needed = MultiByteToWideChar(CP_UTF8, 0, src, -1, NULL, 0);
+    if (needed <= 0) return NULL;
+    dst = (wchar_t *)malloc((size_t)needed * sizeof(wchar_t));
+    if (!dst) return NULL;
+    if (MultiByteToWideChar(CP_UTF8, 0, src, -1, dst, needed) <= 0) {
+        free(dst);
+        return NULL;
+    }
+    return dst;
+}
+
 int WINAPI WinMain(HINSTANCE hInst, HINSTANCE hPrev,
                    LPSTR lpCmdLine, int nCmdShow)
 {
@@ -41,7 +70,9 @@ int main(int argc, char *argv[])
     if (err) {
         fprintf(stderr, "uiInit error: %s\n", err);
 #ifdef _WIN32
-        MessageBoxA(NULL, err, "LUDO startup error", MB_ICONERROR | MB_OK);
+        wchar_t *werr = utf8_to_wide_dup(err);
+        MessageBoxW(NULL, werr ? werr : L"uiInit error", L"LUDO startup error", MB_ICONERROR | MB_OK);
+        free(werr);
 #endif
         uiFreeInitError(err);
         return 1;
@@ -77,11 +108,17 @@ int main(int argc, char *argv[])
     /* 5b. Process command-line arguments (URLs)                             */
     /* --------------------------------------------------------------------- */
 #ifdef _WIN32
-    /* On Windows with WinMain, __argc and __argv are globally provided by MSVCRT */
-    for (int i = 1; i < __argc; i++) {
-        if (__argv[i] && strlen(__argv[i]) > 0) {
-            task_queue_push(&g_url_queue, __argv[i]);
+    /* Convert wide Windows argv to UTF-8 so URLs survive non-ASCII input. */
+    int argc_w = 0;
+    LPWSTR *argv_w = CommandLineToArgvW(GetCommandLineW(), &argc_w);
+    if (argv_w) {
+        for (int i = 1; i < argc_w; i++) {
+            char arg_utf8[4096];
+            if (wide_to_utf8(argv_w[i], arg_utf8, sizeof(arg_utf8)) && arg_utf8[0] != '\0') {
+                task_queue_push(&g_url_queue, arg_utf8);
+            }
         }
+        LocalFree(argv_w);
     }
 #else
     /* On Linux/macOS, use standard argc/argv from main() */

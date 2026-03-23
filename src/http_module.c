@@ -157,7 +157,7 @@ static void push_headers_table(lua_State *L, const char *raw) {
     lua_newtable(L);
     const char *p = raw;
     while (p && *p) {
-        const char *eol = strstr(p, "\r\n");
+        const char *eol = strpbrk(p, "\r\n");
         if (!eol) eol = p + strlen(p);
         /* Skip status line */
         if (strncmp(p, "HTTP/", 5) != 0) {
@@ -174,7 +174,8 @@ static void push_headers_table(lua_State *L, const char *raw) {
                 lua_settable(L, -3);
             }
         }
-        p = (*eol == '\r') ? eol + 2 : eol + 1;
+        p = eol;
+        while (*p == '\r' || *p == '\n') p++;
         if (*p == '\0') break;
     }
 }
@@ -474,10 +475,12 @@ static const luaL_Reg http_funcs[] = {
 
 void http_module_register(lua_State *L) {
     /* Create and stash a per-state session object */
-    HttpSession *session = (HttpSession *)calloc(1, sizeof(HttpSession));
+    HttpSession *session = (HttpSession *)lua_newuserdata(L, sizeof(HttpSession));
+    memset(session, 0, sizeof(HttpSession));
     lua_pushlightuserdata(L, (void *)HTTP_SESSION_KEY);
-    lua_pushlightuserdata(L, session);
+    lua_pushvalue(L, -2);
     lua_settable(L, LUA_REGISTRYINDEX);
+    lua_pop(L, 1);
 
     /* Register http.* table as a global */
     luaL_newlib(L, http_funcs);

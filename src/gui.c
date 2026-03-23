@@ -20,10 +20,14 @@
 
 #if defined(__linux__) || defined(__unix__)
 #include <gtk/gtk.h>
+#include <spawn.h>
+#include <unistd.h>
+extern char **environ;
 #endif
 
 #ifdef _WIN32
 #include <windows.h>
+#include <shellapi.h>
 #include "win_toolbar_icons.h"
 
 #define IDI_APP_ICON 101
@@ -46,6 +50,33 @@
 #define ICON_ABOUT    "about.png"
 
 #define TOOLBAR_BUTTON_SIZE 40
+
+#ifdef _WIN32
+static wchar_t *utf8_to_wide_dup(const char *src) {
+    int needed;
+    wchar_t *dst;
+
+    if (!src) return NULL;
+    needed = MultiByteToWideChar(CP_UTF8, 0, src, -1, NULL, 0);
+    if (needed <= 0) return NULL;
+    dst = (wchar_t *)malloc((size_t)needed * sizeof(wchar_t));
+    if (!dst) return NULL;
+    if (MultiByteToWideChar(CP_UTF8, 0, src, -1, dst, needed) <= 0) {
+        free(dst);
+        return NULL;
+    }
+    return dst;
+}
+
+static int wide_to_utf8(const wchar_t *src, char *dst, size_t dst_sz) {
+    int needed;
+
+    if (!src || !dst || dst_sz == 0) return 0;
+    needed = WideCharToMultiByte(CP_UTF8, 0, src, -1, NULL, 0, NULL, NULL);
+    if (needed <= 0 || (size_t)needed > dst_sz) return 0;
+    return WideCharToMultiByte(CP_UTF8, 0, src, -1, dst, (int)dst_sz, NULL, NULL) > 0;
+}
+#endif
 
 /* ------------------------------------------------------------------ */
 /* Download row UI element                                              */
@@ -202,7 +233,8 @@ static int is_valid_url(const char *s) {
     if (strncmp(s, "http://", 7) == 0) s += 7;
     else if (strncmp(s, "https://", 8) == 0) s += 8;
     else return 0;
-    if (strchr(s, ' ') || strchr(s, '\t') || strchr(s, '\n')) return 0;
+    /* Reject whitespace including CR which may be present on Windows clipboard */
+    if (strchr(s, ' ') || strchr(s, '\t') || strchr(s, '\r') || strchr(s, '\n')) return 0;
     if (!strchr(s, '.')) return 0;
     if (strlen(s) < 3) return 0;
     return 1;
@@ -224,6 +256,8 @@ static int is_valid_urls(const char *s) {
         } else {
             p = NULL;
         }
+        /* Trim trailing CR/LF that can appear on Windows clipboard lines */
+        line[strcspn(line, "\r\n")] = '\0';
         while (*line && isspace((unsigned char)*line)) line++;
         if (*line && !is_valid_url(line)) {
             valid = 0;
@@ -289,8 +323,11 @@ void paste_clipboard_url_if_valid(void) {
         
         char *url = p;
         while (*url && isspace((unsigned char)*url)) url++;
-        char *tail = url + strlen(url) - 1;
-        while (tail >= url && isspace((unsigned char)*tail)) { *tail = '\0'; tail--; }
+        size_t url_len = strlen(url);
+        if (url_len > 0) {
+            char *tail = url + url_len - 1;
+            while (tail >= url && isspace((unsigned char)*tail)) { *tail = '\0'; tail--; }
+        }
         
         if (is_valid_url(url)) {
             if (url_count == 0) {
@@ -727,8 +764,11 @@ static void set_main_window_icon(void) {
             "../../res/icon/ludo.ico"
         };
         for (size_t i = 0; i < sizeof(candidates) / sizeof(candidates[0]); i++) {
-            hicon = (HICON)LoadImageA(NULL, candidates[i], IMAGE_ICON, 0, 0,
+            wchar_t *candidate_w = utf8_to_wide_dup(candidates[i]);
+            if (!candidate_w) continue;
+            hicon = (HICON)LoadImageW(NULL, candidate_w, IMAGE_ICON, 0, 0,
                                       LR_LOADFROMFILE | LR_DEFAULTSIZE);
+            free(candidate_w);
             if (hicon) {
                 from_file = 1;
                 break;
@@ -752,7 +792,12 @@ static int resolve_toolbar_png_path(const char *name, char *out, size_t out_sz) 
     };
     for (size_t i = 0; i < sizeof(candidates) / sizeof(candidates[0]); i++) {
         snprintf(out, out_sz, "%s/%s", candidates[i], name);
-        FILE *f = fopen(out, "rb");
+        FILE *f = NULL;
+        wchar_t *out_w = utf8_to_wide_dup(out);
+        if (out_w) {
+            f = _wfopen(out_w, L"rb");
+            free(out_w);
+        }
         if (f) {
             fclose(f);
             return 1;
@@ -864,7 +909,7 @@ typedef struct {
     uiMultilineEntry *urls_entry;
 } AddUrlsCtx;
 
-/* Free data cleanly to prevent memory leaks */
+/* Free dialog context on user-initiated close. */
 static int on_child_window_closing(uiWindow *w, void *data) {
     if (data) free(data); 
     uiControlDestroy(uiControl(w));
@@ -884,8 +929,11 @@ static void on_add_urls_submit(uiButton *b, void *ud) {
             
             char *url = p;
             while (*url && isspace((unsigned char)*url)) url++; /* Trim leading */
-            char *tail = url + strlen(url) - 1;
-            while (tail >= url && isspace((unsigned char)*tail)) { *tail = '\0'; tail--; } /* Trim trailing */
+            size_t url_len = strlen(url);
+            if (url_len > 0) {
+                char *tail = url + url_len - 1;
+                while (tail >= url && isspace((unsigned char)*tail)) { *tail = '\0'; tail--; } /* Trim trailing */
+            }
 
             if (is_valid_url(url)) {
                 task_queue_push(&g_url_queue, url);
@@ -917,6 +965,11 @@ static void show_add_urls_window(const char *initial_text) {
     uiBoxAppend(vbox, uiControl(btn), 0);
     
     AddUrlsCtx *ctx = malloc(sizeof(AddUrlsCtx));
+    if (!ctx) {
+        gui_log(LOG_ERROR, "Failed to allocate Add URLs dialog context.");
+        uiControlDestroy(uiControl(win));
+        return;
+    }
     ctx->win = win;
     ctx->urls_entry = me;
     
@@ -1066,12 +1119,6 @@ static void on_setting_clicked(uiButton *sender, void *data) {
     uiFreeText(folder);
 }
 
-// static int on_child_window_closing(uiWindow *w, void *data) {
-//     (void)data;
-//     uiControlDestroy(uiControl(w));
-//     return 0; /* Returning 0 is important; it tells libui not to do default processing */
-// }
-
 static void on_http_clicked(uiButton *sender, void *data) {
     (void)sender; (void)data;
 
@@ -1101,7 +1148,11 @@ static void on_http_clicked(uiButton *sender, void *data) {
     uiBoxAppend(vbox, uiControl(output_entry), 1);
 
     HttpTestCtx *ctx = malloc(sizeof(HttpTestCtx));
-    if (!ctx) { gui_log(LOG_ERROR, "[HTTP DEBUG] ctx alloc failed"); return; }
+    if (!ctx) {
+        gui_log(LOG_ERROR, "[HTTP DEBUG] ctx alloc failed");
+        uiControlDestroy(uiControl(win));
+        return;
+    }
     ctx->url_entry = url_entry;
     ctx->header_entry = header_entry;
     ctx->header_resp_entry = header_resp_entry;
@@ -1135,7 +1186,11 @@ static void on_lua_clicked(uiButton *sender, void *data) {
     uiBoxAppend(vbox, uiControl(output_entry), 1);
 
     LuaTestCtx *ctx = malloc(sizeof(LuaTestCtx));
-    if (!ctx) { gui_log(LOG_ERROR, "[LUA DEBUG] ctx alloc failed"); return; }
+    if (!ctx) {
+        gui_log(LOG_ERROR, "[LUA DEBUG] ctx alloc failed");
+        uiControlDestroy(uiControl(win));
+        return;
+    }
     ctx->script_entry = script_entry;
     ctx->output_entry = output_entry;
     ctx->win = win;
@@ -1251,26 +1306,42 @@ static void menu_open_folder_cb(uiMenuItem *sender, uiWindow *w, void *data) {
     (void)sender; (void)w; (void)data;
     const char *dir = download_manager_get_output_dir();
     char abs_path[4096];
-    char cmd[8192];
 
 #ifdef _WIN32
     /* Resolve to absolute path for Windows Explorer */
-    if (!_fullpath(abs_path, dir, sizeof(abs_path))) {
-        strncpy(abs_path, dir, sizeof(abs_path));
+    {
+        wchar_t *dir_w = utf8_to_wide_dup(dir);
+        wchar_t wide_buf[4096];
+        wchar_t *abs_path_w = NULL;
+        if (dir_w) {
+            abs_path_w = _wfullpath(wide_buf, dir_w, sizeof(wide_buf) / sizeof(wide_buf[0]));
+            if (!abs_path_w) abs_path_w = dir_w;
+            if (wide_to_utf8(abs_path_w, abs_path, sizeof(abs_path))) {
+                abs_path[sizeof(abs_path) - 1] = '\0';
+            }
+        }
+        if (!abs_path_w || (INT_PTR)ShellExecuteW(NULL, L"open", abs_path_w, NULL, NULL, SW_SHOWNORMAL) <= 32) {
+            gui_log(LOG_ERROR, "Failed to open download folder.");
+        }
+        free(dir_w);
     }
-    snprintf(cmd, sizeof(cmd), "explorer \"%s\"", abs_path);
-    system(cmd);
 #else
     /* Resolve to absolute path for POSIX */
     if (!realpath(dir, abs_path)) {
         strncpy(abs_path, dir, sizeof(abs_path));
+        abs_path[sizeof(abs_path) - 1] = '\0';
     }
+    {
+        pid_t pid;
 #ifdef __APPLE__
-    snprintf(cmd, sizeof(cmd), "open \"%s\"", abs_path);
+        char *argv[] = { "open", abs_path, NULL };
 #else
-    snprintf(cmd, sizeof(cmd), "xdg-open \"%s\"", abs_path);
+        char *argv[] = { "xdg-open", abs_path, NULL };
 #endif
-    system(cmd);
+        if (posix_spawnp(&pid, argv[0], NULL, NULL, argv, environ) != 0) {
+            gui_log(LOG_ERROR, "Failed to open download folder.");
+        }
+    }
 #endif
 }
 static void menu_setting_cb(uiMenuItem *sender, uiWindow *w, void *data) { on_setting_clicked(NULL, NULL); }

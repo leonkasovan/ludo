@@ -13,11 +13,11 @@
 /* ---- Windows implementation ---- */
 
 void ludo_mutex_init(ludo_mutex_t *m) {
-    *m = CreateMutex(NULL, FALSE, NULL);
+    InitializeCriticalSection(&m->cs);
 }
-void ludo_mutex_destroy(ludo_mutex_t *m) { CloseHandle(*m); }
-void ludo_mutex_lock(ludo_mutex_t *m)    { WaitForSingleObject(*m, INFINITE); }
-void ludo_mutex_unlock(ludo_mutex_t *m)  { ReleaseMutex(*m); }
+void ludo_mutex_destroy(ludo_mutex_t *m) { DeleteCriticalSection(&m->cs); }
+void ludo_mutex_lock(ludo_mutex_t *m)    { EnterCriticalSection(&m->cs); }
+void ludo_mutex_unlock(ludo_mutex_t *m)  { LeaveCriticalSection(&m->cs); }
 
 static DWORD WINAPI thread_trampoline(LPVOID arg) {
     void **pack = (void **)arg;
@@ -34,7 +34,11 @@ int ludo_thread_create(ludo_thread_t *t, void *(*fn)(void *), void *arg) {
     pack[0] = (void *)(uintptr_t)fn;
     pack[1] = arg;
     *t = CreateThread(NULL, 0, thread_trampoline, pack, 0, NULL);
-    return (*t == NULL) ? -1 : 0;
+    if (*t == NULL) {
+        free(pack);
+        return -1;
+    }
+    return 0;
 }
 
 void ludo_thread_join(ludo_thread_t t) {
@@ -42,18 +46,15 @@ void ludo_thread_join(ludo_thread_t t) {
     CloseHandle(t);
 }
 
-/* On Windows we emulate cond vars with events (simple semaphore approach) */
-static void cond_init(ludo_cond_t *c)    { *c = CreateEvent(NULL, TRUE, FALSE, NULL); }
-static void cond_destroy(ludo_cond_t *c) { CloseHandle(*c); }
+/* Use native Windows condition variables so semantics match POSIX. */
+static void cond_init(ludo_cond_t *c)    { InitializeConditionVariable(c); }
+static void cond_destroy(ludo_cond_t *c) { (void)c; }
 
-static void cond_signal_all(ludo_cond_t *c) { SetEvent(*c); }
-static void cond_reset(ludo_cond_t *c)      { ResetEvent(*c); }
+static void cond_signal_all(ludo_cond_t *c) { WakeAllConditionVariable(c); }
+static void cond_reset(ludo_cond_t *c)      { (void)c; }
 
-/* Wait: release mutex, sleep on event, re-acquire mutex */
 static void cond_wait(ludo_cond_t *c, ludo_mutex_t *m) {
-    ReleaseMutex(*m);
-    WaitForSingleObject(*c, INFINITE);
-    WaitForSingleObject(*m, INFINITE);
+    SleepConditionVariableCS(c, &m->cs, INFINITE);
 }
 
 #else

@@ -7,8 +7,10 @@
 
 #ifdef _WIN32
 #include <windows.h>
-typedef HANDLE ludo_mutex_t;
-typedef HANDLE ludo_cond_t;
+typedef struct {
+    CRITICAL_SECTION cs;
+} ludo_mutex_t;
+typedef CONDITION_VARIABLE ludo_cond_t;
 typedef HANDLE ludo_thread_t;
 #else
 #include <pthread.h>
