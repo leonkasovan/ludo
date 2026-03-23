@@ -101,6 +101,7 @@ int main(int argc, char *argv[])
     /* 7. Tear down (in reverse order)                                  */
     /* -------------------------------------------------------------- */
     task_queue_shutdown(&g_url_queue);
+    gui_shutdown();
     download_manager_shutdown();
     lua_engine_shutdown();
     task_queue_destroy(&g_url_queue);

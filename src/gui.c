@@ -105,6 +105,9 @@ static struct {
     DownloadRow      rows[MAX_DOWNLOAD_ROWS];
     int              row_count;
     int              active_download_id;
+    int              shutdown_requested;
+    ludo_thread_t    url_worker;
+    int              url_worker_started;
 
     ludo_mutex_t     log_mutex;
 
@@ -1194,8 +1197,15 @@ void gui_on_progress(const ProgressUpdate *update, void *user_data) {
 /* Window close callback                                                */
 /* ------------------------------------------------------------------ */
 
-static int on_window_close(uiWindow *w, void *data) {
-    (void)w; (void)data;
+static void begin_app_shutdown(void) {
+    if (g_gui.shutdown_requested) return;
+
+    g_gui.shutdown_requested = 1;
+    task_queue_shutdown(&g_url_queue);
+    gui_shutdown();
+    download_manager_shutdown();
+    lua_engine_shutdown();
+
 #ifdef _WIN32
     toolbar_icons_shutdown();
     if (g_gui.app_icon && g_gui.app_icon_from_file) {
@@ -1204,12 +1214,25 @@ static int on_window_close(uiWindow *w, void *data) {
         g_gui.app_icon_from_file = 0;
     }
 #endif
+}
+
+void gui_shutdown(void) {
+    if (!g_gui.url_worker_started) return;
+
+    ludo_thread_join(g_gui.url_worker);
+    g_gui.url_worker_started = 0;
+}
+
+static int on_window_close(uiWindow *w, void *data) {
+    (void)w; (void)data;
+    begin_app_shutdown();
     uiQuit();
     return 1; /* destroy window */
 }
 
 static int on_should_quit(void *data) {
     (void)data;
+    begin_app_shutdown();
     uiControlDestroy(uiControl(g_gui.window));
     return 1;
 }
@@ -1497,8 +1520,11 @@ void gui_create(void) {
     download_manager_set_progress_cb(gui_on_progress, NULL);
 
     /* Start a worker thread that feeds URLs from the queue to the Lua engine */
-    ludo_thread_t worker;
-    ludo_thread_create(&worker, url_worker_thread, NULL);
+    if (ludo_thread_create(&g_gui.url_worker, url_worker_thread, NULL) == 0) {
+        g_gui.url_worker_started = 1;
+    } else {
+        gui_log(LOG_ERROR, "Failed to start URL worker thread.");
+    }
     /* We intentionally don't join this thread — it exits when the queue
        is shut down during download_manager_shutdown(). */
     

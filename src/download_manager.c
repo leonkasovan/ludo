@@ -94,6 +94,7 @@ typedef struct HeaderCtx HeaderCtx;
 typedef struct {
     FILE  *fp;
     int    download_id;
+    Download *download;
     int   *pause_flag;
     int   *cancel_flag;
     int64_t resume_offset;  
@@ -258,7 +259,10 @@ static struct {
 
     char                output_dir[1024];
 
+    int                 initialized;
     int                 running;
+    int                 shutting_down;
+    int                 shutdown_complete;
 } g_mgr;
 
 /* ------------------------------------------------------------------ */
@@ -301,6 +305,33 @@ static void filename_from_url(const char *url, char *out, size_t out_sz) {
     out[len] = '\0';
 }
 
+static void build_download_path(const Download *d, char *path, size_t path_sz) {
+    const char *sep = "";
+    size_t dlen = strlen(d->output_dir);
+    if (dlen > 0) {
+        char last = d->output_dir[dlen - 1];
+        if (last != '/' && last != '\\') sep = "/";
+    }
+    snprintf(path, path_sz, "%s%s%s", d->output_dir, sep, d->status.filename);
+}
+
+static void sync_download_size_from_disk(Download *d) {
+    if (!d || d->status.filename[0] == '\0') return;
+
+    char path[2048];
+    struct stat st;
+
+    build_download_path(d, path, sizeof(path));
+    if (stat(path, &st) != 0) return;
+
+    d->status.downloaded_bytes = (int64_t)st.st_size;
+    if (d->status.total_bytes > 0) {
+        d->status.progress = (100.0 * (double)st.st_size) / (double)d->status.total_bytes;
+        if (d->status.progress < 0.0) d->status.progress = 0.0;
+        if (d->status.progress > 100.0) d->status.progress = 100.0;
+    }
+}
+
 /* curl progress callback (CURLOPT_XFERINFOFUNCTION) */
 static int xfer_info_cb(void *clientp, curl_off_t dltotal, curl_off_t dlnow,
                         curl_off_t ultotal, curl_off_t ulnow)
@@ -310,6 +341,7 @@ static int xfer_info_cb(void *clientp, curl_off_t dltotal, curl_off_t dlnow,
 
     /* Check cancellation */
     if (*ctx->cancel_flag) return 1; /* aborts transfer */
+    if (ctx->download && ctx->download->stop_requested) return 1;
 
     /* Throttle GUI updates to once per second to avoid flooding uiQueueMain */
     time_t now = time(NULL);
@@ -375,6 +407,10 @@ static size_t write_cb(char *ptr, size_t size, size_t nmemb, void *userdata) {
         dm_log("[write_cb] id=%d cancelled, aborting", ctx->download_id);
         return 0;
     }
+    if (ctx->download && ctx->download->stop_requested) {
+        dm_log("[write_cb] id=%d stop requested, aborting", ctx->download_id);
+        return 0;
+    }
     if (!ctx->fp) {
         dm_log("[write_cb] id=%d fp is NULL!", ctx->download_id);
         return 0;
@@ -421,6 +457,14 @@ static size_t write_cb(char *ptr, size_t size, size_t nmemb, void *userdata) {
 static void perform_download(Download *d) {
     dm_log("[perform_download] id=%d url=%s", d->status.id, d->url);
     dm_log("[perform_download] output_dir=%s  filename=%s", d->output_dir, d->status.filename);
+
+    ludo_mutex_lock(&g_mgr.list_mutex);
+    int should_skip = g_mgr.shutting_down || d->stop_requested || d->status.state == DOWNLOAD_STATE_PAUSED;
+    ludo_mutex_unlock(&g_mgr.list_mutex);
+    if (should_skip) {
+        dm_log("[perform_download] id=%d skipped because shutdown/pause was already requested", d->status.id);
+        return;
+    }
 
     /* ---- Preflight HEAD request to obtain filename and content-length ---- */
     const char *sep = "";
@@ -540,9 +584,10 @@ static void perform_download(Download *d) {
     }
     /* Publish handle so other threads can pause/resume via curl_easy_pause */
     ludo_mutex_lock(&g_mgr.list_mutex);
-    WriteCtx ctx = { fp, d->status.id, &pause_flag, &cancel_flag, (int64_t)resume_from, 0, curl, 0, &hctx_local, path, 0 };
+    WriteCtx ctx = { fp, d->status.id, d, &pause_flag, &cancel_flag, (int64_t)resume_from, 0, curl, 0, &hctx_local, path, 0 };
     d->curl_handle = (void *)curl;
     d->fp = fp; /* also publish file handle for pause logic */
+    d->stop_requested = 0;
     ludo_mutex_unlock(&g_mgr.list_mutex);
     dm_log("[perform_download] id=%d curl handle ok, setting options", d->status.id);
 
@@ -693,6 +738,9 @@ static void perform_download(Download *d) {
     } else if (d->status.state != DOWNLOAD_STATE_QUEUED && d->status.state != DOWNLOAD_STATE_PAUSED) {
         d->status.state = DOWNLOAD_STATE_FAILED;
     }
+    if (d->status.state != DOWNLOAD_STATE_PAUSED) {
+        d->stop_requested = 0;
+    }
     
     /* GARBAGE COLLECTION CHECK */
     int is_deleted = d->marked_for_removal;
@@ -778,20 +826,7 @@ static void db_save_and_archive(void) {
         int is_finished = (d->status.state == DOWNLOAD_STATE_COMPLETED);
 
         /* TASK 1: Update size from disk for active/paused items before saving */
-        if (!is_finished && d->status.filename[0] != '\0') {
-            char path[2048];
-            const char *sep = "";
-            size_t dlen = strlen(d->output_dir);
-            if (dlen > 0) {
-                char last = d->output_dir[dlen - 1];
-                if (last != '/' && last != '\\') sep = "/";
-            }
-            snprintf(path, sizeof(path), "%s%s%s", d->output_dir, sep, d->status.filename);
-            struct stat st;
-            if (stat(path, &st) == 0) {
-                d->status.downloaded_bytes = (int64_t)st.st_size;
-            }
-        }
+        if (!is_finished) sync_download_size_from_disk(d);
 
         char line[2048];
         snprintf(line, sizeof(line), "%d\t%s\t%s\t%s\t%d\t%.2f\t%.2f\t%lld\t%lld\t%lld\t%lld\n",
@@ -1004,6 +1039,7 @@ void download_manager_init(int num_workers, const char *output_dir) {
            num_workers, output_dir ? output_dir : "(null -> ./downloads/)");
 
     memset(&g_mgr, 0, sizeof(g_mgr));
+    g_mgr.initialized  = 1;
     g_mgr.next_id     = 1;
     g_mgr.num_workers = num_workers;
     g_mgr.running     = 1;
@@ -1035,7 +1071,46 @@ void download_manager_init(int num_workers, const char *output_dir) {
     }
 }
 
+void download_manager_prepare_for_shutdown(void) {
+    int paused_count = 0;
+
+    if (!g_mgr.initialized) return;
+
+    ludo_mutex_lock(&g_mgr.list_mutex);
+    if (g_mgr.shutting_down) {
+        ludo_mutex_unlock(&g_mgr.list_mutex);
+        return;
+    }
+
+    g_mgr.shutting_down = 1;
+    for (Download *d = g_mgr.list; d; d = d->next) {
+        if (d->status.state == DOWNLOAD_STATE_RUNNING || d->status.state == DOWNLOAD_STATE_QUEUED) {
+            d->status.state = DOWNLOAD_STATE_PAUSED;
+            d->status.speed_bps = 0.0;
+            d->stop_requested = 1;
+            sync_download_size_from_disk(d);
+            paused_count++;
+            continue;
+        }
+
+        if (d->status.state == DOWNLOAD_STATE_PAUSED) {
+            d->status.speed_bps = 0.0;
+            d->stop_requested = 1;
+            sync_download_size_from_disk(d);
+        }
+    }
+    ludo_mutex_unlock(&g_mgr.list_mutex);
+
+    if (paused_count > 0) {
+        gui_log(LOG_INFO, "Closing app: pausing %d active download(s) and saving progress.", paused_count);
+    }
+}
+
 void download_manager_shutdown(void) {
+    if (!g_mgr.initialized || g_mgr.shutdown_complete) return;
+
+    dm_log("[shutdown] begin");
+    download_manager_prepare_for_shutdown();
     task_queue_shutdown(&g_mgr.queue);
     for (int i = 0; i < g_mgr.num_workers; i++) {
         ludo_thread_join(g_mgr.workers[i]);
@@ -1060,12 +1135,21 @@ void download_manager_shutdown(void) {
     task_queue_destroy(&g_mgr.queue);
     ludo_mutex_destroy(&g_mgr.list_mutex);
     curl_global_cleanup();
+    g_mgr.shutdown_complete = 1;
+    g_mgr.initialized = 0;
+    dm_log("[shutdown] complete");
+    dm_log_close();
 }
 
 int download_manager_add(const char *url, const char *output_dir, DownloadMode mode)
 {
     (void)mode; /* DOWNLOAD_NOW vs DOWNLOAD_QUEUE handled via queue order */
     if (!url || url[0] == '\0') return -1;
+
+    ludo_mutex_lock(&g_mgr.list_mutex);
+    int shutting_down = g_mgr.shutting_down;
+    ludo_mutex_unlock(&g_mgr.list_mutex);
+    if (shutting_down) return -1;
 
     URLTask task;
     memset(&task, 0, sizeof(task));
@@ -1083,6 +1167,8 @@ bool download_manager_pause(int id) {
     for (Download *d = g_mgr.list; d; d = d->next) {
         if (d->status.id == id && (d->status.state == DOWNLOAD_STATE_RUNNING || d->status.state == DOWNLOAD_STATE_QUEUED)) {
             d->status.state = DOWNLOAD_STATE_PAUSED;
+            d->status.speed_bps = 0.0;
+            d->stop_requested = 1;
             gui_log(LOG_SUCCESS, "Download id=%d marked as paused", d->status.id);
             result = true;
             break;
@@ -1095,9 +1181,15 @@ bool download_manager_pause(int id) {
 bool download_manager_resume(int id) {
     bool result = false;
     ludo_mutex_lock(&g_mgr.list_mutex);
+    if (g_mgr.shutting_down) {
+        ludo_mutex_unlock(&g_mgr.list_mutex);
+        return false;
+    }
     for (Download *d = g_mgr.list; d; d = d->next) {
         if (d->status.id == id && (d->status.state == DOWNLOAD_STATE_PAUSED || d->status.state == DOWNLOAD_STATE_FAILED)) {
             d->status.state = DOWNLOAD_STATE_QUEUED;
+            d->status.speed_bps = 0.0;
+            d->stop_requested = 0;
             gui_log(LOG_SUCCESS, "Download id=%d queued for resume", d->status.id);
             result = true;
 
@@ -1132,6 +1224,8 @@ bool download_manager_remove(int id) {
                 target->status.state == DOWNLOAD_STATE_QUEUED) {
                 
                 target->status.state = DOWNLOAD_STATE_PAUSED; /* Forces curl to abort */
+                target->status.speed_bps = 0.0;
+                target->stop_requested = 1;
                 target->marked_for_removal = 1;               /* Tells worker to free it */
                 gui_log(LOG_SUCCESS, "Download id=%d is marked for garbage collection.", id);
                 result = true;

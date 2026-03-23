@@ -33,6 +33,7 @@ static struct {
     PluginEntry plugins[MAX_PLUGINS];
     int         count;
     ludo_mutex_t mutex;  /* protects the plugin list only */
+    int         initialized;
 } g_engine;
 
 /* ------------------------------------------------------------------ */
@@ -100,6 +101,7 @@ static int plugin_check_contract(lua_State *L, const char *path) {
 void lua_engine_init(void) {
     memset(&g_engine, 0, sizeof(g_engine));
     ludo_mutex_init(&g_engine.mutex);
+    g_engine.initialized = 1;
 }
 
 void lua_engine_load_plugins(const char *plugin_dir) {
@@ -239,7 +241,9 @@ int lua_engine_process_url(const char *url) {
 }
 
 void lua_engine_shutdown(void) {
+    if (!g_engine.initialized) return;
     ludo_mutex_destroy(&g_engine.mutex);
+    g_engine.initialized = 0;
 }
 
 void lua_engine_info(void) {

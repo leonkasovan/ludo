@@ -48,6 +48,7 @@ typedef struct Download {
     void            *curl_handle;    /* opaque pointer to active CURL handle, if any */
     FILE            *fp;             /* active file handle for writing, if any */
     size_t           bytes_since_last_flush;
+    volatile int     stop_requested;
     int              marked_for_removal;
     struct Download *next;
 } Download;
@@ -71,6 +72,7 @@ typedef void (*progress_callback_t)(const ProgressUpdate *update, void *user_dat
 /* Initialise with a number of concurrent worker threads.
    output_dir is the default download destination. */
 void download_manager_init(int num_workers, const char *output_dir);
+void download_manager_prepare_for_shutdown(void);
 void download_manager_shutdown(void);
 
 /* Queue a new download.  Returns the assigned download ID (>0) or -1 on error.

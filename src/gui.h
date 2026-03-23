@@ -18,6 +18,12 @@ typedef enum {
 void gui_create(void);
 
 /*
+ * Stop and join background GUI-owned worker threads.
+ * Must be called during app teardown after the URL queue is shut down.
+ */
+void gui_shutdown(void);
+
+/*
  * Append a message to the on-screen log panel.
  * Thread-safe: routes to the main thread via uiQueueMain when needed.
  */
