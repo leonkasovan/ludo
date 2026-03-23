@@ -1,0 +1,1 @@
+1. Bug when runnning download then force closing the app while the download is still in progress. The download size is not saved, and when the app is restarted. Fix it by update the size based on the file size on disk if the download is in progress. (src/download_manager.c)

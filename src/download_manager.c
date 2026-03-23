@@ -690,7 +690,7 @@ static void perform_download(Download *d) {
     if (res == CURLE_OK) {
         d->status.state    = DOWNLOAD_STATE_COMPLETED;
         d->status.progress = 100.0;
-    } else if (d->status.state != DOWNLOAD_STATE_QUEUED) {
+    } else if (d->status.state != DOWNLOAD_STATE_QUEUED && d->status.state != DOWNLOAD_STATE_PAUSED) {
         d->status.state = DOWNLOAD_STATE_FAILED;
     }
     
@@ -865,7 +865,7 @@ static void db_load(const char *path) {
             continue;
         }
 
-        d->status.id = atoi(fields[0]);
+        d->status.id = g_mgr.next_id++; // Best Practice: Discard the old DB ID and assign a fresh, sequential one
         strncpy(d->url, fields[1], sizeof(d->url)-1);
         d->url[sizeof(d->url)-1] = '\0';
         strncpy(d->output_dir, fields[2], sizeof(d->output_dir)-1);

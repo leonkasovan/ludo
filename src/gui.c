@@ -8,9 +8,9 @@
 #include "../third_party/lua-5.2.4/src/lualib.h"
 #include "download_manager.h"
 #include "thread_queue.h"
-
 #include "ui.h"
 #include "version.h"
+#include "dm_log.h"
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -147,8 +147,8 @@ static void autosize_downloads_table(void) {
     if (!g_downloads_table) return;
     if (!g_gui.window) return;
 
-    /* Desired percentage widths for columns 0..6: id,name,size,status,started,speed,progress */
-    const int percents[7] = {1,35,20,8,8,10,14};
+    /* Desired percentage widths for columns 0..7: id,name,size,status,started,speed,progress,actions */
+    const int percents[8] = {2, 30, 10, 8, 8, 10, 16, 2};
 
     int win_w = 0, win_h = 0;
     uiWindowContentSize(g_gui.window, &win_w, &win_h);
@@ -157,16 +157,17 @@ static void autosize_downloads_table(void) {
     /* Account for some padding/margins inside the window */
     int available = win_w - 40; if (available < 200) available = win_w;
 
-    for (int col = 0; col < 7; col++) {
+    for (int col = 0; col < 8; col++) {
         int w = (available * percents[col]) / 100;
         /* Enforce sensible minimums */
         if (col == 0) { if (w < 20) w = 20; }
-        else if (col == 1) { if (w < 140) w = 140; }
-        else if (col == 2) { if (w < 80) w = 80; }
+        else if (col == 1) { if (w < 160) w = 160; }
+        else if (col == 2) { if (w < 100) w = 100; }
         else if (col == 3) { if (w < 70) w = 70; }
         else if (col == 4) { if (w < 70) w = 70; }
         else if (col == 5) { if (w < 80) w = 80; }
         else if (col == 6) { if (w < 110) w = 110; }
+        else if (col == 7) { if (w < 25) w = 25; }
         uiTableColumnSetWidth(g_downloads_table, col, w);
     }
 }
@@ -184,16 +185,9 @@ static void on_main_window_focus_changed(uiWindow *w, void *data) {
     /* Only act when window is focused */
     if (!uiWindowFocused(g_gui.window)) return;
 
-    /* If user already entered something, do not overwrite */
-    char *cur = uiEntryText(g_gui.url_entry);
-    int should_paste = 0;
-    if (!cur || cur[0] == '\0') should_paste = 1;
-    if (cur) uiFreeText(cur);
-    if (!should_paste) return;
     /* Paste from clipboard if it contains a valid URL */
     /* This uses the shared helper below. */
     /* Note: helper will re-check entry emptiness to avoid race conditions. */
-    (void)w;
     extern void paste_clipboard_url_if_valid(void);
     paste_clipboard_url_if_valid();
 }
@@ -211,16 +205,34 @@ static int is_valid_url(const char *s) {
     return 1;
 }
 
-/* Read clipboard (platform-specific) and paste URL into the URL entry if valid and if
-   the entry is currently empty. This is safe to call at startup or on focus. */
-void paste_clipboard_url_if_valid(void) {
-    if (!g_gui.url_entry) return;
-    char *cur = uiEntryText(g_gui.url_entry);
-    int should_paste = 0;
-    if (!cur || cur[0] == '\0') should_paste = 1;
-    if (cur) uiFreeText(cur);
-    if (!should_paste) return;
+/* Multiple URLs validator used before pasting clipboard contents. */
+static int is_valid_urls(const char *s) {
+    if (!s) return 0;
+    char *copy = strdup(s);
+    if (!copy) return 0;
+    char *p = copy;
+    int valid = 1;
+    while (p && *p) {
+        char *line = p;
+        char *next = strchr(p, '\n');
+        if (next) {
+            *next = '\0';
+            p = next + 1;
+        } else {
+            p = NULL;
+        }
+        while (*line && isspace((unsigned char)*line)) line++;
+        if (*line && !is_valid_url(line)) {
+            valid = 0;
+            break;
+        }
+    }
+    free(copy);
+    return valid;
+}
 
+/* Read clipboard (platform-specific) and paste URL into the URL entry if valid. This is safe to call at startup or on focus. */
+void paste_clipboard_url_if_valid(void) {
     /* Platform-specific clipboard retrieval */
 #ifdef _WIN32
     if (!IsClipboardFormatAvailable(CF_UNICODETEXT) && !IsClipboardFormatAvailable(CF_TEXT)) return;
@@ -336,20 +348,22 @@ static void http_test_on_send(uiButton *b, void *ud) {
     if (headers && headers[0]) {
         lua_newtable(L);
         char *lines = strdup(headers);
-        char *saveptr = NULL;
-        char *line = strtok_r(lines, "\n", &saveptr);
-        while (line) {
-            char *colon = strchr(line, ':');
+        char *p = lines;
+        while (p && *p) {
+            char *end = strchr(p, '\n');
+            if (end) *end = '\0'; /* Terminate the current line */
+            
+            char *colon = strchr(p, ':');
             if (colon) {
                 *colon = '\0';
-                const char *k = line;
+                const char *k = p;
                 const char *v = colon + 1;
-                while (*v == ' ') v++;
+                while (*v == ' ' || *v == '\t') v++; /* Trim leading space */
                 lua_pushstring(L, k);
                 lua_pushstring(L, v);
                 lua_settable(L, -3);
             }
-            line = strtok_r(NULL, "\n", &saveptr);
+            p = end ? end + 1 : NULL; /* Move to next line */
         }
         free(lines);
         lua_setfield(L, -2, "headers");
@@ -456,7 +470,9 @@ static void lua_test_on_exec(uiButton *b, void *ud) {
     }
 
     int nret = lua_gettop(L);
-    char buf[4096] = {0};
+    char buf[8192] = {0};
+    size_t offset = 0;
+    
     for (int i = 1; i <= nret; i++) {
         size_t len;
         const char *s = lua_tolstring(L, i, &len);
@@ -465,12 +481,14 @@ static void lua_test_on_exec(uiButton *b, void *ud) {
             s = lua_tostring(L, -1);
             lua_pop(L, 1);
         }
-        if (s) {
-            strncat(buf, s, sizeof(buf) - strlen(buf) - 2);
-            if (i < nret) strncat(buf, "\t", sizeof(buf) - strlen(buf) - 2);
+        if (s && offset < sizeof(buf) - 1) {
+            int written = snprintf(buf + offset, sizeof(buf) - offset, "%s%s", 
+                                   s, (i < nret) ? "\t" : "");
+            if (written > 0) offset += written;
         }
     }
-    uiMultilineEntrySetText(ctx->output_entry, buf);
+    
+    uiMultilineEntrySetText(ctx->output_entry, buf[0] ? buf : "Execution finished (no output).");
     lua_close(L);
     uiFreeText((char*)script);
 }
@@ -497,7 +515,7 @@ static int find_row_index(int id) {
 /* Downloads table model handlers                                      */
 /* ------------------------------------------------------------------ */
 static int downloads_modelNumColumns(uiTableModelHandler *mh, uiTableModel *m) {
-    (void)mh; (void)m; return 7;
+    (void)mh; (void)m; return 9;
 }
 
 static uiTableValueType downloads_modelColumnType(uiTableModelHandler *mh, uiTableModel *m, int column) {
@@ -510,6 +528,8 @@ static uiTableValueType downloads_modelColumnType(uiTableModelHandler *mh, uiTab
         case 4: return uiTableValueTypeString; /* Started */
         case 5: return uiTableValueTypeString; /* Speed */
         case 6: return uiTableValueTypeInt;    /* Progress */
+        case 7: return uiTableValueTypeString; /* Button Text */
+        case 8: return uiTableValueTypeInt;    /* Button Clickable Boolean */
     }
     return uiTableValueTypeString;
 }
@@ -528,23 +548,26 @@ static uiTableValue *downloads_modelCellValue(uiTableModelHandler *mh, uiTableMo
         case 0: return uiNewTableValueInt(r->selected);
         case 1: return uiNewTableValueString(r->filename[0] ? r->filename : "");
         case 2: {
-            /* Show downloaded / total if available */
-            if (r->total_bytes > 0) {
-                double dl = (double)r->downloaded_bytes;
-                double tot = (double)r->total_bytes;
-                if (tot >= (1LL<<30)) {
-                    snprintf(buf, sizeof(buf), "%.2f GB / %.2f GB", dl/1024.0/1024.0/1024.0, tot/1024.0/1024.0/1024.0);
-                } else if (tot >= (1LL<<20)) {
-                    snprintf(buf, sizeof(buf), "%.2f MB / %.2f MB", dl/1024.0/1024.0, tot/1024.0/1024.0);
-                } else {
-                    snprintf(buf, sizeof(buf), "%lld B / %lld B", (long long)r->downloaded_bytes, (long long)r->total_bytes);
-                }
-            } else if (r->downloaded_bytes > 0) {
-                /* Only downloaded known */
-                if (r->downloaded_bytes >= (1LL<<20))
-                    snprintf(buf, sizeof(buf), "%.2f MB", r->downloaded_bytes/1024.0/1024.0);
+            if (r->state == DOWNLOAD_STATE_COMPLETED && r->total_bytes > 0) {
+                /* Format strictly as a single size */
+                if (r->total_bytes >= (1LL<<30))
+                    snprintf(buf, sizeof(buf), "%.2f GB", r->total_bytes/1024.0/1024.0/1024.0);
+                else if (r->total_bytes >= (1LL<<20))
+                    snprintf(buf, sizeof(buf), "%.2f MB", r->total_bytes/1024.0/1024.0);
                 else
-                    snprintf(buf, sizeof(buf), "%lld B", (long long)r->downloaded_bytes);
+                    snprintf(buf, sizeof(buf), "%lld B", (long long)r->total_bytes);
+            } else if (r->total_bytes > 0) {
+                /* Active: Show Downloaded / Total */
+                double dl = (double)r->downloaded_bytes, tot = (double)r->total_bytes;
+                if (tot >= (1LL<<30))
+                    snprintf(buf, sizeof(buf), "%.2f / %.2f GB", dl/1073741824.0, tot/1073741824.0);
+                else if (tot >= (1LL<<20))
+                    snprintf(buf, sizeof(buf), "%.2f / %.2f MB", dl/1048576.0, tot/1048576.0);
+                else
+                    snprintf(buf, sizeof(buf), "%lld / %lld B", (long long)r->downloaded_bytes, (long long)r->total_bytes);
+            } else if (r->downloaded_bytes > 0) {
+                if (r->downloaded_bytes >= (1LL<<20)) snprintf(buf, sizeof(buf), "%.2f MB", r->downloaded_bytes/1048576.0);
+                else snprintf(buf, sizeof(buf), "%lld B", (long long)r->downloaded_bytes);
             } else {
                 snprintf(buf, sizeof(buf), "-");
             }
@@ -579,6 +602,22 @@ static uiTableValue *downloads_modelCellValue(uiTableModelHandler *mh, uiTableMo
             return uiNewTableValueString(buf);
         }
         case 6: return uiNewTableValueInt(r->progress_pct);
+        case 7: {
+            /* Button text based on state */
+            const char *btn = "⚙";
+            switch (r->state) {
+                case DOWNLOAD_STATE_COMPLETED: 
+                case DOWNLOAD_STATE_FAILED:    btn = "❌"; break; /* Remove */
+                case DOWNLOAD_STATE_QUEUED: 
+                case DOWNLOAD_STATE_RUNNING:   btn = "⏸"; break; /* Pause */
+                case DOWNLOAD_STATE_PAUSED:    btn = "▶"; break;  /* Resume */
+            }
+            return uiNewTableValueString(btn);
+        }
+        case 8: {
+            /* Button clickability. 1 = enabled, 0 = disabled */
+            return uiNewTableValueInt(1);
+        }
     }
     return NULL;
 }
@@ -590,6 +629,26 @@ static void downloads_modelSetCellValue(uiTableModelHandler *mh, uiTableModel *m
     if (column == 0) {
         r->selected = uiTableValueInt(val);
         if (g_downloads_model) uiTableModelRowChanged(g_downloads_model, row);
+    }
+    /* NEW: Handle the inline button click */
+    else if (column == 7) {
+        int target_id = r->download_id; /* BEST PRACTICE: Store before shifting the array! */
+        
+        /* Determine action based on state */
+        if (r->state == DOWNLOAD_STATE_COMPLETED || r->state == DOWNLOAD_STATE_FAILED) {
+            /* Remove the download */
+            download_manager_remove(target_id);
+            for (int j = row; j < g_gui.row_count - 1; j++) {
+                g_gui.rows[j] = g_gui.rows[j + 1];
+            }
+            g_gui.row_count--;
+            if (g_downloads_model) uiTableModelRowDeleted(g_downloads_model, row);
+            gui_log(LOG_INFO, "Removed download id=%d via inline button", target_id);
+        } else if (r->state == DOWNLOAD_STATE_QUEUED || r->state == DOWNLOAD_STATE_RUNNING) {
+            download_manager_pause(target_id);
+        } else if (r->state == DOWNLOAD_STATE_PAUSED || r->state == DOWNLOAD_STATE_FAILED) {
+            download_manager_resume(target_id);
+        }
     }
 }
 
@@ -1057,6 +1116,32 @@ static int on_should_quit(void *data) {
 static void menu_pause_cb(uiMenuItem *sender, uiWindow *w, void *data)   { on_pause_clicked(NULL, NULL); }
 static void menu_resume_cb(uiMenuItem *sender, uiWindow *w, void *data)  { on_resume_clicked(NULL, NULL); }
 static void menu_remove_cb(uiMenuItem *sender, uiWindow *w, void *data)  { on_remove_clicked(NULL, NULL); }
+static void menu_open_folder_cb(uiMenuItem *sender, uiWindow *w, void *data) {
+    (void)sender; (void)w; (void)data;
+    const char *dir = download_manager_get_output_dir();
+    char abs_path[4096];
+    char cmd[8192];
+
+#ifdef _WIN32
+    /* Resolve to absolute path for Windows Explorer */
+    if (!_fullpath(abs_path, dir, sizeof(abs_path))) {
+        strncpy(abs_path, dir, sizeof(abs_path));
+    }
+    snprintf(cmd, sizeof(cmd), "explorer \"%s\"", abs_path);
+    system(cmd);
+#else
+    /* Resolve to absolute path for POSIX */
+    if (!realpath(dir, abs_path)) {
+        strncpy(abs_path, dir, sizeof(abs_path));
+    }
+#ifdef __APPLE__
+    snprintf(cmd, sizeof(cmd), "open \"%s\"", abs_path);
+#else
+    snprintf(cmd, sizeof(cmd), "xdg-open \"%s\"", abs_path);
+#endif
+    system(cmd);
+#endif
+}
 static void menu_setting_cb(uiMenuItem *sender, uiWindow *w, void *data) { on_setting_clicked(NULL, NULL); }
 static void menu_plugin_cb(uiMenuItem *sender, uiWindow *w, void *data)  { on_plugin_clicked(NULL, NULL); }
 static void menu_http_cb(uiMenuItem *sender, uiWindow *w, void *data) { on_http_clicked(NULL, NULL); }
@@ -1083,8 +1168,11 @@ static void setup_menus(void) {
     uiMenuItemOnClicked(item, menu_pause_cb, NULL);
     item = uiMenuAppendItem(menu, "Resume\tCtrl+R");
     uiMenuItemOnClicked(item, menu_resume_cb, NULL);
-    item = uiMenuAppendItem(menu, "Remove\tDel");
+    item = uiMenuAppendItem(menu, "Remove\tCtrl+Del");
     uiMenuItemOnClicked(item, menu_remove_cb, NULL);
+    uiMenuAppendSeparator(menu); // Add a visual separator
+    item = uiMenuAppendItem(menu, "Open Folder\tCtrl+O");
+    uiMenuItemOnClicked(item, menu_open_folder_cb, NULL);
 
     /* ---- 2. Tools Menu ---- */
     menu = uiNewMenu("Tools");
@@ -1107,6 +1195,43 @@ static void setup_menus(void) {
     /* Cross-platform native standard for About */
     item = uiMenuAppendAboutItem(menu); 
     uiMenuItemOnClicked(item, menu_about_cb, NULL);
+}
+
+static int g_sort_col = -1;
+static int g_sort_asc = 1;
+
+static int cmp_rows(const void *a, const void *b) {
+    DownloadRow *ra = (DownloadRow *)a;
+    DownloadRow *rb = (DownloadRow *)b;
+    int res = 0;
+    switch (g_sort_col) {
+        case 1: res = strcmp(ra->filename, rb->filename); break; /* Name */
+        case 2: res = (ra->total_bytes > rb->total_bytes) - (ra->total_bytes < rb->total_bytes); break; /* Size */
+        case 3: res = (ra->state > rb->state) - (ra->state < rb->state); break; /* Status */
+        case 4: res = (ra->start_time > rb->start_time) - (ra->start_time < rb->start_time); break; /* Added */
+        case 5: res = (ra->speed_bps > rb->speed_bps) - (ra->speed_bps < rb->speed_bps); break; /* Speed */
+    }
+    return g_sort_asc ? res : -res;
+}
+
+static void on_header_clicked(uiTable *t, int column, void *data) {
+    (void)t; (void)data;
+    /* Skip sorting for Checkbox (0), Progress (6), and Remove Button (7) */
+    if (column == 0 || column >= 6) return; 
+
+    if (g_sort_col == column) {
+        g_sort_asc = !g_sort_asc; /* Reverse direction */
+    } else {
+        g_sort_col = column; 
+        g_sort_asc = 1; 
+    }
+
+    qsort(g_gui.rows, g_gui.row_count, sizeof(DownloadRow), cmp_rows);
+    
+    /* Notify the table model that every row has changed */
+    for (int i = 0; i < g_gui.row_count; i++) {
+        uiTableModelRowChanged(g_downloads_model, i);
+    }
 }
 
 /* ------------------------------------------------------------------ */
@@ -1222,6 +1347,9 @@ void gui_create(void) {
     uiTable *t = uiNewTable(&tp);
     g_downloads_table = t;
 
+    /* Handle header clicks for sorting */
+    uiTableHeaderOnClicked(t, on_header_clicked, NULL);
+
     /* Append columns in new order: id, name, size, status, added, speed, progress */
     uiTableAppendCheckboxColumn(t, "#", 0, uiTableModelColumnAlwaysEditable);
     uiTableAppendTextColumn(t, "Name", 1, uiTableModelColumnNeverEditable, NULL);
@@ -1230,6 +1358,7 @@ void gui_create(void) {
     uiTableAppendTextColumn(t, "Added", 4, uiTableModelColumnNeverEditable, NULL);
     uiTableAppendTextColumn(t, "Speed", 5, uiTableModelColumnNeverEditable, NULL);
     uiTableAppendProgressBarColumn(t, "Progress", 6);
+    uiTableAppendButtonColumn(t, "@", 7, 8);
 
     uiBoxAppend(root, uiControl(t), 1);
 
