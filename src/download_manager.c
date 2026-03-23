@@ -774,6 +774,25 @@ static void db_save_and_archive(void) {
 
     ludo_mutex_lock(&g_mgr.list_mutex);
     for (Download *d = g_mgr.list; d; d = d->next) {
+        /* Determine if the task is finished */
+        int is_finished = (d->status.state == DOWNLOAD_STATE_COMPLETED);
+
+        /* TASK 1: Update size from disk for active/paused items before saving */
+        if (!is_finished && d->status.filename[0] != '\0') {
+            char path[2048];
+            const char *sep = "";
+            size_t dlen = strlen(d->output_dir);
+            if (dlen > 0) {
+                char last = d->output_dir[dlen - 1];
+                if (last != '/' && last != '\\') sep = "/";
+            }
+            snprintf(path, sizeof(path), "%s%s%s", d->output_dir, sep, d->status.filename);
+            struct stat st;
+            if (stat(path, &st) == 0) {
+                d->status.downloaded_bytes = (int64_t)st.st_size;
+            }
+        }
+
         char line[2048];
         snprintf(line, sizeof(line), "%d\t%s\t%s\t%s\t%d\t%.2f\t%.2f\t%lld\t%lld\t%lld\t%lld\n",
                 d->status.id, d->url, d->output_dir, d->status.filename,
@@ -781,15 +800,9 @@ static void db_save_and_archive(void) {
                 (long long)d->status.total_bytes, (long long)d->status.downloaded_bytes,
                 (long long)d->status.start_time, (long long)d->status.end_time);
 
-        /* Determine if the task is dead (finished or failed) */
-        int is_finished = (d->status.state == DOWNLOAD_STATE_COMPLETED || 
-                           d->status.state == DOWNLOAD_STATE_FAILED);
-
         if (trigger_archive && f_gz && is_finished) {
-            /* Move to historical gzip archive; it leaves the main DB */
             gzwrite(f_gz, line, (unsigned)strlen(line));
         } else {
-            /* Active, Paused, or Queued tasks MUST stay in the main DB */
             fwrite(line, 1, strlen(line), f_db);
         }
     }
@@ -880,10 +893,33 @@ static void db_load(const char *path) {
         d->status.start_time = (time_t)atoll(fields[9]);
         d->status.end_time = (time_t)atoll(fields[10]);
 
-        /* SAFETY: If the app crashed, reset active states so they can be resumed.
-           Paused state folded into QUEUED. */
-        if (d->status.state == DOWNLOAD_STATE_RUNNING || d->status.state == DOWNLOAD_STATE_QUEUED) {
+        /* SAFETY: Reset active states so they can be resumed. */
+        if (d->status.state == DOWNLOAD_STATE_RUNNING || 
+            d->status.state == DOWNLOAD_STATE_QUEUED) {
+            
             d->status.state = DOWNLOAD_STATE_QUEUED;
+            
+            /* TASK 2: Sync size with file on disk if it exists */
+            if (d->status.filename[0] != '\0') {
+                char path[2048];
+                const char *sep = "";
+                size_t dlen = strlen(d->output_dir);
+                if (dlen > 0) {
+                    char last = d->output_dir[dlen - 1];
+                    if (last != '/' && last != '\\') sep = "/";
+                }
+                snprintf(path, sizeof(path), "%s%s%s", d->output_dir, sep, d->status.filename);
+                struct stat st;
+                if (stat(path, &st) == 0) {
+                    d->status.downloaded_bytes = (int64_t)st.st_size;
+                    if (d->status.total_bytes > 0) {
+                        d->status.progress = (100.0 * (double)st.st_size) / (double)d->status.total_bytes;
+                    }
+                } else {
+                    d->status.downloaded_bytes = 0;
+                    d->status.progress = 0.0;
+                }
+            }
         }
 
         if (d->status.id >= g_mgr.next_id) g_mgr.next_id = d->status.id + 1;

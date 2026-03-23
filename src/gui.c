@@ -231,21 +231,29 @@ static int is_valid_urls(const char *s) {
     return valid;
 }
 
-/* Read clipboard (platform-specific) and paste URL into the URL entry if valid. This is safe to call at startup or on focus. */
+static void show_add_urls_window(const char *initial_text);
 void paste_clipboard_url_if_valid(void) {
+    if (!g_gui.url_entry) return;
+    char *cur = uiEntryText(g_gui.url_entry);
+    int should_paste = 0;
+    if (!cur || cur[0] == '\0') should_paste = 1;
+    if (cur) uiFreeText(cur);
+    if (!should_paste) return;
+
+    char *clipboard_text = NULL;
+
     /* Platform-specific clipboard retrieval */
 #ifdef _WIN32
     if (!IsClipboardFormatAvailable(CF_UNICODETEXT) && !IsClipboardFormatAvailable(CF_TEXT)) return;
     if (!OpenClipboard(NULL)) return;
-    char *utf8 = NULL;
     HANDLE h = GetClipboardData(CF_UNICODETEXT);
     if (h) {
         wchar_t *wtext = (wchar_t *)GlobalLock(h);
         if (wtext) {
             int needed = WideCharToMultiByte(CP_UTF8, 0, wtext, -1, NULL, 0, NULL, NULL);
             if (needed > 0) {
-                utf8 = (char *)malloc((size_t)needed);
-                if (utf8) WideCharToMultiByte(CP_UTF8, 0, wtext, -1, utf8, needed, NULL, NULL);
+                clipboard_text = (char *)malloc((size_t)needed);
+                if (clipboard_text) WideCharToMultiByte(CP_UTF8, 0, wtext, -1, clipboard_text, needed, NULL, NULL);
             }
             GlobalUnlock(h);
         }
@@ -254,26 +262,54 @@ void paste_clipboard_url_if_valid(void) {
         if (h2) {
             char *ansi = (char *)GlobalLock(h2);
             if (ansi) {
-                utf8 = _strdup(ansi);
+                clipboard_text = _strdup(ansi);
                 GlobalUnlock(h2);
             }
         }
     }
     CloseClipboard();
-    if (!utf8) return;
-    char *s = utf8;
-    while (*s && isspace((unsigned char)*s)) s++;
-    if (is_valid_url(s)) uiEntrySetText(g_gui.url_entry, s);
-    free(utf8);
 #elif defined(__linux__) || defined(__unix__)
     gchar *txt = gtk_clipboard_wait_for_text(gtk_clipboard_get(GDK_SELECTION_CLIPBOARD));
-    if (!txt) return;
-    char *s = txt;
-    while (*s && isspace((unsigned char)*s)) s++;
-    if (is_valid_url(s)) uiEntrySetText(g_gui.url_entry, s);
-    g_free(txt);
+    if (txt) clipboard_text = txt; /* gtk memory handled properly when freed below */
+#endif
+
+    if (!clipboard_text) return;
+
+    /* Parse clipboard to count valid URLs */
+    int url_count = 0;
+    char first_url[4096] = {0};
+    char *p = clipboard_text;
+    
+    while (p && *p) {
+        char *end = strchr(p, '\n');
+        if (end) *end = '\0';
+        
+        char *url = p;
+        while (*url && isspace((unsigned char)*url)) url++;
+        char *tail = url + strlen(url) - 1;
+        while (tail >= url && isspace((unsigned char)*tail)) { *tail = '\0'; tail--; }
+        
+        if (is_valid_url(url)) {
+            if (url_count == 0) {
+                strncpy(first_url, url, sizeof(first_url)-1);
+            }
+            url_count++;
+        }
+        
+        if (end) *end = '\n'; /* Restore newline for the Multiline window */
+        p = end ? end + 1 : NULL;
+    }
+
+    if (url_count == 1) {
+        uiEntrySetText(g_gui.url_entry, first_url);
+    } else if (url_count > 1) {
+        show_add_urls_window(clipboard_text);
+    }
+
+#if defined(__linux__) || defined(__unix__)
+    g_free(clipboard_text);
 #else
-    /* macOS or other platforms: not implemented */
+    free(clipboard_text);
 #endif
 }
 
@@ -819,6 +855,75 @@ static DownloadRow *add_row(int id, const char *filename) {
     return r;
 }
 
+/* Context for Add URLs Window */
+typedef struct {
+    uiWindow *win;
+    uiMultilineEntry *urls_entry;
+} AddUrlsCtx;
+
+/* Free data cleanly to prevent memory leaks */
+static int on_child_window_closing(uiWindow *w, void *data) {
+    if (data) free(data); 
+    uiControlDestroy(uiControl(w));
+    return 0;
+}
+
+static void on_add_urls_submit(uiButton *b, void *ud) {
+    (void)b;
+    AddUrlsCtx *ctx = (AddUrlsCtx *)ud;
+    char *text = uiMultilineEntryText(ctx->urls_entry);
+    
+    if (text) {
+        char *p = text;
+        while (p && *p) {
+            char *end = strchr(p, '\n');
+            if (end) *end = '\0'; /* Temporarily terminate the line */
+            
+            char *url = p;
+            while (*url && isspace((unsigned char)*url)) url++; /* Trim leading */
+            char *tail = url + strlen(url) - 1;
+            while (tail >= url && isspace((unsigned char)*tail)) { *tail = '\0'; tail--; } /* Trim trailing */
+
+            if (is_valid_url(url)) {
+                task_queue_push(&g_url_queue, url);
+                gui_log(LOG_INFO, "Queued: %s", url);
+            }
+            p = end ? end + 1 : NULL;
+        }
+        uiFreeText(text);
+    }
+    uiControlDestroy(uiControl(ctx->win));
+    free(ctx);
+}
+
+static void show_add_urls_window(const char *initial_text) {
+    uiWindow *win = uiNewWindow("Add Multiple URLs", 500, 400, 0);
+    uiWindowSetMargined(win, 1);
+    
+    uiBox *vbox = uiNewVerticalBox();
+    uiBoxSetPadded(vbox, 1);
+    
+    uiLabel *lbl = uiNewLabel("Enter URLs (one per line):");
+    uiBoxAppend(vbox, uiControl(lbl), 0);
+    
+    uiMultilineEntry *me = uiNewMultilineEntry();
+    if (initial_text) uiMultilineEntrySetText(me, initial_text);
+    uiBoxAppend(vbox, uiControl(me), 1);
+    
+    uiButton *btn = uiNewButton("Add to Queue");
+    uiBoxAppend(vbox, uiControl(btn), 0);
+    
+    AddUrlsCtx *ctx = malloc(sizeof(AddUrlsCtx));
+    ctx->win = win;
+    ctx->urls_entry = me;
+    
+    uiButtonOnClicked(btn, on_add_urls_submit, ctx);
+    uiWindowOnClosing(win, (int (*)(uiWindow *, void *))on_child_window_closing, ctx);
+    
+    uiWindowSetChild(win, uiControl(vbox));
+    uiControlShow(uiControl(win));
+}
+
 static void on_add_clicked(uiButton *sender, void *data) {
     (void)sender; (void)data;
 
@@ -958,11 +1063,11 @@ static void on_setting_clicked(uiButton *sender, void *data) {
     uiFreeText(folder);
 }
 
-static int on_child_window_closing(uiWindow *w, void *data) {
-    (void)data;
-    uiControlDestroy(uiControl(w));
-    return 0; /* Returning 0 is important; it tells libui not to do default processing */
-}
+// static int on_child_window_closing(uiWindow *w, void *data) {
+//     (void)data;
+//     uiControlDestroy(uiControl(w));
+//     return 0; /* Returning 0 is important; it tells libui not to do default processing */
+// }
 
 static void on_http_clicked(uiButton *sender, void *data) {
     (void)sender; (void)data;
@@ -1112,7 +1217,10 @@ static int on_should_quit(void *data) {
 /* ========================================================================= */
 /* Menu Wrappers & Callbacks                                                 */
 /* ========================================================================= */
-
+static void menu_add_urls_cb(uiMenuItem *sender, uiWindow *w, void *data) {
+    (void)sender; (void)w; (void)data;
+    show_add_urls_window("");
+}
 static void menu_pause_cb(uiMenuItem *sender, uiWindow *w, void *data)   { on_pause_clicked(NULL, NULL); }
 static void menu_resume_cb(uiMenuItem *sender, uiWindow *w, void *data)  { on_resume_clicked(NULL, NULL); }
 static void menu_remove_cb(uiMenuItem *sender, uiWindow *w, void *data)  { on_remove_clicked(NULL, NULL); }
@@ -1164,6 +1272,9 @@ static void setup_menus(void) {
 
     /* ---- 1. Download Menu ---- */
     menu = uiNewMenu("Download");
+    item = uiMenuAppendItem(menu, "Add URLs\tCtrl+U");
+    uiMenuItemOnClicked(item, menu_add_urls_cb, NULL);
+    uiMenuAppendSeparator(menu);
     item = uiMenuAppendItem(menu, "Pause\tCtrl+P");
     uiMenuItemOnClicked(item, menu_pause_cb, NULL);
     item = uiMenuAppendItem(menu, "Resume\tCtrl+R");
