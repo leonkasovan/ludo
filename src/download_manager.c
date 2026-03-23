@@ -15,6 +15,7 @@
 
 #include <curl/curl.h>
 #include "ui.h"
+#include "gui.h"
 
 /* Path constants for persistence */
 #define DB_PATH      "dl_items.db"
@@ -756,28 +757,50 @@ static void perform_download(Download *d) {
  * Fields: id  url  output_dir  filename  state  progress  speed_bps
  *         total_bytes  downloaded_bytes  start_time  end_time
  */
+static void db_save_and_archive(void) {
+    /* Check if the existing DB has crossed the archive threshold */
+    struct stat st;
+    int trigger_archive = (stat(DB_PATH, &st) == 0 && st.st_size >= DB_MAX_BYTES);
 
-static void db_save(const char *path) {
-    FILE *f = fopen(path, "wb");
-    if (!f) return;
+    /* Write to a temporary file first for atomic safety against crashes */
+    FILE *f_db = fopen(DB_PATH ".tmp", "wb");
+    if (!f_db) return;
+
+    gzFile f_gz = NULL;
+    if (trigger_archive) {
+        f_gz = gzopen(ARCHIVE_PATH, "ab");
+        dm_log("[shutdown] DB size > 10KB. Moving completed tasks to archive...");
+    }
 
     ludo_mutex_lock(&g_mgr.list_mutex);
     for (Download *d = g_mgr.list; d; d = d->next) {
-        fprintf(f, "%d\t%s\t%s\t%s\t%d\t%.2f\t%.2f\t%lld\t%lld\t%lld\t%lld\n",
-                d->status.id,
-                d->url,
-                d->output_dir,
-                d->status.filename,
-                (int)d->status.state,
-                d->status.progress,
-                d->status.speed_bps,
-                (long long)d->status.total_bytes,
-                (long long)d->status.downloaded_bytes,
-                (long long)(int64_t)d->status.start_time,
-                (long long)(int64_t)d->status.end_time);
+        char line[2048];
+        snprintf(line, sizeof(line), "%d\t%s\t%s\t%s\t%d\t%.2f\t%.2f\t%lld\t%lld\t%lld\t%lld\n",
+                d->status.id, d->url, d->output_dir, d->status.filename,
+                (int)d->status.state, d->status.progress, d->status.speed_bps,
+                (long long)d->status.total_bytes, (long long)d->status.downloaded_bytes,
+                (long long)d->status.start_time, (long long)d->status.end_time);
+
+        /* Determine if the task is dead (finished or failed) */
+        int is_finished = (d->status.state == DOWNLOAD_STATE_COMPLETED || 
+                           d->status.state == DOWNLOAD_STATE_FAILED);
+
+        if (trigger_archive && f_gz && is_finished) {
+            /* Move to historical gzip archive; it leaves the main DB */
+            gzwrite(f_gz, line, (unsigned)strlen(line));
+        } else {
+            /* Active, Paused, or Queued tasks MUST stay in the main DB */
+            fwrite(line, 1, strlen(line), f_db);
+        }
     }
     ludo_mutex_unlock(&g_mgr.list_mutex);
-    fclose(f);
+
+    fclose(f_db);
+    if (f_gz) gzclose(f_gz);
+
+    /* Atomic replace: ensures data isn't corrupted if power is lost during save */
+    remove(DB_PATH);
+    rename(DB_PATH ".tmp", DB_PATH);
 }
 
 static void db_load(const char *path) {
@@ -816,7 +839,7 @@ static void db_load(const char *path) {
             }
         }
 
-        /* Strip trailing CR/LF */
+        /* Strip trailing CR/LF. Works in both Windows and Unix */
         line[strcspn(line, "\r\n")] = 0;
 
         Download *d = (Download *)calloc(1, sizeof(Download));
@@ -878,37 +901,6 @@ static void db_load(const char *path) {
     fclose(f);
 }
 
-/*
- * If dl_items.db exceeds DB_MAX_BYTES, append its contents to
- * dl_history.gz and then truncate the db file.
- */
-static void db_archive_if_needed(const char *db_path, const char *gz_path) {
-    /* Measure db size */
-    FILE *f = fopen(db_path, "rb");
-    if (!f) return;
-    if (fseek(f, 0, SEEK_END) != 0) { fclose(f); return; }
-    long db_size = ftell(f);
-    if (db_size <= 0 || db_size < DB_MAX_BYTES) { fclose(f); return; }
-    rewind(f);
-
-    /* Read entire db into memory */
-    char *buf = (char *)malloc((size_t)db_size);
-    if (!buf) { fclose(f); return; }
-    size_t got = fread(buf, 1, (size_t)db_size, f);
-    fclose(f);
-
-    /* Append to the gzip archive */
-    gzFile gz = gzopen(gz_path, "ab");   /* "a" = append mode */
-    if (!gz) { free(buf); return; }
-    gzwrite(gz, buf, (unsigned)got);
-    gzclose(gz);
-    free(buf);
-
-    /* Truncate/clear the db now that contents are archived */
-    f = fopen(db_path, "wb");
-    if (f) fclose(f);
-}
-
 /* ------------------------------------------------------------------ */
 /* Worker thread                                                        */
 /* ------------------------------------------------------------------ */
@@ -946,6 +938,7 @@ static void *worker_thread(void *arg) {
             strncpy(d->output_dir, g_mgr.output_dir, sizeof(d->output_dir) - 1);
         filename_from_url(task.url, d->status.filename, sizeof(d->status.filename));
         d->status.state = DOWNLOAD_STATE_QUEUED;
+        d->status.start_time = time(NULL);
 
         /* Prepend to list */
         d->next      = g_mgr.list;
@@ -1015,10 +1008,7 @@ void download_manager_shutdown(void) {
     g_mgr.workers = NULL;
 
     /* Persist current download list, then archive if large */
-    dm_log("[shutdown] saving db");
-    db_save(DB_PATH);
-    db_archive_if_needed(DB_PATH, ARCHIVE_PATH);
-    dm_log("[shutdown] db saved");
+    db_save_and_archive();
 
     /* Free download list */
     ludo_mutex_lock(&g_mgr.list_mutex);
@@ -1034,7 +1024,6 @@ void download_manager_shutdown(void) {
     task_queue_destroy(&g_mgr.queue);
     ludo_mutex_destroy(&g_mgr.list_mutex);
     curl_global_cleanup();
-    dm_log("[shutdown] complete");
 }
 
 int download_manager_add(const char *url, const char *output_dir, DownloadMode mode)
@@ -1052,24 +1041,29 @@ int download_manager_add(const char *url, const char *output_dir, DownloadMode m
     return 0; /* actual ID assigned in worker */
 }
 
-void download_manager_pause(int id) {
+bool download_manager_pause(int id) {
+    bool result = false;
     ludo_mutex_lock(&g_mgr.list_mutex);
     for (Download *d = g_mgr.list; d; d = d->next) {
         if (d->status.id == id && (d->status.state == DOWNLOAD_STATE_RUNNING || d->status.state == DOWNLOAD_STATE_QUEUED)) {
             d->status.state = DOWNLOAD_STATE_PAUSED;
-            dm_log("[download_manager_pause] id=%d marked as paused", d->status.id);
+            gui_log(LOG_SUCCESS, "Download id=%d marked as paused", d->status.id);
+            result = true;
             break;
         }
     }
     ludo_mutex_unlock(&g_mgr.list_mutex);
+    return result;
 }
 
-void download_manager_resume(int id) {
+bool download_manager_resume(int id) {
+    bool result = false;
     ludo_mutex_lock(&g_mgr.list_mutex);
     for (Download *d = g_mgr.list; d; d = d->next) {
-        if (d->status.id == id && d->status.state == DOWNLOAD_STATE_PAUSED) {
+        if (d->status.id == id && (d->status.state == DOWNLOAD_STATE_PAUSED || d->status.state == DOWNLOAD_STATE_FAILED)) {
             d->status.state = DOWNLOAD_STATE_QUEUED;
-            dm_log("[download_manager_resume] id=%d queued for resume", d->status.id);
+            gui_log(LOG_SUCCESS, "Download id=%d queued for resume", d->status.id);
+            result = true;
 
             /* Push an internal task to tell the worker thread to resume this ID */
             URLTask task;
@@ -1086,9 +1080,11 @@ void download_manager_resume(int id) {
         }
     }
     ludo_mutex_unlock(&g_mgr.list_mutex);
+    return result;
 }
 
-void download_manager_remove(int id) {
+bool download_manager_remove(int id) {
+    bool result = false;
     ludo_mutex_lock(&g_mgr.list_mutex);
     Download **prev = &g_mgr.list;
     while (*prev) {
@@ -1101,19 +1097,21 @@ void download_manager_remove(int id) {
                 
                 target->status.state = DOWNLOAD_STATE_PAUSED; /* Forces curl to abort */
                 target->marked_for_removal = 1;               /* Tells worker to free it */
-                dm_log("[Remove] ID %d is active. Marked for garbage collection.", id);
-                
+                gui_log(LOG_SUCCESS, "Download id=%d is marked for garbage collection.", id);
+                result = true;
             } else {
                 /* Safe to delete immediately */
                 *prev = target->next;
                 free(target);
-                dm_log("[Remove] ID %d removed immediately.", id);
+                gui_log(LOG_SUCCESS, "Download id=%d removed immediately.", id);
+                result = true;
             }
             break;
         }
         prev = &(*prev)->next;
     }
     ludo_mutex_unlock(&g_mgr.list_mutex);
+    return result;
 }
 
 Download *download_manager_get_list(void) {

@@ -3,6 +3,7 @@
 
 #include <stdint.h>
 #include <stdio.h>
+#include <stdbool.h>
 #include "thread_queue.h"
 
 /* ------------------------------------------------------------------ */
@@ -77,9 +78,9 @@ void download_manager_shutdown(void);
 int  download_manager_add(const char *url, const char *output_dir, DownloadMode mode);
 
 /* Pause / resume / remove — may be called from the GUI thread */
-void download_manager_pause(int id);
-void download_manager_resume(int id);
-void download_manager_remove(int id);
+bool download_manager_pause(int id);
+bool download_manager_resume(int id);
+bool download_manager_remove(int id);
 
 /* Access the global list (call only from GUI/main thread) */
 Download *download_manager_get_list(void);

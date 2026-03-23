@@ -7,7 +7,8 @@
 typedef enum {
     LOG_INFO    = 0,
     LOG_SUCCESS = 1,
-    LOG_ERROR   = 2
+    LOG_WARNING = 2,
+    LOG_ERROR   = 3
 } LogLevel;
 
 /*
@@ -20,7 +21,7 @@ void gui_create(void);
  * Append a message to the on-screen log panel.
  * Thread-safe: routes to the main thread via uiQueueMain when needed.
  */
-void gui_log(LogLevel level, const char *msg);
+void gui_log(LogLevel level, const char *fmt, ...);
 
 /*
  * Progress update callback — registered with download_manager.

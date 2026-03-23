@@ -276,8 +276,9 @@ static void log_on_main(void *data) {
 
     const char *prefix;
     switch (pkt->level) {
-        case LOG_SUCCESS: prefix = "[OK]   "; break;
-        case LOG_ERROR:   prefix = "[ERR]  "; break;
+        case LOG_SUCCESS: prefix = "[SUCCESS] "; break;
+        case LOG_WARNING: prefix = "[WARNING] "; break;
+        case LOG_ERROR:   prefix = "[ERROR]  "; break;
         default:          prefix = "[INFO] "; break;
     }
 
@@ -293,15 +294,20 @@ static void log_on_main(void *data) {
     free(pkt);
 }
 
-void gui_log(LogLevel level, const char *msg) {
+void gui_log(LogLevel level, const char *fmt, ...) {
     LogPkt *pkt = (LogPkt *)malloc(sizeof(LogPkt));
     if (!pkt) return;
     pkt->level = level;
-    strncpy(pkt->msg, msg, sizeof(pkt->msg) - 1);
+    va_list ap;
+    va_start(ap, fmt);
+    vsnprintf(pkt->msg, sizeof(pkt->msg), fmt, ap);
+    va_end(ap);
     pkt->msg[sizeof(pkt->msg) - 1] = '\0';
+#ifdef DEBUG
     // Also log to stderr for crash diagnosis
-    fprintf(stderr, "[gui_log][%d] %s\n", (int)level, msg);
+    fprintf(stderr, "[gui_log][%d] %s\n", (int)level, pkt->msg);
     fflush(stderr);
+#endif
     uiQueueMain(log_on_main, pkt);
 }
 
@@ -588,12 +594,12 @@ static void downloads_modelSetCellValue(uiTableModelHandler *mh, uiTableModel *m
 }
 
 /* Select latest active download for pause/resume/remove actions. */
-static int pick_target_download_id(void) {
+/*static int pick_target_download_id(void) {
     if (g_gui.active_download_id > 0) {
         return g_gui.active_download_id;
     }
 
-    /* BEST PRACTICE: Iterate the local GUI state, not the shared backend list */
+    // BEST PRACTICE: Iterate the local GUI state, not the shared backend list
     for (int i = 0; i < g_gui.row_count; i++) {
         DownloadState state = g_gui.rows[i].state;
         if (state == DOWNLOAD_STATE_RUNNING || state == DOWNLOAD_STATE_QUEUED || state == DOWNLOAD_STATE_PAUSED) {
@@ -601,10 +607,10 @@ static int pick_target_download_id(void) {
         }
     }
     
-    /* Fallback to the first row if nothing active */
+    // Fallback to the first row if nothing active
     if (g_gui.row_count > 0) return g_gui.rows[0].download_id;
     return -1;
-}
+}*/
 
 #ifdef _WIN32
 static void set_main_window_icon(void) {
@@ -787,29 +793,41 @@ static void on_pause_clicked(uiButton *sender, void *data) {
         DownloadRow *r = &g_gui.rows[i];
         if (r->selected) {
             if (r->download_id > 0) {
-                download_manager_pause(r->download_id);
-                acted++;
+                if (download_manager_pause(r->download_id)) {
+                    acted++;
+                }
             }
             r->selected = 0; /* clear selection */
         }
     }
-        if (acted > 0) {
+    if (acted > 0) {
         gui_log(LOG_INFO, "Paused checked downloads");
         if (g_downloads_model) for (int j = 0; j < g_gui.row_count; j++) uiTableModelRowChanged(g_downloads_model, j);
     } else {
-        gui_log(LOG_ERROR, "Pause failed: no checked downloads");
+        gui_log(LOG_WARNING, "No action taken.");
     }
 }
 
 static void on_resume_clicked(uiButton *sender, void *data) {
     (void)sender; (void)data;
-    int id = pick_target_download_id();
-    if (id <= 0) {
-        gui_log(LOG_ERROR, "Resume failed: no paused download");
-        return;
+    int acted = 0;
+    for (int i = 0; i < g_gui.row_count; i++) {
+        DownloadRow *r = &g_gui.rows[i];
+        if (r->selected) {
+            if (r->download_id > 0) {
+                if (download_manager_resume(r->download_id)) {
+                    acted++;
+                }
+            }
+            r->selected = 0; /* clear selection */
+        }
     }
-    download_manager_resume(id);
-    gui_log(LOG_INFO, "Resume requested for selected download");
+    if (acted > 0) {
+        gui_log(LOG_INFO, "Resumed checked downloads");
+        if (g_downloads_model) for (int j = 0; j < g_gui.row_count; j++) uiTableModelRowChanged(g_downloads_model, j);
+    } else {
+        gui_log(LOG_WARNING, "No action taken.");
+    }
 }
 
 static void on_remove_clicked(uiButton *sender, void *data) {
@@ -823,8 +841,9 @@ static void on_remove_clicked(uiButton *sender, void *data) {
             if (r->download_id > 0) {
                 // /* 1. Tell backend to pause and safely remove */
                 // download_manager_pause(r->download_id); 
-                download_manager_remove(r->download_id);
-                acted++;
+                if (download_manager_remove(r->download_id)) {
+                    acted++;
+                }
             }
             
             /* 2. Remove from GUI array by shifting remaining elements left */
@@ -844,7 +863,7 @@ static void on_remove_clicked(uiButton *sender, void *data) {
         gui_log(LOG_INFO, "Removed checked downloads");
         autosize_downloads_table(); /* Re-adjust column sizing */
     } else {
-        gui_log(LOG_ERROR, "Remove failed: no checked downloads");
+        gui_log(LOG_WARNING, "No action taken.");
     }
 }
 
@@ -995,13 +1014,10 @@ void gui_on_progress(const ProgressUpdate *update, void *user_data) {
     r->speed_bps = update->status.speed_bps;
     r->total_bytes = update->status.total_bytes;
     r->downloaded_bytes = update->status.downloaded_bytes;
-    /* Ensure start_time is set when download transitions to RUNNING */
-    if (r->start_time == 0) {
-        if (r->state == DOWNLOAD_STATE_RUNNING) {
-            r->start_time = update->status.start_time ? update->status.start_time : time(NULL);
-        }
-    } else {
-        /* keep existing start_time */
+    if (update->status.start_time > 0) {
+        r->start_time = update->status.start_time;
+    } else if (r->start_time == 0 && r->state == DOWNLOAD_STATE_RUNNING) {
+        r->start_time = time(NULL);
     }
 
     int idx = find_row_index(update->status.id);
@@ -1206,12 +1222,12 @@ void gui_create(void) {
     uiTable *t = uiNewTable(&tp);
     g_downloads_table = t;
 
-    /* Append columns in new order: id, name, size, status, started, speed, progress */
+    /* Append columns in new order: id, name, size, status, added, speed, progress */
     uiTableAppendCheckboxColumn(t, "#", 0, uiTableModelColumnAlwaysEditable);
     uiTableAppendTextColumn(t, "Name", 1, uiTableModelColumnNeverEditable, NULL);
     uiTableAppendTextColumn(t, "Size", 2, uiTableModelColumnNeverEditable, NULL);
     uiTableAppendTextColumn(t, "Status", 3, uiTableModelColumnNeverEditable, NULL);
-    uiTableAppendTextColumn(t, "Started", 4, uiTableModelColumnNeverEditable, NULL);
+    uiTableAppendTextColumn(t, "Added", 4, uiTableModelColumnNeverEditable, NULL);
     uiTableAppendTextColumn(t, "Speed", 5, uiTableModelColumnNeverEditable, NULL);
     uiTableAppendProgressBarColumn(t, "Progress", 6);
 
