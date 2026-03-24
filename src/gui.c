@@ -20,6 +20,7 @@
 
 #if defined(__linux__) || defined(__unix__)
 #include <gtk/gtk.h>
+#include <dirent.h>
 #include <spawn.h>
 #include <unistd.h>
 extern char **environ;
@@ -76,6 +77,27 @@ static int wide_to_utf8(const wchar_t *src, char *dst, size_t dst_sz) {
     if (needed <= 0 || (size_t)needed > dst_sz) return 0;
     return WideCharToMultiByte(CP_UTF8, 0, src, -1, dst, (int)dst_sz, NULL, NULL) > 0;
 }
+
+static FILE *gui_fopen_utf8(const char *path, const char *mode) {
+    FILE *fp = NULL;
+    wchar_t *wpath = utf8_to_wide_dup(path);
+    wchar_t wmode[8] = {0};
+    size_t i;
+
+    if (!wpath) return NULL;
+    for (i = 0; mode[i] != '\0' && i + 1 < sizeof(wmode) / sizeof(wmode[0]); i++) {
+        wmode[i] = (wchar_t)(unsigned char)mode[i];
+    }
+    fp = _wfopen(wpath, wmode);
+    free(wpath);
+    return fp;
+}
+#endif
+
+#ifndef _WIN32
+static FILE *gui_fopen_utf8(const char *path, const char *mode) {
+    return fopen(path, mode);
+}
 #endif
 
 /* ------------------------------------------------------------------ */
@@ -108,11 +130,30 @@ typedef struct HttpTestCtx {
     uiWindow *win;
 } HttpTestCtx;
 
+typedef struct {
+    char name[256];
+    char path[1024];
+} SnippetEntry;
+
+typedef struct LuaTestCtx LuaTestCtx;
+
+typedef struct {
+    uiTableModelHandler handler;
+    LuaTestCtx *ctx;
+} SnippetTableModel;
+
 typedef struct LuaTestCtx {
     uiMultilineEntry *script_entry;
     uiMultilineEntry *output_entry;
     uiWindow *win;
+    uiTableModel *snippet_model;
+    uiTable *snippet_table;
+    SnippetTableModel snippet_model_handler;
+    SnippetEntry *snippets;
+    int snippet_count;
 } LuaTestCtx;
+
+static HttpTestCtx *g_active_http_test_ctx = NULL;
 
 /* ------------------------------------------------------------------ */
 /* GUI state                                                            */
@@ -399,6 +440,232 @@ void gui_log(LogLevel level, const char *fmt, ...) {
     uiQueueMain(log_on_main, pkt);
 }
 
+static void append_multiline_text(uiMultilineEntry *entry, const char *text, int newline) {
+    if (!entry || !text) return;
+    uiMultilineEntryAppend(entry, text);
+    if (newline) uiMultilineEntryAppend(entry, "\n");
+}
+
+static int read_text_file_utf8(const char *path, char **out_text) {
+    FILE *f;
+    char *buf = NULL;
+    long size;
+    size_t read_bytes;
+
+    if (!out_text) return 0;
+    *out_text = NULL;
+
+    f = gui_fopen_utf8(path, "rb");
+    if (!f) return 0;
+    if (fseek(f, 0, SEEK_END) != 0) {
+        fclose(f);
+        return 0;
+    }
+    size = ftell(f);
+    if (size < 0) {
+        fclose(f);
+        return 0;
+    }
+    if (fseek(f, 0, SEEK_SET) != 0) {
+        fclose(f);
+        return 0;
+    }
+
+    buf = (char *)malloc((size_t)size + 1);
+    if (!buf) {
+        fclose(f);
+        return 0;
+    }
+    read_bytes = (size > 0) ? fread(buf, 1, (size_t)size, f) : 0;
+    fclose(f);
+    if (size > 0 && read_bytes != (size_t)size) {
+        free(buf);
+        return 0;
+    }
+    buf[size] = '\0';
+
+    if ((size_t)size >= 3 &&
+        (unsigned char)buf[0] == 0xEF &&
+        (unsigned char)buf[1] == 0xBB &&
+        (unsigned char)buf[2] == 0xBF) {
+        memmove(buf, buf + 3, (size_t)size - 2);
+    }
+
+    *out_text = buf;
+    return 1;
+}
+
+static void trim_snippet_name(const char *filename, char *out, size_t out_sz) {
+    size_t len = strlen(filename);
+
+    if (len > 4 && strcmp(filename + len - 4, ".lua") == 0) {
+        len -= 4;
+    }
+    if (len >= out_sz) len = out_sz - 1;
+    memcpy(out, filename, len);
+    out[len] = '\0';
+}
+
+static int append_snippet_entry(LuaTestCtx *ctx, const char *filename, const char *path) {
+    SnippetEntry *tmp;
+
+    tmp = (SnippetEntry *)realloc(ctx->snippets, (size_t)(ctx->snippet_count + 1) * sizeof(*tmp));
+    if (!tmp) return 0;
+
+    ctx->snippets = tmp;
+    trim_snippet_name(filename, ctx->snippets[ctx->snippet_count].name,
+                      sizeof(ctx->snippets[ctx->snippet_count].name));
+    strncpy(ctx->snippets[ctx->snippet_count].path, path,
+            sizeof(ctx->snippets[ctx->snippet_count].path) - 1);
+    ctx->snippets[ctx->snippet_count].path[sizeof(ctx->snippets[ctx->snippet_count].path) - 1] = '\0';
+    ctx->snippet_count++;
+    return 1;
+}
+
+static int compare_snippets(const void *a, const void *b) {
+    const SnippetEntry *sa = (const SnippetEntry *)a;
+    const SnippetEntry *sb = (const SnippetEntry *)b;
+    return strcmp(sa->name, sb->name);
+}
+
+static void load_snippets_from_dir(LuaTestCtx *ctx, const char *dir_path) {
+#ifdef _WIN32
+    wchar_t pattern[1024];
+    wchar_t *dir_w = utf8_to_wide_dup(dir_path);
+    WIN32_FIND_DATAW fd;
+    HANDLE hfind;
+
+    if (!dir_w) return;
+    if (_snwprintf(pattern, sizeof(pattern) / sizeof(pattern[0]), L"%ls\\*.lua", dir_w) < 0) {
+        free(dir_w);
+        return;
+    }
+
+    hfind = FindFirstFileW(pattern, &fd);
+    if (hfind == INVALID_HANDLE_VALUE) {
+        free(dir_w);
+        return;
+    }
+    do {
+        char filename_utf8[256];
+        char full_path_utf8[1024];
+        wchar_t full_path[1024];
+
+        if (fd.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) continue;
+        if (_snwprintf(full_path, sizeof(full_path) / sizeof(full_path[0]), L"%ls\\%ls", dir_w, fd.cFileName) < 0) {
+            continue;
+        }
+        if (!wide_to_utf8(fd.cFileName, filename_utf8, sizeof(filename_utf8))) continue;
+        if (!wide_to_utf8(full_path, full_path_utf8, sizeof(full_path_utf8))) continue;
+        if (!append_snippet_entry(ctx, filename_utf8, full_path_utf8)) break;
+    } while (FindNextFileW(hfind, &fd));
+    FindClose(hfind);
+    free(dir_w);
+#else
+    DIR *dir = opendir(dir_path);
+    struct dirent *ent;
+
+    if (!dir) return;
+    while ((ent = readdir(dir)) != NULL) {
+        size_t name_len = strlen(ent->d_name);
+        char full_path[1024];
+
+        if (name_len < 5) continue;
+        if (strcmp(ent->d_name + name_len - 4, ".lua") != 0) continue;
+        snprintf(full_path, sizeof(full_path), "%s/%s", dir_path, ent->d_name);
+        full_path[sizeof(full_path) - 1] = '\0';
+        if (!append_snippet_entry(ctx, ent->d_name, full_path)) break;
+    }
+    closedir(dir);
+#endif
+
+    if (ctx->snippet_count > 1) {
+        qsort(ctx->snippets, (size_t)ctx->snippet_count, sizeof(ctx->snippets[0]), compare_snippets);
+    }
+}
+
+static int snippet_model_num_columns(uiTableModelHandler *mh, uiTableModel *m) {
+    (void)mh;
+    (void)m;
+    return 1;
+}
+
+static uiTableValueType snippet_model_column_type(uiTableModelHandler *mh, uiTableModel *m, int column) {
+    (void)mh;
+    (void)m;
+    (void)column;
+    return uiTableValueTypeString;
+}
+
+static int snippet_model_num_rows(uiTableModelHandler *mh, uiTableModel *m) {
+    SnippetTableModel *model = (SnippetTableModel *)mh;
+    (void)m;
+    return (model && model->ctx) ? model->ctx->snippet_count : 0;
+}
+
+static uiTableValue *snippet_model_cell_value(uiTableModelHandler *mh, uiTableModel *m, int row, int column) {
+    SnippetTableModel *model = (SnippetTableModel *)mh;
+    (void)m;
+    (void)column;
+    if (!model || !model->ctx || row < 0 || row >= model->ctx->snippet_count) {
+        return uiNewTableValueString("");
+    }
+    return uiNewTableValueString(model->ctx->snippets[row].name);
+}
+
+static void snippet_model_set_cell_value(uiTableModelHandler *mh, uiTableModel *m,
+                                         int row, int column, const uiTableValue *val) {
+    (void)mh;
+    (void)m;
+    (void)row;
+    (void)column;
+    (void)val;
+}
+
+static void load_snippet_into_editor(LuaTestCtx *ctx, int row) {
+    char *snippet_text = NULL;
+
+    if (!ctx || row < 0 || row >= ctx->snippet_count) return;
+    if (!read_text_file_utf8(ctx->snippets[row].path, &snippet_text)) {
+        gui_log(LOG_ERROR, "Failed to load snippet: %s", ctx->snippets[row].path);
+        return;
+    }
+
+    uiMultilineEntrySetText(ctx->script_entry, snippet_text);
+    free(snippet_text);
+}
+
+static void on_snippet_row_double_clicked(uiTable *t, int row, void *data) {
+    LuaTestCtx *ctx = (LuaTestCtx *)data;
+    (void)t;
+    load_snippet_into_editor(ctx, row);
+}
+
+static int destroy_http_test_window(uiWindow *w, void *data) {
+    HttpTestCtx *ctx = (HttpTestCtx *)data;
+
+    if (g_active_http_test_ctx == ctx) {
+        g_active_http_test_ctx = NULL;
+    }
+    if (ctx) free(ctx);
+    uiControlDestroy(uiControl(w));
+    return 0;
+}
+
+static int destroy_lua_test_window(uiWindow *w, void *data) {
+    LuaTestCtx *ctx = (LuaTestCtx *)data;
+
+    if (ctx) {
+        free(ctx->snippets);
+        if (ctx->snippet_model) {
+            uiFreeTableModel(ctx->snippet_model);
+        }
+        free(ctx);
+    }
+    uiControlDestroy(uiControl(w));
+    return 0;
+}
+
 /* Static callbacks for test windows (must be file-level, not nested) */
 static void http_test_on_send(uiButton *b, void *ud) {
     (void)b;
@@ -531,15 +798,27 @@ static void lua_test_on_exec(uiButton *b, void *ud) {
     luaL_openlibs(L);
     http_module_register(L);
     ludo_module_register(L);
+    {
+        LudoTesterBindings bindings;
+        memset(&bindings, 0, sizeof(bindings));
+        bindings.lua_output = ctx->output_entry;
+        if (g_active_http_test_ctx) {
+            bindings.http_response_content = g_active_http_test_ctx->output_entry;
+            bindings.http_response_header = g_active_http_test_ctx->header_resp_entry;
+        }
+        ludo_module_set_tester_bindings(L, &bindings);
+    }
     luaL_requiref(L, "ui", luaopen_libuilua, 1);
     lua_pop(L, 1);
+
+    uiMultilineEntrySetText(ctx->output_entry, "");
 
     int res = luaL_loadstring(L, script);
     if (res == LUA_OK) res = lua_pcall(L, 0, LUA_MULTRET, 0);
     if (res != LUA_OK) {
         const char *err = lua_tostring(L, -1);
         gui_log(LOG_ERROR, err ? err : "(nil)");
-        uiMultilineEntrySetText(ctx->output_entry, err ? err : "Lua error");
+        append_multiline_text(ctx->output_entry, err ? err : "Lua error", 1);
         lua_close(L);
         uiFreeText((char*)script);
         return;
@@ -563,8 +842,20 @@ static void lua_test_on_exec(uiButton *b, void *ud) {
             if (written > 0) offset += written;
         }
     }
-    
-    uiMultilineEntrySetText(ctx->output_entry, buf[0] ? buf : "Execution finished (no output).");
+    if (buf[0]) {
+        char *existing = uiMultilineEntryText(ctx->output_entry);
+        int needs_newline = existing && existing[0] != '\0';
+        if (existing) uiFreeText(existing);
+        if (needs_newline) append_multiline_text(ctx->output_entry, "", 1);
+        append_multiline_text(ctx->output_entry, buf, 1);
+    } else {
+        char *existing = uiMultilineEntryText(ctx->output_entry);
+        int has_output = existing && existing[0] != '\0';
+        if (existing) uiFreeText(existing);
+        if (!has_output) {
+            uiMultilineEntrySetText(ctx->output_entry, "Execution finished (no output).");
+        }
+    }
     lua_close(L);
     uiFreeText((char*)script);
 }
@@ -792,12 +1083,7 @@ static int resolve_toolbar_png_path(const char *name, char *out, size_t out_sz) 
     };
     for (size_t i = 0; i < sizeof(candidates) / sizeof(candidates[0]); i++) {
         snprintf(out, out_sz, "%s/%s", candidates[i], name);
-        FILE *f = NULL;
-        wchar_t *out_w = utf8_to_wide_dup(out);
-        if (out_w) {
-            f = _wfopen(out_w, L"rb");
-            free(out_w);
-        }
+        FILE *f = gui_fopen_utf8(out, "rb");
         if (f) {
             fclose(f);
             return 1;
@@ -1130,10 +1416,11 @@ static void on_http_clicked(uiButton *sender, void *data) {
     uiBoxSetPadded(vbox, 1);
 
     uiEntry *url_entry = uiNewEntry();
-    uiEntrySetText(url_entry, "https://facebook.com");
+    uiEntrySetText(url_entry, "https://www.andersonkenya1.net/files/file/93-spongebob-squarepants/");
     uiBoxAppend(vbox, uiControl(url_entry), 0);
 
     uiMultilineEntry *header_entry = uiNewMultilineEntry();
+    uiMultilineEntrySetText(header_entry, "upgrade-insecure-requests: 1");
     uiBoxAppend(vbox, uiControl(header_entry), 0);
 
     uiButton *send_btn = uiNewButton("Send HTTP Request");
@@ -1158,32 +1445,42 @@ static void on_http_clicked(uiButton *sender, void *data) {
     ctx->header_resp_entry = header_resp_entry;
     ctx->output_entry = output_entry;
     ctx->win = win;
+    g_active_http_test_ctx = ctx;
 
     uiButtonOnClicked(send_btn, http_test_on_send, ctx);
     uiWindowSetChild(win, uiControl(vbox));
     uiControlShow(uiControl(win));
-    uiWindowOnClosing(win, (int (*)(uiWindow *, void *))on_child_window_closing, ctx);
+    uiWindowOnClosing(win, destroy_http_test_window, ctx);
 }
 
 static void on_lua_clicked(uiButton *sender, void *data) {
     (void)sender; (void)data;
     // --- Lua Test Window ---
-    uiWindow *win = uiNewWindow("Lua Script Tester", 520, 420, 0);
+    uiWindow *win = uiNewWindow("Lua Script Tester", 960, 640, 0);
     uiWindowSetMargined(win, 1);
 
-    uiBox *vbox = uiNewVerticalBox();
-    uiBoxSetPadded(vbox, 1);
+    uiBox *content_box = uiNewHorizontalBox();
+    uiBoxSetPadded(content_box, 1);
+
+    uiBox *snippet_box = uiNewVerticalBox();
+    uiBoxSetPadded(snippet_box, 1);
+
+    uiLabel *snippet_label = uiNewLabel("Snippets");
+    uiBoxAppend(snippet_box, uiControl(snippet_label), 0);
+
+    uiBox *editor_box = uiNewVerticalBox();
+    uiBoxSetPadded(editor_box, 1);
 
     uiMultilineEntry *script_entry = uiNewMultilineEntry();
     // uiMultilineEntrySetPlaceholder(script_entry, ...) is not available in libui-ng; skip placeholder.
-    uiBoxAppend(vbox, uiControl(script_entry), 1);
+    uiBoxAppend(editor_box, uiControl(script_entry), 1);
 
     uiButton *exec_btn = uiNewButton("Execute Lua Script");
-    uiBoxAppend(vbox, uiControl(exec_btn), 0);
+    uiBoxAppend(editor_box, uiControl(exec_btn), 0);
 
     uiMultilineEntry *output_entry = uiNewMultilineEntry();
     uiMultilineEntrySetReadOnly(output_entry, 1);
-    uiBoxAppend(vbox, uiControl(output_entry), 1);
+    uiBoxAppend(editor_box, uiControl(output_entry), 1);
 
     LuaTestCtx *ctx = malloc(sizeof(LuaTestCtx));
     if (!ctx) {
@@ -1191,15 +1488,39 @@ static void on_lua_clicked(uiButton *sender, void *data) {
         uiControlDestroy(uiControl(win));
         return;
     }
+    memset(ctx, 0, sizeof(*ctx));
     ctx->script_entry = script_entry;
     ctx->output_entry = output_entry;
     ctx->win = win;
+    load_snippets_from_dir(ctx, "snippets");
+    ctx->snippet_model_handler.ctx = ctx;
+    ctx->snippet_model_handler.handler.NumColumns = snippet_model_num_columns;
+    ctx->snippet_model_handler.handler.ColumnType = snippet_model_column_type;
+    ctx->snippet_model_handler.handler.NumRows = snippet_model_num_rows;
+    ctx->snippet_model_handler.handler.CellValue = snippet_model_cell_value;
+    ctx->snippet_model_handler.handler.SetCellValue = snippet_model_set_cell_value;
+    ctx->snippet_model = uiNewTableModel(&ctx->snippet_model_handler.handler);
+    {
+        uiTableParams snippet_params;
+        memset(&snippet_params, 0, sizeof(snippet_params));
+        snippet_params.Model = ctx->snippet_model;
+        ctx->snippet_table = uiNewTable(&snippet_params);
+        uiTableAppendTextColumn(ctx->snippet_table, "Snippet", 0, uiTableModelColumnNeverEditable, NULL);
+        uiTableHeaderSetVisible(ctx->snippet_table, 0);
+        uiTableSetSelectionMode(ctx->snippet_table, uiTableSelectionModeOne);
+        uiTableOnRowDoubleClicked(ctx->snippet_table, on_snippet_row_double_clicked, ctx);
+        uiTableColumnSetWidth(ctx->snippet_table, 0, 220);
+        uiBoxAppend(snippet_box, uiControl(ctx->snippet_table), 1);
+    }
+
+    uiBoxAppend(content_box, uiControl(snippet_box), 0);
+    uiBoxAppend(content_box, uiControl(editor_box), 1);
 
     uiButtonOnClicked(exec_btn, lua_test_on_exec, ctx);
 
-    uiWindowSetChild(win, uiControl(vbox));
+    uiWindowSetChild(win, uiControl(content_box));
     uiControlShow(uiControl(win));
-    uiWindowOnClosing(win, (int (*)(uiWindow *, void *))on_child_window_closing, ctx);
+    uiWindowOnClosing(win, destroy_lua_test_window, ctx);
 }
 
 static void on_about_clicked(uiButton *sender, void *data) {
