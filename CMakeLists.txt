@@ -100,8 +100,14 @@ if(MINGW OR UNIX)
     set(BROTLI_COM_NAME libbrotlicommon-static.a)
 else()
     set(BROTLI_LIB_NAME brotlidec-static.lib)
-    set(BROTLI_ENC_NAME brotlienc-static.lib)
-    set(BROTLI_COM_NAME brotlicommon-static.lib)
+else()
+    set(BROTLI_LIB_NAME libbrotlidec-static.a)
+endif()
+
+if(CMAKE_BUILD_TYPE)
+    set(BROTLI_BUILD_CONFIG_ARG --config ${CMAKE_BUILD_TYPE})
+else()
+    set(BROTLI_BUILD_CONFIG_ARG "")
 endif()
 
 ExternalProject_Add(brotli_ext
@@ -118,13 +124,15 @@ ExternalProject_Add(brotli_ext
         -DBROTLI_BUILD_SHARED_LIBS=OFF
         -DBROTLI_BUILD_STATIC_LIBS=ON
         -DBROTLI_BUILD_FOR_PACKAGE=ON
-    INSTALL_COMMAND ${CMAKE_COMMAND} --install ${BROTLI_BUILD_DIR}
-    BUILD_BYPRODUCTS 
-        ${BROTLI_INSTALL_DIR}/lib/${BROTLI_LIB_NAME}
-        ${BROTLI_INSTALL_DIR}/lib/${BROTLI_ENC_NAME}
-        ${BROTLI_INSTALL_DIR}/lib/${BROTLI_COM_NAME}
+    BUILD_COMMAND ${CMAKE_COMMAND} --build ${BROTLI_BUILD_DIR} ${BROTLI_BUILD_CONFIG_ARG} --parallel
+    INSTALL_COMMAND ${CMAKE_COMMAND} --install ${BROTLI_BUILD_DIR} ${BROTLI_BUILD_CONFIG_ARG}
+    BUILD_BYPRODUCTS
+        ${BROTLI_INSTALL_DIR}/lib/libbrotlidec-static.a
+        ${BROTLI_INSTALL_DIR}/lib/libbrotlienc-static.a
+        ${BROTLI_INSTALL_DIR}/lib/libbrotlicommon-static.a
 )
 
+# Import all brotli static libraries
 add_library(brotlidec_static STATIC IMPORTED GLOBAL)
 add_library(brotlienc_static STATIC IMPORTED GLOBAL)
 add_library(brotlicommon_static STATIC IMPORTED GLOBAL)
@@ -220,11 +228,39 @@ if(LUDO_USE_PREBUILT_LIBUI)
         INTERFACE_INCLUDE_DIRECTORIES ${LUDO_LIBUI_INCLUDE_DIR}
     )
 else()
-    find_program(MESON_EXECUTABLE meson)
-    if(NOT MESON_EXECUTABLE)
-        message(FATAL_ERROR "Meson not found.")
+    # Prefer the MinGW64 Meson/Ninja path on Windows builds; full absolute path
+    # is required because cmake --build uses cmd.exe and UNC-style paths can fail.
+    if(MINGW)
+        set(MESON_EXECUTABLE "D:/msys64/mingw64/bin/meson")
+        set(NINJA_EXECUTABLE "D:/msys64/mingw64/bin/ninja")
     endif()
-    find_program(NINJA_EXECUTABLE ninja REQUIRED)
+
+    if(NOT MESON_EXECUTABLE OR NOT EXISTS "${MESON_EXECUTABLE}")
+        find_program(MESON_EXECUTABLE NAMES meson
+            HINTS D:/msys64/mingw64/bin /mingw64/bin /usr/bin
+            NO_DEFAULT_PATH)
+    endif()
+    if(NOT MESON_EXECUTABLE)
+        find_program(MESON_EXECUTABLE NAMES meson)
+    endif()
+    if(NOT MESON_EXECUTABLE)
+        message(FATAL_ERROR
+            "Meson not found. Either install Meson, or configure with:\n"
+            "  -DLUDO_USE_PREBUILT_LIBUI=ON -DLUDO_LIBUI_LIBRARY=<path to libui.a>\n"
+            "Optional: -DLUDO_LIBUI_INCLUDE_DIR=<path to headers containing ui.h>")
+    endif()
+
+    if(NOT NINJA_EXECUTABLE OR NOT EXISTS "${NINJA_EXECUTABLE}")
+        find_program(NINJA_EXECUTABLE NAMES ninja
+            PATHS /mingw64/bin /usr/bin
+            NO_DEFAULT_PATH)
+    endif()
+    if(NOT NINJA_EXECUTABLE)
+        find_program(NINJA_EXECUTABLE NAMES ninja)
+    endif()
+    if(NOT NINJA_EXECUTABLE)
+        message(FATAL_ERROR "Ninja not found. Install ninja and retry.")
+    endif()
 
     set(LIBUI_BUILD_DIR ${CMAKE_BINARY_DIR}/libui_build)
     set(LIBUI_INSTALL_DIR ${CMAKE_BINARY_DIR}/libui_install)
@@ -238,6 +274,8 @@ else()
                 --libdir=lib
                 --default-library=static
                 -Dbuildtype=$<IF:$<CONFIG:Debug>,debug,release>
+                -Dtests=false
+                -Dexamples=false
                 ${LIBUI_BUILD_DIR}
                 ${CMAKE_SOURCE_DIR}/third_party/libui-ng
         BUILD_COMMAND ${NINJA_EXECUTABLE} -C ${LIBUI_BUILD_DIR}
