@@ -90,7 +90,7 @@ int main(int argc, char *argv[])
     /* -------------------------------------------------------------- */
     /* 3. Initialise the download manager (2 concurrent downloads)     */
     /* -------------------------------------------------------------- */
-    download_manager_init(2, "./downloads/");
+    download_manager_init(2, "downloads/");
 
     /* -------------------------------------------------------------- */
     /* 4. Initialise the Lua plugin engine and load plugins             */

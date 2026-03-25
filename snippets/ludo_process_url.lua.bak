@@ -1,0 +1,69 @@
+local plugin = {}
+
+function plugin.validate(url)
+	-- Added fallback to match URLs even if they don't end exactly in /view
+	return url:match("https://drive%.google%.com/file/d/([%w_-]+)")
+end
+
+function plugin.process(url)
+	ludo.logInfo("Processing: " .. url)
+
+	-- Step 1: Extract the file ID from the URL
+	local file_id = url:match("/d/([%w_-]+)")
+	
+	if file_id == nil then
+		if ludo.lua_tester then 
+			ludo.lua_tester.println("[Error] Invalid response URL. Can't find google file id") 
+		end
+		return nil
+	end
+	
+	-- Base direct download URL
+	local real_url = "https://drive.google.com/uc?export=download&id=" .. file_id
+	local download_id = ludo.newDownload(real_url, ludo.getOutputDirectory(), ludo.DOWNLOAD_NOW)
+	local uc_filename = ludo.getOutputDirectory().."uc"
+	ludo.lua_tester.printf("temp [%s]\n", uc_filename)
+	local f = io.open(uc_filename, "r")
+	if not f then
+		ludo.lua_tester.printf("Small file downloaded from %s\n", real_url)
+		return download_id
+	end
+	
+	-- Step 2: Handle larger files (Bypass Google Drive Virus Scan Warning)
+	-- For files > 100MB, Google returns an HTML warning page instead of the file.
+	-- We must fetch this page, extract the 'confirm' token, and append it to our URL.
+	ludo.lua_tester.println("Large file detected")
+	local content = f:read("*a")
+	f:close()
+	-- Extract the specific hash token Google generated for this session
+	local uuid = string.match(content, '"uuid" value="([%w_%-]+)"></form>')
+	if not uuid then
+		ludo.lua_tester.println("[Error] Invalid response URL. Can't find uuid")
+		return nil
+	end
+	local confirm_token = string.match(content, '"confirm" value="([%w]+)">')
+	if not confirm_token then
+		ludo.lua_tester.println("[Error] Invalid response URL. Can't find confirm_token")
+		return nil
+	end
+	
+	-- Step 3: Remove downloaded HTML warning page
+	ludo.lua_tester.printf("Remove download id=%d\n", download_id)
+	ludo.removeDownload(download_id)
+	ludo.lua_tester.printf("Remove temporary filename \"%s\"\n", uc_filename)
+	os.remove(uc_filename)
+	
+	-- Step 4: Send the final, direct URL to Ludo's C-backend
+	real_url = "https://drive.usercontent.google.com/download?export=download&id=" .. file_id .. "&confirm=" .. confirm_token .. "&uuid=" .. uuid
+	download_id = ludo.newDownload(real_url, ludo.getOutputDirectory(), ludo.DOWNLOAD_NOW)
+	ludo.lua_tester.printf("[%d] %s\n", download_id, real_url)
+end
+
+-- Test Execution
+local url = "https://drive.google.com/file/d/1iAaZoTDwiBBy_LcI-vV1U69_vK0oNLaP/view?usp=drive_link" -- over 100MB
+-- local url = "https://drive.google.com/file/d/18iw_4VdfqmUDLbJl3XZ-SRKd6SqSLi6F/view?usp=sharing" -- below 100MB
+if plugin.validate(url) then
+	plugin.process(url)
+end
+
+-- return plugin
