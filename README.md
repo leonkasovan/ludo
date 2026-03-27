@@ -16,6 +16,7 @@ The application lets you paste URLs in the GUI, then resolves and downloads them
 - Host module exposed to Lua (`ludo.newDownload`, logging, output-dir helpers)
 - Plugin-based URL extraction (`plugins/*.lua`)
 - Worker-threaded download processing and GUI progress updates
+- Runtime settings loaded from `config.ini`
 
 ## Project Layout
 
@@ -122,6 +123,18 @@ Or from inside `build/`:
 ```bash
 ./ludo.exe
 ```
+
+## Configuration
+
+Ludo reads `config.ini` at startup. Common settings include:
+
+- `maxDownloadRetry`
+- `maxThread`
+- `urlQueueCapacity`
+- `downloadQueueCapacity`
+- `maxRedirect`
+- `outputDir`
+- `pluginDir`
 
 ## VS Code Tasks
 

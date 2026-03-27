@@ -3,7 +3,7 @@ project(ludo C CXX RC)
 
 set(CMAKE_C_STANDARD 11)
 set(CMAKE_C_STANDARD_REQUIRED ON)
-set(CMAKE_CXX_STANDARD 11) # Added: Required for win_toolbar_icons.cpp
+set(CMAKE_CXX_STANDARD 11) 
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
 # -------------------------
@@ -43,8 +43,7 @@ endif()
 # ------------------------------------------------------------
 # System Dependencies
 # ------------------------------------------------------------
-find_package(ZLIB REQUIRED) # Added: Clean cross-platform Zlib
-find_package(Threads REQUIRED) # Moved up for global access
+find_package(Threads REQUIRED) 
 
 # ------------------------------------------------------------
 # Build options
@@ -54,12 +53,53 @@ set(LUDO_LIBUI_LIBRARY "" CACHE FILEPATH "Path to prebuilt libui static library 
 set(LUDO_LIBUI_INCLUDE_DIR "${CMAKE_SOURCE_DIR}/third_party/libui-ng" CACHE PATH "Path to libui headers (ui.h)")
 
 # ------------------------------------------------------------
+# zlib 1.2.8 (built from vendored source, static)
+# ------------------------------------------------------------
+set(ZLIB_SRC_DIR ${CMAKE_SOURCE_DIR}/third_party/zlib-1.2.8)
+set(ZLIB_OUTPUT_DIR ${CMAKE_BINARY_DIR}/zlib/lib)
+
+set(ZLIB_SOURCES
+    ${ZLIB_SRC_DIR}/adler32.c
+    ${ZLIB_SRC_DIR}/compress.c
+    ${ZLIB_SRC_DIR}/crc32.c
+    ${ZLIB_SRC_DIR}/deflate.c
+    ${ZLIB_SRC_DIR}/gzclose.c
+    ${ZLIB_SRC_DIR}/gzlib.c
+    ${ZLIB_SRC_DIR}/gzread.c
+    ${ZLIB_SRC_DIR}/gzwrite.c
+    ${ZLIB_SRC_DIR}/infback.c
+    ${ZLIB_SRC_DIR}/inffast.c
+    ${ZLIB_SRC_DIR}/inflate.c
+    ${ZLIB_SRC_DIR}/inftrees.c
+    ${ZLIB_SRC_DIR}/trees.c
+    ${ZLIB_SRC_DIR}/uncompr.c
+    ${ZLIB_SRC_DIR}/zutil.c
+)
+
+add_library(zlib_static STATIC ${ZLIB_SOURCES})
+target_include_directories(zlib_static PUBLIC ${ZLIB_SRC_DIR})
+set_target_properties(zlib_static PROPERTIES
+    OUTPUT_NAME zlibstatic
+    ARCHIVE_OUTPUT_DIRECTORY ${ZLIB_OUTPUT_DIR}
+)
+if(CMAKE_CONFIGURATION_TYPES)
+    set_target_properties(zlib_static PROPERTIES
+        ARCHIVE_OUTPUT_DIRECTORY_DEBUG ${ZLIB_OUTPUT_DIR}
+        ARCHIVE_OUTPUT_DIRECTORY_RELEASE ${ZLIB_OUTPUT_DIR}
+    )
+endif()
+
+if(MSVC)
+    set(ZLIB_STATIC_LIBRARY ${ZLIB_OUTPUT_DIR}/zlibstatic.lib)
+else()
+    set(ZLIB_STATIC_LIBRARY ${ZLIB_OUTPUT_DIR}/libzlibstatic.a)
+endif()
+
+# ------------------------------------------------------------
 # Lua 5.2.4 (built from source)
 # ------------------------------------------------------------
 set(LUA_SRC_DIR ${CMAKE_SOURCE_DIR}/third_party/lua-5.2.4/src)
 
-file(GLOB LUA_SOURCES "${LUA_SRC_DIR}/l*.c") # Slightly cleaner if you want to use glob, or keep your manual list.
-# Reverting to your manual list for safety:
 set(LUA_SOURCES
     ${LUA_SRC_DIR}/lapi.c ${LUA_SRC_DIR}/lauxlib.c ${LUA_SRC_DIR}/lbaselib.c
     ${LUA_SRC_DIR}/lbitlib.c ${LUA_SRC_DIR}/lcode.c ${LUA_SRC_DIR}/lcorolib.c
@@ -94,14 +134,14 @@ include(ExternalProject)
 set(BROTLI_BUILD_DIR ${CMAKE_BINARY_DIR}/brotli_build)
 set(BROTLI_INSTALL_DIR ${CMAKE_BINARY_DIR}/brotli_install)
 
-if(MINGW OR UNIX)
+if(MSVC)
+    set(BROTLI_LIB_NAME brotlidec-static.lib)
+    set(BROTLI_ENC_NAME brotlienc-static.lib)
+    set(BROTLI_COM_NAME brotlicommon-static.lib)
+else()
     set(BROTLI_LIB_NAME libbrotlidec-static.a)
     set(BROTLI_ENC_NAME libbrotlienc-static.a)
     set(BROTLI_COM_NAME libbrotlicommon-static.a)
-else()
-    set(BROTLI_LIB_NAME brotlidec-static.lib)
-else()
-    set(BROTLI_LIB_NAME libbrotlidec-static.a)
 endif()
 
 if(CMAKE_BUILD_TYPE)
@@ -116,7 +156,7 @@ ExternalProject_Add(brotli_ext
     CMAKE_ARGS
         -DCMAKE_BUILD_TYPE=${CMAKE_BUILD_TYPE}
         -DCMAKE_INSTALL_PREFIX=${BROTLI_INSTALL_DIR}
-        -DCMAKE_INSTALL_LIBDIR=lib # Added: Forces output to 'lib' instead of 'lib64'
+        -DCMAKE_INSTALL_LIBDIR=lib 
         -DBROTLI_DISABLE_TESTS=ON
         -DBROTLI_BUNDLED_MODE=OFF
         -DBROTLI_BUILD_TOOLS=OFF
@@ -127,12 +167,11 @@ ExternalProject_Add(brotli_ext
     BUILD_COMMAND ${CMAKE_COMMAND} --build ${BROTLI_BUILD_DIR} ${BROTLI_BUILD_CONFIG_ARG} --parallel
     INSTALL_COMMAND ${CMAKE_COMMAND} --install ${BROTLI_BUILD_DIR} ${BROTLI_BUILD_CONFIG_ARG}
     BUILD_BYPRODUCTS
-        ${BROTLI_INSTALL_DIR}/lib/libbrotlidec-static.a
-        ${BROTLI_INSTALL_DIR}/lib/libbrotlienc-static.a
-        ${BROTLI_INSTALL_DIR}/lib/libbrotlicommon-static.a
+        ${BROTLI_INSTALL_DIR}/lib/${BROTLI_LIB_NAME}
+        ${BROTLI_INSTALL_DIR}/lib/${BROTLI_ENC_NAME}
+        ${BROTLI_INSTALL_DIR}/lib/${BROTLI_COM_NAME}
 )
 
-# Import all brotli static libraries
 add_library(brotlidec_static STATIC IMPORTED GLOBAL)
 add_library(brotlienc_static STATIC IMPORTED GLOBAL)
 add_library(brotlicommon_static STATIC IMPORTED GLOBAL)
@@ -143,10 +182,10 @@ set_target_properties(brotlicommon_static PROPERTIES IMPORTED_LOCATION ${BROTLI_
 set(ZSTD_BUILD_DIR ${CMAKE_BINARY_DIR}/zstd_build)
 set(ZSTD_INSTALL_DIR ${CMAKE_BINARY_DIR}/zstd_install)
 
-if(MINGW OR UNIX)
-    set(ZSTD_LIB_NAME libzstd.a)
-else()
+if(MSVC)
     set(ZSTD_LIB_NAME zstd_static.lib)
+else()
+    set(ZSTD_LIB_NAME libzstd.a)
 endif()
 
 ExternalProject_Add(zstd_ext
@@ -155,7 +194,7 @@ ExternalProject_Add(zstd_ext
     CMAKE_ARGS
         -DCMAKE_BUILD_TYPE=${CMAKE_BUILD_TYPE}
         -DCMAKE_INSTALL_PREFIX=${ZSTD_INSTALL_DIR}
-        -DCMAKE_INSTALL_LIBDIR=lib # Added: Forces output to 'lib'
+        -DCMAKE_INSTALL_LIBDIR=lib
         -DZSTD_BUILD_PROGRAMS=OFF
         -DZSTD_BUILD_TESTS=OFF
         -DZSTD_BUILD_SHARED=OFF
@@ -170,26 +209,34 @@ set_target_properties(zstd_static PROPERTIES IMPORTED_LOCATION ${ZSTD_INSTALL_DI
 set(CURL_BUILD_DIR ${CMAKE_BINARY_DIR}/curl_build)
 set(CURL_INSTALL_DIR ${CMAKE_BINARY_DIR}/curl_install)
 
-if(MINGW OR UNIX)
-    set(CURL_LIB_NAME libcurl.a)
-else()
+if(MSVC)
     set(CURL_LIB_NAME libcurl.lib)
+else()
+    set(CURL_LIB_NAME libcurl.a)
+endif()
+
+# Dynamic SSL selection based on target OS
+if(WIN32)
+    set(CURL_SSL_ARGS "-DCURL_USE_SCHANNEL=ON" "-DCURL_USE_OPENSSL=OFF")
+elseif(APPLE)
+    set(CURL_SSL_ARGS "-DCURL_USE_SECTRANSP=ON" "-DCURL_USE_OPENSSL=OFF")
+else()
+    set(CURL_SSL_ARGS "-DCURL_USE_OPENSSL=ON" "-DCURL_USE_SCHANNEL=OFF")
 endif()
 
 ExternalProject_Add(curl_ext
     SOURCE_DIR ${CMAKE_SOURCE_DIR}/third_party/curl-8.19.0
     BINARY_DIR ${CURL_BUILD_DIR}
-    DEPENDS zstd_ext brotli_ext
+    DEPENDS zstd_ext brotli_ext zlib_static
     CMAKE_ARGS
         -DCMAKE_BUILD_TYPE=${CMAKE_BUILD_TYPE}
         -DCMAKE_INSTALL_PREFIX=${CURL_INSTALL_DIR}
-        -DCMAKE_INSTALL_LIBDIR=lib # Added: Forces output to 'lib'
+        -DCMAKE_INSTALL_LIBDIR=lib
         -DBUILD_SHARED_LIBS=OFF
         -DBUILD_STATIC_LIBS=ON
         -DBUILD_CURL_EXE=OFF
         -DBUILD_TESTING=OFF
-        -DCURL_USE_OPENSSL=OFF
-        -DCURL_USE_SCHANNEL=ON
+        ${CURL_SSL_ARGS}
         -DUSE_WIN32_LDAP=OFF
         -DCURL_DISABLE_LDAP=ON
         -DCURL_DISABLE_LDAPS=ON
@@ -201,9 +248,11 @@ ExternalProject_Add(curl_ext
         -DCURL_BROTLI=ON
         -DCURL_ZSTD=ON
         -DCURL_ZLIB=ON
+        -DZLIB_INCLUDE_DIR=${ZLIB_SRC_DIR}
+        -DZLIB_LIBRARY=${ZLIB_STATIC_LIBRARY}
         -DCURL_USE_PKGCONFIG=OFF
-        -DCMAKE_INCLUDE_PATH=${ZSTD_INSTALL_DIR}/include;${BROTLI_INSTALL_DIR}/include
-        -DCMAKE_LIBRARY_PATH=${ZSTD_INSTALL_DIR}/lib;${BROTLI_INSTALL_DIR}/lib
+        -DCMAKE_INCLUDE_PATH=${ZSTD_INSTALL_DIR}/include;${BROTLI_INSTALL_DIR}/include;${ZLIB_SRC_DIR}
+        -DCMAKE_LIBRARY_PATH=${ZSTD_INSTALL_DIR}/lib;${BROTLI_INSTALL_DIR}/lib;${ZLIB_OUTPUT_DIR}
         -DCURL_ENABLE_SSL=ON
     INSTALL_COMMAND ${CMAKE_COMMAND} --install ${CURL_BUILD_DIR}
     BUILD_BYPRODUCTS ${CURL_INSTALL_DIR}/lib/${CURL_LIB_NAME}
@@ -228,21 +277,9 @@ if(LUDO_USE_PREBUILT_LIBUI)
         INTERFACE_INCLUDE_DIRECTORIES ${LUDO_LIBUI_INCLUDE_DIR}
     )
 else()
-    # Prefer the MinGW64 Meson/Ninja path on Windows builds; full absolute path
-    # is required because cmake --build uses cmd.exe and UNC-style paths can fail.
-    if(MINGW)
-        set(MESON_EXECUTABLE "D:/msys64/mingw64/bin/meson")
-        set(NINJA_EXECUTABLE "D:/msys64/mingw64/bin/ninja")
-    endif()
-
-    if(NOT MESON_EXECUTABLE OR NOT EXISTS "${MESON_EXECUTABLE}")
-        find_program(MESON_EXECUTABLE NAMES meson
-            HINTS D:/msys64/mingw64/bin /mingw64/bin /usr/bin
-            NO_DEFAULT_PATH)
-    endif()
-    if(NOT MESON_EXECUTABLE)
-        find_program(MESON_EXECUTABLE NAMES meson)
-    endif()
+    find_program(MESON_EXECUTABLE NAMES meson
+        HINTS /mingw64/bin /usr/bin
+    )
     if(NOT MESON_EXECUTABLE)
         message(FATAL_ERROR
             "Meson not found. Either install Meson, or configure with:\n"
@@ -250,14 +287,9 @@ else()
             "Optional: -DLUDO_LIBUI_INCLUDE_DIR=<path to headers containing ui.h>")
     endif()
 
-    if(NOT NINJA_EXECUTABLE OR NOT EXISTS "${NINJA_EXECUTABLE}")
-        find_program(NINJA_EXECUTABLE NAMES ninja
-            PATHS /mingw64/bin /usr/bin
-            NO_DEFAULT_PATH)
-    endif()
-    if(NOT NINJA_EXECUTABLE)
-        find_program(NINJA_EXECUTABLE NAMES ninja)
-    endif()
+    find_program(NINJA_EXECUTABLE NAMES ninja
+        HINTS /mingw64/bin /usr/bin
+    )
     if(NOT NINJA_EXECUTABLE)
         message(FATAL_ERROR "Ninja not found. Install ninja and retry.")
     endif()
@@ -295,6 +327,7 @@ endif()
 # ------------------------------------------------------------
 set(LUDO_SOURCES
     src/main.c
+    src/config.c
     src/gui.c
     src/win_toolbar_icons.cpp
     src/lua_engine.c
@@ -305,11 +338,9 @@ set(LUDO_SOURCES
     third_party/libuilua/libuilua.c
 )
 
-# Generate version header and resource file
 configure_file(${CMAKE_SOURCE_DIR}/src/version.h.in ${CMAKE_BINARY_DIR}/generated/version.h @ONLY)
 
 if(WIN32)
-    # Fix: Only add RC files on Windows to prevent Linux/Mac build errors
     configure_file(${CMAKE_SOURCE_DIR}/src/ludo.rc.in ${CMAKE_BINARY_DIR}/ludo.rc @ONLY)
     list(APPEND LUDO_SOURCES ${CMAKE_BINARY_DIR}/ludo.rc)
     add_executable(ludo WIN32 ${LUDO_SOURCES})
@@ -317,8 +348,7 @@ else()
     add_executable(ludo ${LUDO_SOURCES})
 endif()
 
-# Fix: Force CMake to wait for external projects to finish before compiling/linking ludo
-set(LUDO_EXTERNAL_DEPENDENCIES curl_ext zstd_ext brotli_ext)
+set(LUDO_EXTERNAL_DEPENDENCIES curl_ext zstd_ext brotli_ext zlib_static)
 if(NOT LUDO_USE_PREBUILT_LIBUI)
     list(APPEND LUDO_EXTERNAL_DEPENDENCIES libui_ext)
 endif()
@@ -329,7 +359,6 @@ target_include_directories(ludo PRIVATE
     ${CMAKE_SOURCE_DIR}/third_party/libuilua
     "$<BUILD_INTERFACE:${CMAKE_BINARY_DIR}/curl_install/include>"
     "$<BUILD_INTERFACE:${CMAKE_BINARY_DIR}/generated>"
-    # Note: LUA and libui-ng includes are inherited automatically via target_link_libraries
 )
 
 target_link_libraries(ludo PRIVATE
@@ -339,9 +368,9 @@ target_link_libraries(ludo PRIVATE
     brotlidec_static
     brotlienc_static
     brotlicommon_static
+    zlib_static
     lua
-    ZLIB::ZLIB    # Fix: Use CMake's official ZLIB target
-    Threads::Threads # Fix: Unified threading link for cross-platform
+    Threads::Threads 
 )
 
 if(MSVC)
@@ -368,7 +397,7 @@ elseif(UNIX AND NOT APPLE)
     find_package(PkgConfig REQUIRED)
     pkg_check_modules(GTK3 REQUIRED gtk+-3.0)
     target_include_directories(ludo PRIVATE ${GTK3_INCLUDE_DIRS})
-    target_link_libraries(ludo PRIVATE ${GTK3_LIBRARIES} m dl) # Removed redundant 'pthread'
+    target_link_libraries(ludo PRIVATE ${GTK3_LIBRARIES} m dl) 
 elseif(APPLE)
     target_link_libraries(ludo PRIVATE
         "-framework Cocoa"
@@ -388,9 +417,15 @@ add_custom_command(TARGET ludo POST_BUILD
 )
 
 add_custom_command(TARGET ludo POST_BUILD
+    COMMAND ${CMAKE_COMMAND} -E copy_if_different ${CMAKE_SOURCE_DIR}/config.ini $<TARGET_FILE_DIR:ludo>/config.ini
+    COMMENT "Copying config.ini..."
+)
+
+add_custom_command(TARGET ludo POST_BUILD
     COMMAND ${CMAKE_COMMAND} -E make_directory $<TARGET_FILE_DIR:ludo>/downloads
     COMMENT "Creating downloads directory..."
 )
 
 install(TARGETS ludo DESTINATION bin)
+install(FILES config.ini DESTINATION bin)
 install(DIRECTORY plugins/ DESTINATION bin/plugins)

@@ -7,6 +7,7 @@
 #include "../third_party/lua-5.2.4/src/lauxlib.h"
 #include "../third_party/lua-5.2.4/src/lualib.h"
 #include "download_manager.h"
+#include "config.h"
 #include "thread_queue.h"
 #include "ui.h"
 #include "version.h"
@@ -211,7 +212,8 @@ static void *url_worker_thread(void *arg) {
             gui_log(LOG_INFO, msg);
             download_manager_add(task.url,
                                  download_manager_get_output_dir(),
-                                 DOWNLOAD_NOW);
+                                 DOWNLOAD_NOW,
+                                 NULL);
         }
     }
     return NULL;
@@ -1398,6 +1400,7 @@ static void on_setting_clicked(uiButton *sender, void *data) {
     }
 
     download_manager_set_output_dir(folder);
+    ludo_config_set_output_dir(folder);
 
     char msg[1024];
     snprintf(msg, sizeof(msg), "Default output directory changed to: %s", folder);

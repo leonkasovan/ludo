@@ -1,4 +1,5 @@
 #include "download_manager.h"
+#include "config.h"
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -140,6 +141,8 @@ struct HeaderCtx {
     char filename[512];   /* set if Content-Disposition provides one */
     int  has_filename;
     int  download_id;     /* filled by perform_download so header_cb can dispatch */
+    char raw_headers[8192];
+    size_t raw_headers_len;
     int64_t content_length; /* parsed or obtained from HEAD */
     long response_code;   /* parsed from the HTTP status line */
 };
@@ -147,6 +150,7 @@ struct HeaderCtx {
 /* Forward declare gui_dispatch_update so header_cb may call it before its
    static definition later in this file. */
 static void gui_dispatch_update(const ProgressUpdate *update);
+static void header_ctx_append_line(HeaderCtx *hctx, const char *line);
 /* curl header callback — extracts filename from Content-Disposition */
 static size_t header_cb(char *buf, size_t size, size_t nitems, void *userdata)
 {
@@ -164,6 +168,7 @@ static size_t header_cb(char *buf, size_t size, size_t nitems, void *userdata)
         else break;
     }
 
+    header_ctx_append_line(hctx, line);
     dm_log("[header_cb] %s", line);
 
     if (strncmp(line, "HTTP/", 5) == 0) {
@@ -298,6 +303,29 @@ static void gui_dispatch_update(const ProgressUpdate *update) {
     uiQueueMain(gui_update_on_main, pkt);
 }
 
+static void header_ctx_append_line(HeaderCtx *hctx, const char *line) {
+    size_t len;
+    size_t copy_len;
+
+    if (!hctx || !line || line[0] == '\0') return;
+
+    len = strlen(line);
+    if (hctx->raw_headers_len >= sizeof(hctx->raw_headers) - 1) return;
+
+    copy_len = len;
+    if (hctx->raw_headers_len + copy_len + 1 >= sizeof(hctx->raw_headers)) {
+        copy_len = (sizeof(hctx->raw_headers) - 1) - hctx->raw_headers_len;
+    }
+    if (copy_len > 0) {
+        memcpy(hctx->raw_headers + hctx->raw_headers_len, line, copy_len);
+        hctx->raw_headers_len += copy_len;
+    }
+    if (hctx->raw_headers_len < sizeof(hctx->raw_headers) - 1) {
+        hctx->raw_headers[hctx->raw_headers_len++] = '\n';
+    }
+    hctx->raw_headers[hctx->raw_headers_len] = '\0';
+}
+
 /* Derive filename from URL (last path segment) */
 static void filename_from_url(const char *url, char *out, size_t out_sz) {
     const char *last_slash = strrchr(url, '/');
@@ -323,6 +351,52 @@ static void build_download_path(const Download *d, char *path, size_t path_sz) {
         if (last != '/' && last != '\\') sep = "/";
     }
     snprintf(path, path_sz, "%s%s%s", d->output_dir, sep, d->status.filename);
+}
+
+static void probe_download_head(const char *url, HeaderCtx *hctx) {
+    const LudoConfig *cfg = ludo_config_get();
+    CURL *head;
+    curl_off_t cl = 0;
+
+    if (!url || !hctx) return;
+
+    head = curl_easy_init();
+    if (!head) return;
+
+    curl_easy_setopt(head, CURLOPT_URL, url);
+    curl_easy_setopt(head, CURLOPT_NOBODY, 1L);
+    curl_easy_setopt(head, CURLOPT_HEADERFUNCTION, header_cb);
+    curl_easy_setopt(head, CURLOPT_HEADERDATA, hctx);
+    curl_easy_setopt(head, CURLOPT_FOLLOWLOCATION, 1L);
+    curl_easy_setopt(head, CURLOPT_MAXREDIRS, (long)(cfg ? cfg->max_redirect : 10));
+    curl_easy_setopt(head, CURLOPT_USERAGENT,
+                     "Mozilla/5.0 (Windows NT 10.0; Win64; x64)");
+    curl_easy_perform(head);
+    if (curl_easy_getinfo(head, CURLINFO_CONTENT_LENGTH_DOWNLOAD_T, &cl) == CURLE_OK && cl > 0) {
+        hctx->content_length = (int64_t)cl;
+    }
+    curl_easy_cleanup(head);
+}
+
+static int download_should_retry(CURLcode res, long http_code) {
+    if (res == CURLE_OPERATION_TIMEDOUT ||
+        res == CURLE_COULDNT_CONNECT ||
+        res == CURLE_COULDNT_RESOLVE_HOST ||
+        res == CURLE_GOT_NOTHING ||
+        res == CURLE_RECV_ERROR ||
+        res == CURLE_SEND_ERROR ||
+        res == CURLE_PARTIAL_FILE) {
+        return 1;
+    }
+
+    if (res == CURLE_OK) {
+        if (http_code == 408 || http_code == 409 || http_code == 425 ||
+            http_code == 429 || (http_code >= 500 && http_code <= 599)) {
+            return 1;
+        }
+    }
+
+    return 0;
 }
 
 #ifdef _WIN32
@@ -562,7 +636,7 @@ static size_t write_cb(char *ptr, size_t size, size_t nmemb, void *userdata) {
 }
 
 /* Perform the actual file download for entry `d` */
-static void perform_download(Download *d) {
+static void perform_download_legacy(Download *d) {
     dm_log("[perform_download] id=%d url=%s", d->status.id, d->url);
     dm_log("[perform_download] output_dir=%s  filename=%s", d->output_dir, d->status.filename);
 
@@ -586,28 +660,24 @@ static void perform_download(Download *d) {
     memset(&hctx, 0, sizeof(hctx));
     hctx.download_id = d->status.id;
 
-    CURL *head = curl_easy_init();
-    if (head) {
-        curl_easy_setopt(head, CURLOPT_URL, d->url);
-        curl_easy_setopt(head, CURLOPT_NOBODY, 1L);
-        curl_easy_setopt(head, CURLOPT_HEADERFUNCTION, header_cb);
-        curl_easy_setopt(head, CURLOPT_HEADERDATA, &hctx);
-        curl_easy_setopt(head, CURLOPT_FOLLOWLOCATION, 1L);
-        curl_easy_setopt(head, CURLOPT_USERAGENT,
-                         "Mozilla/5.0 (Windows NT 10.0; Win64; x64)");
-        curl_easy_perform(head);
-        curl_off_t cl = 0;
-        if (curl_easy_getinfo(head, CURLINFO_CONTENT_LENGTH_DOWNLOAD_T, &cl) == CURLE_OK) {
-            if (cl > 0) hctx.content_length = (int64_t)cl;
+    if (d->has_preflight) {
+        hctx.response_code = d->preflight_status_code;
+        hctx.content_length = d->preflight_content_length;
+        if (d->preflight_filename[0] != '\0') {
+            strncpy(hctx.filename, d->preflight_filename, sizeof(hctx.filename) - 1);
+            hctx.filename[sizeof(hctx.filename) - 1] = '\0';
+            hctx.has_filename = 1;
         }
-        /* If header parsing provided a filename, update the download record */
-        if (hctx.has_filename) {
-            ludo_mutex_lock(&g_mgr.list_mutex);
-            strncpy(d->status.filename, hctx.filename, sizeof(d->status.filename)-1);
-            d->status.filename[sizeof(d->status.filename)-1] = '\0';
-            ludo_mutex_unlock(&g_mgr.list_mutex);
-        }
-        curl_easy_cleanup(head);
+    } else {
+        probe_download_head(d->url, &hctx);
+    }
+
+    /* If header parsing provided a filename, update the download record */
+    if (hctx.has_filename) {
+        ludo_mutex_lock(&g_mgr.list_mutex);
+        strncpy(d->status.filename, hctx.filename, sizeof(d->status.filename)-1);
+        d->status.filename[sizeof(d->status.filename)-1] = '\0';
+        ludo_mutex_unlock(&g_mgr.list_mutex);
     }
 
     /* Build final output path (may have been updated from headers) */
@@ -916,6 +986,272 @@ static void perform_download(Download *d) {
     dm_log("[perform_download] id=%d done", final_id);
 }
 
+static void perform_download(Download *d) {
+    const LudoConfig *cfg = ludo_config_get();
+    const char *sep = "";
+    size_t dlen;
+    HeaderCtx hctx;
+    char path[2048];
+    CURLcode res = CURLE_OK;
+    long http_code = 0;
+    int transfer_success = 0;
+    int should_skip;
+    int max_attempts = cfg ? (cfg->max_download_retry + 1) : 1;
+
+    dm_log("[perform_download] id=%d url=%s", d->status.id, d->url);
+    dm_log("[perform_download] output_dir=%s  filename=%s", d->output_dir, d->status.filename);
+
+    ludo_mutex_lock(&g_mgr.list_mutex);
+    should_skip = g_mgr.shutting_down || d->stop_requested || d->status.state == DOWNLOAD_STATE_PAUSED;
+    ludo_mutex_unlock(&g_mgr.list_mutex);
+    if (should_skip) return;
+
+    dlen = strlen(d->output_dir);
+    if (dlen > 0) {
+        char last = d->output_dir[dlen - 1];
+        if (last != '/' && last != '\\') sep = "/";
+    }
+
+    memset(&hctx, 0, sizeof(hctx));
+    hctx.download_id = d->status.id;
+    if (d->has_preflight) {
+        hctx.response_code = d->preflight_status_code;
+        hctx.content_length = d->preflight_content_length;
+        if (d->preflight_filename[0] != '\0') {
+            strncpy(hctx.filename, d->preflight_filename, sizeof(hctx.filename) - 1);
+            hctx.filename[sizeof(hctx.filename) - 1] = '\0';
+            hctx.has_filename = 1;
+        }
+    } else {
+        probe_download_head(d->url, &hctx);
+    }
+
+    if (hctx.has_filename) {
+        ludo_mutex_lock(&g_mgr.list_mutex);
+        strncpy(d->status.filename, hctx.filename, sizeof(d->status.filename) - 1);
+        d->status.filename[sizeof(d->status.filename) - 1] = '\0';
+        ludo_mutex_unlock(&g_mgr.list_mutex);
+    }
+
+    snprintf(path, sizeof(path), "%s%s%s", d->output_dir, sep, d->status.filename);
+    http_code = hctx.response_code;
+
+    for (int attempt = 0; attempt < max_attempts; attempt++) {
+        curl_off_t resume_from = 0;
+        FILE *fp = NULL;
+        int pause_flag = 0;
+        int cancel_flag = 0;
+        HeaderCtx hctx_local;
+        WriteCtx ctx;
+        CURL *curl = NULL;
+
+        memset(&hctx_local, 0, sizeof(hctx_local));
+        memcpy(&hctx_local, &hctx, sizeof(hctx_local));
+        hctx_local.download_id = d->status.id;
+
+        {
+#ifdef _WIN32
+            struct _stat64 st;
+#else
+            struct stat st;
+#endif
+            if (dm_stat_utf8(path, &st) == 0 && st.st_size > 0) {
+                if (hctx.content_length > 0 && (int64_t)st.st_size == hctx.content_length) {
+                    ProgressUpdate upd = {0};
+                    ludo_mutex_lock(&g_mgr.list_mutex);
+                    d->status.downloaded_bytes = (int64_t)st.st_size;
+                    d->status.total_bytes = (int64_t)st.st_size;
+                    d->status.state = DOWNLOAD_STATE_COMPLETED;
+                    d->status.progress = 100.0;
+                    ludo_mutex_unlock(&g_mgr.list_mutex);
+                    upd.status.id = d->status.id;
+                    upd.status.state = DOWNLOAD_STATE_COMPLETED;
+                    upd.status.progress = 100.0;
+                    upd.status.downloaded_bytes = d->status.downloaded_bytes;
+                    upd.status.total_bytes = d->status.total_bytes;
+                    strncpy(upd.status.filename, d->status.filename, sizeof(upd.status.filename) - 1);
+                    gui_dispatch_update(&upd);
+                    return;
+                }
+                resume_from = (curl_off_t)st.st_size;
+            }
+        }
+
+        fp = dm_fopen_utf8(path, resume_from > 0 ? "ab" : "wb");
+        if (!fp) {
+            ProgressUpdate upd = {0};
+            upd.status.id = d->status.id;
+            upd.status.state = DOWNLOAD_STATE_FAILED;
+            snprintf(upd.error_msg, sizeof(upd.error_msg), "Cannot open output file: %s", path);
+            ludo_mutex_lock(&g_mgr.list_mutex);
+            d->status.state = DOWNLOAD_STATE_FAILED;
+            ludo_mutex_unlock(&g_mgr.list_mutex);
+            gui_dispatch_update(&upd);
+            return;
+        }
+
+        curl = curl_easy_init();
+        if (!curl) {
+            ProgressUpdate upd = {0};
+            fclose(fp);
+            upd.status.id = d->status.id;
+            upd.status.state = DOWNLOAD_STATE_FAILED;
+            strncpy(upd.status.filename, d->status.filename, sizeof(upd.status.filename) - 1);
+            snprintf(upd.error_msg, sizeof(upd.error_msg), "Failed to initialize curl");
+            ludo_mutex_lock(&g_mgr.list_mutex);
+            d->status.state = DOWNLOAD_STATE_FAILED;
+            ludo_mutex_unlock(&g_mgr.list_mutex);
+            gui_dispatch_update(&upd);
+            return;
+        }
+
+        ctx.fp = fp;
+        ctx.download_id = d->status.id;
+        ctx.download = d;
+        ctx.pause_flag = &pause_flag;
+        ctx.cancel_flag = &cancel_flag;
+        ctx.resume_offset = (int64_t)resume_from;
+        ctx.last_ui_tick = 0;
+        ctx.curl = curl;
+        ctx.bytes_since_last_flush = 0;
+        ctx.header_ctx = &hctx_local;
+        ctx.path = path;
+        ctx.resume_checked = 0;
+
+        ludo_mutex_lock(&g_mgr.list_mutex);
+        d->curl_handle = (void *)curl;
+        d->fp = fp;
+        d->stop_requested = 0;
+        d->status.start_time = time(NULL);
+        ludo_mutex_unlock(&g_mgr.list_mutex);
+
+        curl_easy_setopt(curl, CURLOPT_URL, d->url);
+        curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, write_cb);
+        curl_easy_setopt(curl, CURLOPT_WRITEDATA, &ctx);
+        curl_easy_setopt(curl, CURLOPT_XFERINFOFUNCTION, xfer_info_cb);
+        curl_easy_setopt(curl, CURLOPT_XFERINFODATA, &ctx);
+        curl_easy_setopt(curl, CURLOPT_NOPROGRESS, 0L);
+        curl_easy_setopt(curl, CURLOPT_FOLLOWLOCATION, 1L);
+        curl_easy_setopt(curl, CURLOPT_MAXREDIRS, (long)(cfg ? cfg->max_redirect : 10));
+        curl_easy_setopt(curl, CURLOPT_ACCEPT_ENCODING, "gzip, deflate, zstd, br");
+        curl_easy_setopt(curl, CURLOPT_USERAGENT,
+                         "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/146.0.0.0 Safari/537.36 Edg/146.0.0.0");
+        curl_easy_setopt(curl, CURLOPT_HEADERFUNCTION, header_cb);
+        curl_easy_setopt(curl, CURLOPT_HEADERDATA, &hctx_local);
+        curl_easy_setopt(curl, CURLOPT_VERBOSE, 1L);
+        curl_easy_setopt(curl, CURLOPT_DEBUGFUNCTION, curl_debug_cb);
+        curl_easy_setopt(curl, CURLOPT_DEBUGDATA, NULL);
+        if (resume_from > 0) {
+            curl_easy_setopt(curl, CURLOPT_RESUME_FROM_LARGE, resume_from);
+        }
+
+        res = curl_easy_perform(curl);
+        curl_easy_getinfo(curl, CURLINFO_RESPONSE_CODE, &http_code);
+
+        fclose(fp);
+        curl_easy_cleanup(curl);
+        ludo_mutex_lock(&g_mgr.list_mutex);
+        d->curl_handle = NULL;
+        d->fp = NULL;
+        ludo_mutex_unlock(&g_mgr.list_mutex);
+
+        if (res == CURLE_OK && http_code < 400) {
+            transfer_success = 1;
+            if (hctx_local.has_filename) {
+                ludo_mutex_lock(&g_mgr.list_mutex);
+                strncpy(d->status.filename, hctx_local.filename, sizeof(d->status.filename) - 1);
+                d->status.filename[sizeof(d->status.filename) - 1] = '\0';
+                ludo_mutex_unlock(&g_mgr.list_mutex);
+            }
+            break;
+        }
+
+        ludo_mutex_lock(&g_mgr.list_mutex);
+        should_skip = g_mgr.shutting_down || d->stop_requested || d->status.state == DOWNLOAD_STATE_PAUSED;
+        ludo_mutex_unlock(&g_mgr.list_mutex);
+        if (should_skip) break;
+        if (!download_should_retry(res, http_code) || attempt + 1 >= max_attempts) break;
+    }
+
+    if (transfer_success) {
+        char final_path[2048];
+#ifdef _WIN32
+        struct _stat64 st;
+#else
+        struct stat st;
+#endif
+        snprintf(final_path, sizeof(final_path), "%s%s%s", d->output_dir, sep, d->status.filename);
+        if (dm_stat_utf8(final_path, &st) == 0) {
+            ludo_mutex_lock(&g_mgr.list_mutex);
+            d->status.downloaded_bytes = (int64_t)st.st_size;
+            d->status.total_bytes = (int64_t)st.st_size;
+            ludo_mutex_unlock(&g_mgr.list_mutex);
+        }
+    }
+
+    ludo_mutex_lock(&g_mgr.list_mutex);
+    d->status.end_time = time(NULL);
+    if (transfer_success) {
+        d->status.state = DOWNLOAD_STATE_COMPLETED;
+        d->status.progress = 100.0;
+    } else if (d->status.state != DOWNLOAD_STATE_QUEUED && d->status.state != DOWNLOAD_STATE_PAUSED) {
+        d->status.state = DOWNLOAD_STATE_FAILED;
+    }
+    if (d->status.state != DOWNLOAD_STATE_PAUSED) d->stop_requested = 0;
+
+    {
+        int is_deleted = d->marked_for_removal;
+        int final_id = d->status.id;
+        DownloadState final_state = d->status.state;
+        time_t start_ts = d->status.start_time;
+        time_t finish_ts = d->status.end_time;
+        double final_progress = d->status.progress;
+        int64_t final_downloaded_bytes = d->status.downloaded_bytes;
+        int64_t final_total_bytes = d->status.total_bytes;
+        double final_speed_bps = d->status.speed_bps;
+        char final_filename[sizeof(d->status.filename)];
+        ProgressUpdate upd = {0};
+
+        if (is_deleted) {
+            Download **prev = &g_mgr.list;
+            while (*prev) {
+                if (*prev == d) {
+                    *prev = d->next;
+                    break;
+                }
+                prev = &(*prev)->next;
+            }
+        }
+
+        strncpy(final_filename, d->status.filename, sizeof(final_filename) - 1);
+        final_filename[sizeof(final_filename) - 1] = '\0';
+        ludo_mutex_unlock(&g_mgr.list_mutex);
+
+        if (is_deleted) {
+            free(d);
+            return;
+        }
+
+        upd.status.id = final_id;
+        upd.status.state = final_state;
+        upd.status.progress = (final_state == DOWNLOAD_STATE_COMPLETED) ? 100.0 : final_progress;
+        upd.status.start_time = start_ts;
+        upd.status.end_time = finish_ts;
+        upd.status.downloaded_bytes = final_downloaded_bytes;
+        upd.status.total_bytes = final_total_bytes;
+        upd.status.speed_bps = final_speed_bps;
+        strncpy(upd.status.filename, final_filename, sizeof(upd.status.filename) - 1);
+        if (!transfer_success) {
+            if (res != CURLE_OK) {
+                strncpy(upd.error_msg, curl_easy_strerror(res), sizeof(upd.error_msg) - 1);
+            } else if (http_code >= 400) {
+                snprintf(upd.error_msg, sizeof(upd.error_msg), "HTTP %ld", http_code);
+            }
+        }
+        gui_dispatch_update(&upd);
+    }
+}
+
 /* ------------------------------------------------------------------ */
 /* Persistence — dl_items.db + dl_history.gz                           */
 /* ------------------------------------------------------------------ */
@@ -1127,51 +1463,17 @@ static void *worker_thread(void *arg) {
     (void)arg;
     URLTask task;
     while (task_queue_pop(&g_mgr.queue, &task)) {
-        
-        /* Check if this is a command to resume an existing download */
-        if (strncmp(task.url, "INTERNAL_RESUME:", 16) == 0) {
-            int resume_id = atoi(task.url + 16);
-            ludo_mutex_lock(&g_mgr.list_mutex);
-            Download *res_d = NULL;
-            for (Download *it = g_mgr.list; it; it = it->next) {
-                if (it->status.id == resume_id) { res_d = it; break; }
-            }
-            ludo_mutex_unlock(&g_mgr.list_mutex);
-            
-            if (res_d && res_d->status.state == DOWNLOAD_STATE_QUEUED) {
-                perform_download(res_d);
-            }
-            continue;
-        }
-
-        /* --- Standard logic for NEW downloads --- */
-        Download *d = (Download *)calloc(1, sizeof(Download));
-        if (!d) continue;
-
+        Download *d = NULL;
         ludo_mutex_lock(&g_mgr.list_mutex);
-        d->status.id = g_mgr.next_id++;
-        strncpy(d->url, task.url, sizeof(d->url) - 1);
-        if (task.output_dir[0] != '\0')
-            strncpy(d->output_dir, task.output_dir, sizeof(d->output_dir) - 1);
-        else
-            strncpy(d->output_dir, g_mgr.output_dir, sizeof(d->output_dir) - 1);
-        filename_from_url(task.url, d->status.filename, sizeof(d->status.filename));
-        d->status.state = DOWNLOAD_STATE_QUEUED;
-        d->status.start_time = time(NULL);
-
-        /* Prepend to list */
-        d->next      = g_mgr.list;
-        g_mgr.list   = d;
+        for (Download *it = g_mgr.list; it; it = it->next) {
+            if (it->status.id == task.download_id) {
+                d = it;
+                break;
+            }
+        }
         ludo_mutex_unlock(&g_mgr.list_mutex);
-
-        /* Notify GUI of new entry */
-        ProgressUpdate upd = {0};
-        upd.status.id       = d->status.id;
-        upd.status.state    = DOWNLOAD_STATE_QUEUED;
-        upd.status.progress = 0.0;
-        strncpy(upd.status.filename, d->status.filename, sizeof(upd.status.filename) - 1);
-        gui_dispatch_update(&upd);
-
+        if (!d) continue;
+        if (task.is_resume_task && d->status.state != DOWNLOAD_STATE_QUEUED) continue;
         perform_download(d);
     }
     return NULL;
@@ -1182,6 +1484,7 @@ static void *worker_thread(void *arg) {
 /* ------------------------------------------------------------------ */
 
 void download_manager_init(int num_workers, const char *output_dir) {
+    const LudoConfig *cfg = ludo_config_get();
     dm_log_init();
     dm_log("[init] num_workers=%d  output_dir=%s",
            num_workers, output_dir ? output_dir : "(null -> ./downloads/)");
@@ -1196,7 +1499,7 @@ void download_manager_init(int num_workers, const char *output_dir) {
             sizeof(g_mgr.output_dir) - 1);
 
     ludo_mutex_init(&g_mgr.list_mutex);
-    task_queue_init(&g_mgr.queue, 256);
+    task_queue_init(&g_mgr.queue, cfg ? cfg->download_queue_capacity : 256);
 
     curl_global_init(CURL_GLOBAL_DEFAULT);
     {
@@ -1298,24 +1601,81 @@ void download_manager_shutdown(void) {
     dm_log_close();
 }
 
-int download_manager_add(const char *url, const char *output_dir, DownloadMode mode)
+int download_manager_add(const char *url, const char *output_dir, DownloadMode mode, DownloadAddResult *result)
 {
     (void)mode; /* DOWNLOAD_NOW vs DOWNLOAD_QUEUE handled via queue order */
+    Download *d;
+    URLTask task;
+    HeaderCtx probe;
+    ProgressUpdate upd;
+
+    if (result) memset(result, 0, sizeof(*result));
     if (!url || url[0] == '\0') return -1;
 
+    d = (Download *)calloc(1, sizeof(Download));
+    if (!d) return -1;
+
     ludo_mutex_lock(&g_mgr.list_mutex);
-    int shutting_down = g_mgr.shutting_down;
-    ludo_mutex_unlock(&g_mgr.list_mutex);
-    if (shutting_down) return -1;
+    if (g_mgr.shutting_down) {
+        ludo_mutex_unlock(&g_mgr.list_mutex);
+        free(d);
+        return -1;
+    }
 
-    URLTask task;
-    memset(&task, 0, sizeof(task));
-    strncpy(task.url, url, sizeof(task.url) - 1);
+    d->status.id = g_mgr.next_id++;
+    strncpy(d->url, url, sizeof(d->url) - 1);
     if (output_dir && output_dir[0] != '\0')
-        strncpy(task.output_dir, output_dir, sizeof(task.output_dir) - 1);
+        strncpy(d->output_dir, output_dir, sizeof(d->output_dir) - 1);
+    else
+        strncpy(d->output_dir, g_mgr.output_dir, sizeof(d->output_dir) - 1);
+    filename_from_url(url, d->status.filename, sizeof(d->status.filename));
+    d->status.state = DOWNLOAD_STATE_QUEUED;
+    d->status.start_time = time(NULL);
+    d->next = g_mgr.list;
+    g_mgr.list = d;
+    ludo_mutex_unlock(&g_mgr.list_mutex);
 
+    memset(&upd, 0, sizeof(upd));
+    upd.status.id = d->status.id;
+    upd.status.state = DOWNLOAD_STATE_QUEUED;
+    upd.status.progress = 0.0;
+    strncpy(upd.status.filename, d->status.filename, sizeof(upd.status.filename) - 1);
+    gui_dispatch_update(&upd);
+
+    if (result) {
+        memset(&probe, 0, sizeof(probe));
+        probe.download_id = d->status.id;
+        probe_download_head(url, &probe);
+
+        result->id = d->status.id;
+        result->status_code = probe.response_code;
+        strncpy(result->headers, probe.raw_headers, sizeof(result->headers) - 1);
+
+        ludo_mutex_lock(&g_mgr.list_mutex);
+        d->has_preflight = 1;
+        d->preflight_status_code = probe.response_code;
+        d->preflight_content_length = probe.content_length;
+        if (probe.has_filename) {
+            strncpy(d->preflight_filename, probe.filename, sizeof(d->preflight_filename) - 1);
+            strncpy(d->status.filename, probe.filename, sizeof(d->status.filename) - 1);
+        }
+        ludo_mutex_unlock(&g_mgr.list_mutex);
+
+        if (probe.has_filename) {
+            ProgressUpdate preflight_upd = {0};
+            preflight_upd.status.id = d->status.id;
+            preflight_upd.status.state = DOWNLOAD_STATE_QUEUED;
+            strncpy(preflight_upd.status.filename, probe.filename, sizeof(preflight_upd.status.filename) - 1);
+            gui_dispatch_update(&preflight_upd);
+        }
+    }
+
+    memset(&task, 0, sizeof(task));
+    task.download_id = d->status.id;
+    strncpy(task.url, url, sizeof(task.url) - 1);
+    strncpy(task.output_dir, d->output_dir, sizeof(task.output_dir) - 1);
     task_queue_push_task(&g_mgr.queue, &task);
-    return 0; /* actual ID assigned in worker */
+    return d->status.id;
 }
 
 bool download_manager_pause(int id) {
@@ -1353,7 +1713,8 @@ bool download_manager_resume(int id) {
             /* Push an internal task to tell the worker thread to resume this ID */
             URLTask task;
             memset(&task, 0, sizeof(task));
-            snprintf(task.url, sizeof(task.url), "INTERNAL_RESUME:%d", d->status.id);
+            task.download_id = d->status.id;
+            task.is_resume_task = 1;
             task_queue_push_task(&g_mgr.queue, &task);
             
             /* Notify GUI to update UI state immediately */

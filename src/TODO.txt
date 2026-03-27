@@ -1,10 +1,6 @@
-1. Implement robustly these lua script functions:
-    ludo.http_tester.response.content(): return http response content as string from output_entry in on_http_clicked(gui.c)
-    ludo.http_tester.response.header(): return http response header as string from header_resp_entry in on_http_clicked(gui.c)
-    ludo.lua_tester.println(string message): print message to output_entry in function on_lua_clicked (gui.c)
-    ludo.lua_tester.printf(string format, ...): print formatted message to output_entry in function on_lua_clicked (gui.c)
+1. Update ludo.newDownload (src\ludo_module.c) to return download id, status and headers. Don't forget to update the documentation. This will allow us to track downloads more effectively and handle errors better.
+2. Update CMakeLists.txt to use static zlib (third_party\zlib-1.2.8) instead of dynamic linking to avoid issues with missing DLLs on some systems. 
+3. Remove hardcoded settings and create config.ini and implement ludo.setting.maxDownloadRetry, ludo.setting.maxThread, etc.
 
-2. Add listbox for snippet selection in on_lua_clicked. The snippets will be stored in a folder named "snippets" and the listbox will display the names of the snippets. When a snippet is double-clicked, its content will be loaded into the Lua script tester for execution.
-3. Create config.lua and implement ludo.setting.maxThread, ludo.setting.maxDownloadRetry
 4. Find downloads history
 5. Plugins LUA: convert output audio , convert images into cbs.

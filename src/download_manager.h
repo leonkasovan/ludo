@@ -45,6 +45,10 @@ typedef struct Download {
     DownloadStatus   status;
     char             url[4096];
     char             output_dir[1024];
+    long             preflight_status_code;
+    int64_t          preflight_content_length;
+    int              has_preflight;
+    char             preflight_filename[512];
     void            *curl_handle;    /* opaque pointer to active CURL handle, if any */
     FILE            *fp;             /* active file handle for writing, if any */
     size_t           bytes_since_last_flush;
@@ -62,6 +66,12 @@ typedef struct {
     char             error_msg[256];
 } ProgressUpdate;
 
+typedef struct {
+    int  id;
+    long status_code;
+    char headers[8192];
+} DownloadAddResult;
+
 /* Callback registered by the GUI to receive progress updates */
 typedef void (*progress_callback_t)(const ProgressUpdate *update, void *user_data);
 
@@ -75,9 +85,9 @@ void download_manager_init(int num_workers, const char *output_dir);
 void download_manager_prepare_for_shutdown(void);
 void download_manager_shutdown(void);
 
-/* Queue a new download.  Returns the assigned download ID (>0) or -1 on error.
-   Called from any thread; internally uses the task queue. */
-int  download_manager_add(const char *url, const char *output_dir, DownloadMode mode);
+/* Queue a new download. Returns the assigned download ID (>0) or -1 on error.
+   When result is non-NULL, fills it with preflight status/header data. */
+int  download_manager_add(const char *url, const char *output_dir, DownloadMode mode, DownloadAddResult *result);
 
 /* Pause / resume / remove — may be called from the GUI thread */
 bool download_manager_pause(int id);

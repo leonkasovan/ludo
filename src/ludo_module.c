@@ -1,4 +1,5 @@
 #include "ludo_module.h"
+#include "config.h"
 #include "download_manager.h"
 #include "gui.h"
 #include "ui.h"
@@ -8,21 +9,49 @@
 #include <string.h>
 
 /* ------------------------------------------------------------------ */
-/* ludo.newDownload(url, output_dir, mode) -> download_id              */
+/* ludo.newDownload(url, output_dir, mode) -> id, status, headers      */
 /* ------------------------------------------------------------------ */
+
+static void push_headers_table(lua_State *L, const char *raw) {
+    const char *p = raw ? raw : "";
+
+    lua_newtable(L);
+    while (*p) {
+        const char *eol = strpbrk(p, "\r\n");
+        if (!eol) eol = p + strlen(p);
+        if (strncmp(p, "HTTP/", 5) != 0) {
+            const char *colon = memchr(p, ':', (size_t)(eol - p));
+            if (colon) {
+                size_t klen = (size_t)(colon - p);
+                const char *val = colon + 1;
+                while (*val == ' ') val++;
+                lua_pushlstring(L, p, klen);
+                lua_pushlstring(L, val, (size_t)(eol - val));
+                lua_settable(L, -3);
+            }
+        }
+        p = eol;
+        while (*p == '\r' || *p == '\n') p++;
+    }
+}
 
 static int lua_ludo_new_download(lua_State *L) {
     const char *url        = luaL_checkstring(L, 1);
     const char *output_dir = luaL_optstring(L, 2, NULL);
     int         mode       = (int)luaL_optinteger(L, 3, DOWNLOAD_NOW);
+    DownloadAddResult result;
 
     /* Use default output dir if none provided */
     if (!output_dir || output_dir[0] == '\0')
         output_dir = download_manager_get_output_dir();
 
-    int id = download_manager_add(url, output_dir, (DownloadMode)mode);
-    lua_pushinteger(L, (lua_Integer)id);
-    return 1;
+    memset(&result, 0, sizeof(result));
+    int id = download_manager_add(url, output_dir, (DownloadMode)mode, &result);
+    if (id < 0) result.id = id;
+    lua_pushinteger(L, (lua_Integer)result.id);
+    lua_pushinteger(L, (lua_Integer)result.status_code);
+    push_headers_table(L, result.headers);
+    return 3;
 }
 
 /* ludo.pauseDownload(id) */
@@ -185,6 +214,7 @@ static const luaL_Reg ludo_funcs[] = {
 };
 
 void ludo_module_register(lua_State *L) {
+    const LudoConfig *cfg = ludo_config_get();
     luaL_newlib(L, ludo_funcs);
 
     lua_newtable(L);
@@ -209,6 +239,23 @@ void ludo_module_register(lua_State *L) {
 
     lua_pushinteger(L, DOWNLOAD_QUEUE);
     lua_setfield(L, -2, "DOWNLOAD_QUEUE");
+
+    lua_newtable(L);
+    lua_pushinteger(L, cfg ? cfg->max_download_retry : 0);
+    lua_setfield(L, -2, "maxDownloadRetry");
+    lua_pushinteger(L, cfg ? cfg->max_thread : 0);
+    lua_setfield(L, -2, "maxThread");
+    lua_pushinteger(L, cfg ? cfg->url_queue_capacity : 0);
+    lua_setfield(L, -2, "urlQueueCapacity");
+    lua_pushinteger(L, cfg ? cfg->download_queue_capacity : 0);
+    lua_setfield(L, -2, "downloadQueueCapacity");
+    lua_pushinteger(L, cfg ? cfg->max_redirect : 0);
+    lua_setfield(L, -2, "maxRedirect");
+    lua_pushstring(L, cfg ? cfg->output_dir : "");
+    lua_setfield(L, -2, "outputDir");
+    lua_pushstring(L, cfg ? cfg->plugin_dir : "");
+    lua_setfield(L, -2, "pluginDir");
+    lua_setfield(L, -2, "setting");
 
     lua_setglobal(L, "ludo");
 }

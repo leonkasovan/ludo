@@ -19,8 +19,10 @@ typedef pthread_cond_t  ludo_cond_t;
 typedef pthread_t       ludo_thread_t;
 #endif
 
-/* A pending URL task pushed from the GUI thread or ludo_module */
+/* A pending URL task pushed from the GUI thread or download manager */
 typedef struct {
+    int  download_id;      /* 0 when not associated with a download-manager item */
+    int  is_resume_task;   /* non-zero when this is a resume command */
     char url[4096];
     char output_dir[1024]; /* empty = use download manager default */
 } URLTask;

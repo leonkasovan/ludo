@@ -15,8 +15,10 @@ typedef struct {
  * Registers the "ludo" library into the given Lua state.
  * After this call Lua scripts can call:
  *
- *   id = ludo.newDownload(url, output_dir, mode)
+ *   id, status, headers = ludo.newDownload(url, output_dir, mode)
  *              mode: ludo.DOWNLOAD_NOW | ludo.DOWNLOAD_QUEUE
+ *   ludo.setting.maxDownloadRetry
+ *   ludo.setting.maxThread
  *   ludo.pauseDownload(id)
  *   ludo.removeDownload(id)
  *   ludo.logError(msg)

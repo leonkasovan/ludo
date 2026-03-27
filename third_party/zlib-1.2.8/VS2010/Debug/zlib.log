@@ -1,0 +1,9 @@
+﻿Build started 3/12/2026 6:50:12 PM.
+     1>Project "C:\Projects\New-Ikemen-Plus-Ultra (VS2010)\external\zlib-1.2.8\VS2010\zlib.vcxproj" on node 2 (clean target(s)).
+     1>_PrepareForClean:
+         Deleting file "Debug\zlib.lastbuildstate".
+     1>Done Building Project "C:\Projects\New-Ikemen-Plus-Ultra (VS2010)\external\zlib-1.2.8\VS2010\zlib.vcxproj" (clean target(s)).
+
+Build succeeded.
+
+Time Elapsed 00:00:00.03

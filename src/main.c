@@ -1,6 +1,7 @@
 #include "gui.h"
 #include "lua_engine.h"
 #include "download_manager.h"
+#include "config.h"
 #include "thread_queue.h"
 
 #include "ui.h"
@@ -60,6 +61,11 @@ int main(int argc, char *argv[])
     (void)argc; (void)argv;
 #endif
 
+    if (!ludo_config_init("config.ini")) {
+        fprintf(stderr, "Failed to load config.ini\n");
+    }
+    const LudoConfig *cfg = ludo_config_get();
+
     /* -------------------------------------------------------------- */
     /* 1. Initialise libui                                              */
     /* -------------------------------------------------------------- */
@@ -81,22 +87,24 @@ int main(int argc, char *argv[])
     /* -------------------------------------------------------------- */
     /* 2. Initialise the URL task queue                                 */
     /* -------------------------------------------------------------- */
-    if (task_queue_init(&g_url_queue, 256) != 0) {
+    if (task_queue_init(&g_url_queue, cfg ? cfg->url_queue_capacity : 256) != 0) {
         fprintf(stderr, "Failed to initialise task queue\n");
         uiUninit();
+        ludo_config_shutdown();
         return 1;
     }
 
     /* -------------------------------------------------------------- */
     /* 3. Initialise the download manager (2 concurrent downloads)     */
     /* -------------------------------------------------------------- */
-    download_manager_init(2, "downloads/");
+    download_manager_init(cfg ? cfg->max_thread : 2,
+                          cfg ? cfg->output_dir : "downloads/");
 
     /* -------------------------------------------------------------- */
     /* 4. Initialise the Lua plugin engine and load plugins             */
     /* -------------------------------------------------------------- */
     lua_engine_init();
-    lua_engine_load_plugins("plugins");
+    lua_engine_load_plugins(cfg ? cfg->plugin_dir : "plugins");
 
     /* --------------------------------------------------------------------- */
     /* 5. Build, display the GUI and sync it with the download manager state */
@@ -142,6 +150,7 @@ int main(int argc, char *argv[])
     download_manager_shutdown();
     lua_engine_shutdown();
     task_queue_destroy(&g_url_queue);
+    ludo_config_shutdown();
 
     uiUninit();
     return 0;

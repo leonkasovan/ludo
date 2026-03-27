@@ -372,9 +372,9 @@ Perform an HTTP GET request.
 - `options` (table, optional) — Request options (see [Options Table](#37-options-table)).
 
 **Returns:**
-- `body` (string) — Response body.
-- `status` (number) — HTTP status code.
-- `headers` (table) — Response headers as key-value pairs.
+- `body` (string) - Response body.
+- `status` (number) - HTTP status code.
+- `headers` (table) - Response headers as key-value pairs.
 
 ```lua
 -- Simple GET
@@ -648,6 +648,9 @@ registered as a global table.
 
 Enqueue a new download.
 
+This function now returns three values: the assigned download ID, the HTTP
+status from the preflight HEAD request, and a response-headers table.
+
 **Parameters:**
 - `url` (string) — The URL to download.
 - `output_dir` (string, optional) — Destination directory. Defaults to the
@@ -655,15 +658,18 @@ Enqueue a new download.
 - `mode` (number, optional) — Download mode constant. Defaults to `ludo.DOWNLOAD_NOW`.
 
 **Returns:**
-- `id` (number) — The download ID for tracking.
+- `id` (number) - The assigned download ID for tracking.
+- `status` (number) - The HTTP status code from the preflight HEAD request, or `0` if unavailable.
+- `headers` (table) - Response headers collected during the preflight HEAD request.
 
 **Constants:**
-- `ludo.DOWNLOAD_NOW` — Start downloading immediately.
-- `ludo.DOWNLOAD_QUEUE` — Add to queue, start when a slot is free.
+- `ludo.DOWNLOAD_NOW` - Start downloading immediately.
+- `ludo.DOWNLOAD_QUEUE` - Add to queue, start when a slot is free.
 
 ```lua
 -- Download immediately to default directory
-local id = ludo.newDownload("https://example.com/file.zip")
+local id, status, headers = ludo.newDownload("https://example.com/file.zip")
+print(id, status, headers["Content-Type"])
 
 -- Download to specific directory
 local id = ludo.newDownload("https://example.com/file.zip", "C:\\Downloads")
@@ -729,7 +735,16 @@ Log an informational message to the Activity Log panel.
 ludo.logInfo("Scanning page for download links...")
 ```
 
-### 4.7 `ludo.getOutputDirectory()` → string
+### 4.7 `ludo.setting`
+
+Configuration values loaded from `config.ini` are exposed through `ludo.setting`.
+
+```lua
+print(ludo.setting.maxDownloadRetry)
+print(ludo.setting.maxThread)
+print(ludo.setting.outputDir)
+```
+### 4.8 `ludo.getOutputDirectory()` - string
 
 Get the current default output directory.
 
@@ -1654,13 +1669,14 @@ return plugin
 
 | Function | Signature | Returns |
 |----------|-----------|---------|
-| `ludo.newDownload` | `(url [, dir [, mode]])` | `id` |
+| `ludo.newDownload` | `(url [, dir [, mode]])` | `id, status, headers` |
 | `ludo.pauseDownload` | `(id)` | — |
 | `ludo.removeDownload` | `(id)` | — |
 | `ludo.logError` | `(msg)` | — |
 | `ludo.logSuccess` | `(msg)` | — |
 | `ludo.logInfo` | `(msg)` | — |
 | `ludo.getOutputDirectory` | `()` | `dir` |
+| `ludo.setting` | `.maxDownloadRetry`, `.maxThread`, ... | config values |
 
 ### Ludo Constants
 
