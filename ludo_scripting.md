@@ -644,12 +644,12 @@ Ludo's HTTP engine supports transparent decompression for responses with
 The `ludo` module provides download management and application logging. It is
 registered as a global table.
 
-### 4.1 `ludo.newDownload(url [, output_dir [, mode]])` → id
+### 4.1 `ludo.newDownload(url [, output_dir [, mode]])` -> id, status, output_path
 
 Enqueue a new download.
 
 This function now returns three values: the assigned download ID, the HTTP
-status from the preflight HEAD request, and a response-headers table.
+status from the preflight HEAD request, and the resolved output path.
 
 **Parameters:**
 - `url` (string) — The URL to download.
@@ -660,7 +660,7 @@ status from the preflight HEAD request, and a response-headers table.
 **Returns:**
 - `id` (number) - The assigned download ID for tracking.
 - `status` (number) - The HTTP status code from the preflight HEAD request, or `0` if unavailable.
-- `headers` (table) - Response headers collected during the preflight HEAD request.
+- `output_path` (string) - The full output path that will be used for the download.
 
 **Constants:**
 - `ludo.DOWNLOAD_NOW` - Start downloading immediately.
@@ -668,8 +668,8 @@ status from the preflight HEAD request, and a response-headers table.
 
 ```lua
 -- Download immediately to default directory
-local id, status, headers = ludo.newDownload("https://example.com/file.zip")
-print(id, status, headers["Content-Type"])
+local id, status, output_path = ludo.newDownload("https://example.com/file.zip")
+print(id, status, output_path)
 
 -- Download to specific directory
 local id = ludo.newDownload("https://example.com/file.zip", "C:\\Downloads")
@@ -1669,7 +1669,7 @@ return plugin
 
 | Function | Signature | Returns |
 |----------|-----------|---------|
-| `ludo.newDownload` | `(url [, dir [, mode]])` | `id, status, headers` |
+| `ludo.newDownload` | `(url [, dir [, mode]])` | `id, status, output_path` |
 | `ludo.pauseDownload` | `(id)` | — |
 | `ludo.removeDownload` | `(id)` | — |
 | `ludo.logError` | `(msg)` | — |

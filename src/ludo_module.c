@@ -9,31 +9,8 @@
 #include <string.h>
 
 /* ------------------------------------------------------------------ */
-/* ludo.newDownload(url, output_dir, mode) -> id, status, headers      */
+/* ludo.newDownload(url, output_dir, mode) -> id, status, output_path */
 /* ------------------------------------------------------------------ */
-
-static void push_headers_table(lua_State *L, const char *raw) {
-    const char *p = raw ? raw : "";
-
-    lua_newtable(L);
-    while (*p) {
-        const char *eol = strpbrk(p, "\r\n");
-        if (!eol) eol = p + strlen(p);
-        if (strncmp(p, "HTTP/", 5) != 0) {
-            const char *colon = memchr(p, ':', (size_t)(eol - p));
-            if (colon) {
-                size_t klen = (size_t)(colon - p);
-                const char *val = colon + 1;
-                while (*val == ' ') val++;
-                lua_pushlstring(L, p, klen);
-                lua_pushlstring(L, val, (size_t)(eol - val));
-                lua_settable(L, -3);
-            }
-        }
-        p = eol;
-        while (*p == '\r' || *p == '\n') p++;
-    }
-}
 
 static int lua_ludo_new_download(lua_State *L) {
     const char *url        = luaL_checkstring(L, 1);
@@ -50,7 +27,7 @@ static int lua_ludo_new_download(lua_State *L) {
     if (id < 0) result.id = id;
     lua_pushinteger(L, (lua_Integer)result.id);
     lua_pushinteger(L, (lua_Integer)result.status_code);
-    push_headers_table(L, result.headers);
+    lua_pushstring(L, result.output_path);
     return 3;
 }
 

@@ -69,7 +69,7 @@ typedef struct {
 typedef struct {
     int  id;
     long status_code;
-    char headers[8192];
+    char output_path[2048];
 } DownloadAddResult;
 
 /* Callback registered by the GUI to receive progress updates */
@@ -86,7 +86,7 @@ void download_manager_prepare_for_shutdown(void);
 void download_manager_shutdown(void);
 
 /* Queue a new download. Returns the assigned download ID (>0) or -1 on error.
-   When result is non-NULL, fills it with preflight status/header data. */
+   When result is non-NULL, fills it with preflight status/output-path data. */
 int  download_manager_add(const char *url, const char *output_dir, DownloadMode mode, DownloadAddResult *result);
 
 /* Pause / resume / remove — may be called from the GUI thread */

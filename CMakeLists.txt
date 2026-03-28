@@ -33,10 +33,14 @@ set(LUDO_DESCRIPTION "Lua powered and streamlined download manager")
 # ------------------------------------------------------------
 # Build configurations
 # ------------------------------------------------------------
-set(CMAKE_CONFIGURATION_TYPES "Debug;Release" CACHE STRING "Available build configurations" FORCE)
+get_property(LUDO_IS_MULTI_CONFIG GLOBAL PROPERTY GENERATOR_IS_MULTI_CONFIG)
 
-if(NOT CMAKE_CONFIGURATION_TYPES)
-    set(CMAKE_BUILD_TYPE "Release" CACHE STRING "Build type" FORCE)
+if(LUDO_IS_MULTI_CONFIG)
+    set(CMAKE_CONFIGURATION_TYPES "Debug;Release" CACHE STRING "Available build configurations" FORCE)
+else()
+    if(NOT CMAKE_BUILD_TYPE)
+        set(CMAKE_BUILD_TYPE "Release" CACHE STRING "Build type" FORCE)
+    endif()
     set_property(CACHE CMAKE_BUILD_TYPE PROPERTY STRINGS "Debug" "Release")
 endif()
 
@@ -381,7 +385,10 @@ else()
     target_link_options(ludo PRIVATE $<$<CONFIG:Release>:-s>)
 endif()
 
-target_compile_definitions(ludo PRIVATE CURL_STATICLIB)
+target_compile_definitions(ludo PRIVATE
+    CURL_STATICLIB
+    $<$<CONFIG:Debug>:DEBUG>
+)
 
 if(WIN32)
     target_link_libraries(ludo PRIVATE
