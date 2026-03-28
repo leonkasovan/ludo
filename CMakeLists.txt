@@ -241,23 +241,39 @@ ExternalProject_Add(curl_ext
         -DBUILD_CURL_EXE=OFF
         -DBUILD_TESTING=OFF
         ${CURL_SSL_ARGS}
-        -DUSE_WIN32_LDAP=OFF
+        # Disable Unused Protocols (Mail, Chat, Legacy)
+        -DCURL_DISABLE_DICT=ON
+        -DCURL_DISABLE_GOPHER=ON
+        -DCURL_DISABLE_IMAP=ON
+        -DCURL_DISABLE_POP3=ON
+        -DCURL_DISABLE_SMTP=ON
+        -DCURL_DISABLE_RTSP=ON
+        -DCURL_DISABLE_SMB=ON
+        -DCURL_DISABLE_TELNET=ON
+        -DCURL_DISABLE_TFTP=ON
+        -DCURL_DISABLE_MQTT=ON
+        -DCURL_DISABLE_WEBSOCKETS=ON
+        -DCURL_DISABLE_FILE=ON
         -DCURL_DISABLE_LDAP=ON
         -DCURL_DISABLE_LDAPS=ON
+        # Disable Unused Features
+        -DCURL_DISABLE_ALTSVC=ON
+        -DCURL_USE_LIBPSL=OFF
+        -DUSE_LIBIDN2=OFF
         -DUSE_NGHTTP2=OFF
         -DCURL_USE_LIBSSH2=OFF
         -DCURL_USE_LIBSSH=OFF
-        -DCURL_USE_LIBPSL=OFF
-        -DUSE_LIBIDN2=OFF
+        # Performance and Core Features (Keep these)
         -DCURL_BROTLI=ON
         -DCURL_ZSTD=ON
         -DCURL_ZLIB=ON
+        -DCURL_ENABLE_SSL=ON
+        -DENABLE_THREADED_RESOLVER=ON
         -DZLIB_INCLUDE_DIR=${ZLIB_SRC_DIR}
         -DZLIB_LIBRARY=${ZLIB_STATIC_LIBRARY}
         -DCURL_USE_PKGCONFIG=OFF
         -DCMAKE_INCLUDE_PATH=${ZSTD_INSTALL_DIR}/include;${BROTLI_INSTALL_DIR}/include;${ZLIB_SRC_DIR}
         -DCMAKE_LIBRARY_PATH=${ZSTD_INSTALL_DIR}/lib;${BROTLI_INSTALL_DIR}/lib;${ZLIB_OUTPUT_DIR}
-        -DCURL_ENABLE_SSL=ON
     INSTALL_COMMAND ${CMAKE_COMMAND} --install ${CURL_BUILD_DIR}
     BUILD_BYPRODUCTS ${CURL_INSTALL_DIR}/lib/${CURL_LIB_NAME}
 )
@@ -266,9 +282,9 @@ add_library(libcurl_static STATIC IMPORTED GLOBAL)
 set_target_properties(libcurl_static PROPERTIES IMPORTED_LOCATION ${CURL_INSTALL_DIR}/lib/${CURL_LIB_NAME})
 
 # ------------------------------------------------------------
-# libui-ng
+# libui-ng (Native CMake Build - Fixed Linker Errors)
 # ------------------------------------------------------------
-set(LIBUI_LIB_NAME libui.a)
+set(LIBUI_SRC_DIR ${CMAKE_SOURCE_DIR}/third_party/libui-ng)
 
 if(LUDO_USE_PREBUILT_LIBUI)
     if(NOT EXISTS "${LUDO_LIBUI_LIBRARY}")
@@ -281,49 +297,58 @@ if(LUDO_USE_PREBUILT_LIBUI)
         INTERFACE_INCLUDE_DIRECTORIES ${LUDO_LIBUI_INCLUDE_DIR}
     )
 else()
-    find_program(MESON_EXECUTABLE NAMES meson
-        HINTS /mingw64/bin /usr/bin
+    # 1. Gather Source Files (Capturing both .c and .cpp)
+    file(GLOB LIBUI_COMMON_SOURCES 
+        "${LIBUI_SRC_DIR}/common/*.c"
+        "${LIBUI_SRC_DIR}/common/*.cpp"
     )
-    if(NOT MESON_EXECUTABLE)
-        message(FATAL_ERROR
-            "Meson not found. Either install Meson, or configure with:\n"
-            "  -DLUDO_USE_PREBUILT_LIBUI=ON -DLUDO_LIBUI_LIBRARY=<path to libui.a>\n"
-            "Optional: -DLUDO_LIBUI_INCLUDE_DIR=<path to headers containing ui.h>")
+    
+    # Remove ONLY the specific conflicting legacy files
+    list(REMOVE_ITEM LIBUI_COMMON_SOURCES 
+        "${LIBUI_SRC_DIR}/common/OLD_table.c"
+        "${LIBUI_SRC_DIR}/common/test.c"
+    )
+    
+    if(WIN32)
+        # On Windows, we need the .cpp files from the windows directory.
+        # CRITICAL: We no longer filter out "main" because windows/main.cpp 
+        # contains the core uiMain/uiQuit implementation.
+        file(GLOB LIBUI_OS_SOURCES "${LIBUI_SRC_DIR}/windows/*.cpp")
+    elseif(APPLE)
+        file(GLOB LIBUI_OS_SOURCES "${LIBUI_SRC_DIR}/darwin/*.m")
+    else()
+        file(GLOB LIBUI_OS_SOURCES "${LIBUI_SRC_DIR}/unix/*.c")
     endif()
 
-    find_program(NINJA_EXECUTABLE NAMES ninja
-        HINTS /mingw64/bin /usr/bin
-    )
-    if(NOT NINJA_EXECUTABLE)
-        message(FATAL_ERROR "Ninja not found. Install ninja and retry.")
+    # 2. Create the Static Target
+    add_library(libui_static STATIC ${LIBUI_COMMON_SOURCES} ${LIBUI_OS_SOURCES})
+    target_include_directories(libui_static PUBLIC ${LIBUI_SRC_DIR})
+    
+    # 3. Apply settings from libui's original meson.build
+    target_compile_definitions(libui_static PRIVATE libui_EXPORTS _UI_STATIC)
+    
+    if(MSVC)
+        target_compile_options(libui_static PRIVATE /wd4100 /bigobj)
+    else()
+        # Ensure we don't treat warnings as errors for external library code
+        target_compile_options(libui_static PRIVATE -Wno-unused-parameter -Wno-switch -Wno-deprecated-declarations)
     endif()
 
-    set(LIBUI_BUILD_DIR ${CMAKE_BINARY_DIR}/libui_build)
-    set(LIBUI_INSTALL_DIR ${CMAKE_BINARY_DIR}/libui_install)
-
-    ExternalProject_Add(libui_ext
-        SOURCE_DIR ${CMAKE_SOURCE_DIR}/third_party/libui-ng
-        BINARY_DIR ${LIBUI_BUILD_DIR}
-        CONFIGURE_COMMAND
-            ${MESON_EXECUTABLE} setup
-                --prefix=${LIBUI_INSTALL_DIR}
-                --libdir=lib
-                --default-library=static
-                -Dbuildtype=$<IF:$<CONFIG:Debug>,debug,release>
-                -Dtests=false
-                -Dexamples=false
-                ${LIBUI_BUILD_DIR}
-                ${CMAKE_SOURCE_DIR}/third_party/libui-ng
-        BUILD_COMMAND ${NINJA_EXECUTABLE} -C ${LIBUI_BUILD_DIR}
-        INSTALL_COMMAND ${NINJA_EXECUTABLE} -C ${LIBUI_BUILD_DIR} install
-        BUILD_BYPRODUCTS ${LIBUI_INSTALL_DIR}/lib/${LIBUI_LIB_NAME}
-    )
-
-    add_library(libui_static STATIC IMPORTED GLOBAL)
-    set_target_properties(libui_static PROPERTIES
-        IMPORTED_LOCATION ${LIBUI_INSTALL_DIR}/lib/${LIBUI_LIB_NAME}
-        INTERFACE_INCLUDE_DIRECTORIES ${CMAKE_SOURCE_DIR}/third_party/libui-ng
-    )
+    # 4. OS-Specific Linking (Propagated to Ludo)
+    if(WIN32)
+        target_link_libraries(libui_static INTERFACE
+            user32 kernel32 gdi32 comctl32 uxtheme msimg32
+            comdlg32 d2d1 dwrite ole32 oleaut32 oleacc usp10
+            gdiplus windowscodecs
+        )
+    elseif(APPLE)
+        target_link_libraries(libui_static INTERFACE "-framework Cocoa")
+    else()
+        find_package(PkgConfig REQUIRED)
+        pkg_check_modules(GTK3 REQUIRED gtk+-3.0)
+        target_include_directories(libui_static PRIVATE ${GTK3_INCLUDE_DIRS})
+        target_link_libraries(libui_static INTERFACE ${GTK3_LIBRARIES} m dl)
+    endif()
 endif()
 
 # ------------------------------------------------------------
@@ -353,9 +378,6 @@ else()
 endif()
 
 set(LUDO_EXTERNAL_DEPENDENCIES curl_ext zstd_ext brotli_ext zlib_static)
-if(NOT LUDO_USE_PREBUILT_LIBUI)
-    list(APPEND LUDO_EXTERNAL_DEPENDENCIES libui_ext)
-endif()
 add_dependencies(ludo ${LUDO_EXTERNAL_DEPENDENCIES})
 
 target_include_directories(ludo PRIVATE
@@ -419,6 +441,11 @@ add_custom_command(TARGET ludo POST_BUILD
 )
 
 add_custom_command(TARGET ludo POST_BUILD
+    COMMAND ${CMAKE_COMMAND} -E copy_directory ${CMAKE_SOURCE_DIR}/snippets $<TARGET_FILE_DIR:ludo>/snippets
+    COMMENT "Copying snippets directory..."
+)
+
+add_custom_command(TARGET ludo POST_BUILD
     COMMAND ${CMAKE_COMMAND} -E copy_directory ${CMAKE_SOURCE_DIR}/res $<TARGET_FILE_DIR:ludo>/res
     COMMENT "Copying UI resources..."
 )
@@ -436,3 +463,5 @@ add_custom_command(TARGET ludo POST_BUILD
 install(TARGETS ludo DESTINATION bin)
 install(FILES config.ini DESTINATION bin)
 install(DIRECTORY plugins/ DESTINATION bin/plugins)
+install(DIRECTORY snippets/ DESTINATION bin/snippets)
+install(DIRECTORY res/ DESTINATION bin/res)
