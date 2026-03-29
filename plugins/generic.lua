@@ -42,7 +42,7 @@ function plugin.validate(url)
 end
 
 function plugin.process(url)
-    ludo.logInfo("generic_direct: verifying " .. url)
+    -- ludo.logInfo("Processing " .. url)
 
     local options = {
         user_agent       = "LUDO/1.0",
@@ -69,11 +69,14 @@ function plugin.process(url)
     local final_url = http.get_last_url()
     if final_url == "" then final_url = url end
 
-    local id = ludo.newDownload(final_url,
+    local id, status, output = ludo.newDownload(final_url,
                                 ludo.getOutputDirectory(),
                                 ludo.DOWNLOAD_NOW)
-    ludo.logSuccess("generic_direct: download #" .. tostring(id)
-                    .. " started for " .. final_url)
+    if status == 200 then
+        ludo.logInfo("Processing " .. output)
+    else
+        ludo.logError("Download failed. Status: " .. status)
+    end
     return id
 end
 

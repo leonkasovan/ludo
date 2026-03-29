@@ -9,7 +9,7 @@ function plugin.validate(url)
 end
 
 function plugin.process(url)
-	ludo.logInfo("Processing: " .. url)
+	-- ludo.logInfo("Processing: " .. url)
 	
 	-- Step 1: Extract the file ID from the URL
 	local file_id = url:match("/d/([%w_-]+)")
@@ -28,7 +28,7 @@ function plugin.process(url)
 	end
 	
 	-- Step 3:
-	local download_id
+	local id, status, output = nil, nil, nil
 	if string.sub(headers["Content-Type"],1, 4) == "text" then -- over 100MB
 		local content, status, headers = http.get(real_url)
 		local uuid = string.match(content, '"uuid" value="([%w_%-]+)"></form>')
@@ -42,11 +42,18 @@ function plugin.process(url)
 			return nil
 		end
 		real_url = "https://drive.usercontent.google.com/download?export=download&id=" .. file_id .. "&confirm=" .. confirm_token .. "&uuid=" .. uuid
-		download_id = ludo.newDownload(real_url, ludo.getOutputDirectory(), ludo.DOWNLOAD_NOW)
+		ludo.logInfo("File is larger than 100MB, downloading with confirm token")
+		id, status, output = ludo.newDownload(real_url, ludo.getOutputDirectory(), ludo.DOWNLOAD_NOW)
 	else -- below 100MB
-		download_id = ludo.newDownload(real_url, ludo.getOutputDirectory(), ludo.DOWNLOAD_NOW)
+		ludo.logInfo("File is smaller than 100MB, downloading directly")
+		id, status, output = ludo.newDownload(real_url, ludo.getOutputDirectory(), ludo.DOWNLOAD_NOW)
 	end
-	return download_id
+	if status == 200 then
+        ludo.logInfo("Processing " .. output)
+    else
+        ludo.logError("Download failed. Status: " .. status)
+    end
+	return id
 end
 
 return plugin
