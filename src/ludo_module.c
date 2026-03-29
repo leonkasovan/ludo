@@ -8,6 +8,9 @@
 #include <lualib.h>
 #include <string.h>
 
+static char ludo_tester_bindings_key;
+static char ludo_current_source_url_key;
+
 /* ------------------------------------------------------------------ */
 /* ludo.newDownload(url, output_dir, mode) -> id, status, output_path */
 /* ------------------------------------------------------------------ */
@@ -15,6 +18,7 @@
 static int lua_ludo_new_download(lua_State *L) {
     const char *url        = luaL_checkstring(L, 1);
     const char *output_dir = luaL_optstring(L, 2, NULL);
+    const char *original_url;
     int         mode       = (int)luaL_optinteger(L, 3, DOWNLOAD_NOW);
     DownloadAddResult result;
 
@@ -22,8 +26,12 @@ static int lua_ludo_new_download(lua_State *L) {
     if (!output_dir || output_dir[0] == '\0')
         output_dir = download_manager_get_output_dir();
 
+    lua_pushlightuserdata(L, (void *)&ludo_current_source_url_key);
+    lua_gettable(L, LUA_REGISTRYINDEX);
+    original_url = lua_tostring(L, -1);
     memset(&result, 0, sizeof(result));
-    int id = download_manager_add(url, output_dir, (DownloadMode)mode, &result);
+    int id = download_manager_add(url, output_dir, (DownloadMode)mode, original_url, &result);
+    lua_pop(L, 1);
     if (id < 0) result.id = id;
     lua_pushinteger(L, (lua_Integer)result.id);
     lua_pushinteger(L, (lua_Integer)result.status_code);
@@ -48,8 +56,6 @@ static int lua_ludo_remove_download(lua_State *L) {
 /* ------------------------------------------------------------------ */
 /* Logging helpers                                                      */
 /* ------------------------------------------------------------------ */
-
-static char ludo_tester_bindings_key;
 
 static LudoTesterBindings *get_tester_bindings(lua_State *L) {
     LudoTesterBindings *bindings;
@@ -247,4 +253,13 @@ void ludo_module_set_tester_bindings(lua_State *L, const LudoTesterBindings *bin
     lua_pushvalue(L, -2);
     lua_settable(L, LUA_REGISTRYINDEX);
     lua_pop(L, 1);
+}
+
+void ludo_module_set_current_source_url(lua_State *L, const char *url) {
+    lua_pushlightuserdata(L, (void *)&ludo_current_source_url_key);
+    if (url && url[0] != '\0')
+        lua_pushstring(L, url);
+    else
+        lua_pushnil(L);
+    lua_settable(L, LUA_REGISTRYINDEX);
 }

@@ -44,6 +44,7 @@ typedef struct {
 typedef struct Download {
     DownloadStatus   status;
     char             url[4096];
+    char             original_url[4096]; /* preserve user-supplied URL */
     char             output_dir[1024];
     long             preflight_status_code;
     int64_t          preflight_content_length;
@@ -87,7 +88,8 @@ void download_manager_shutdown(void);
 
 /* Queue a new download. Returns the assigned download ID (>0) or -1 on error.
    When result is non-NULL, fills it with preflight status/output-path data. */
-int  download_manager_add(const char *url, const char *output_dir, DownloadMode mode, DownloadAddResult *result);
+int  download_manager_add(const char *url, const char *output_dir, DownloadMode mode,
+                          const char *original_url, DownloadAddResult *result);
 
 /* Pause / resume / remove — may be called from the GUI thread */
 bool download_manager_pause(int id);

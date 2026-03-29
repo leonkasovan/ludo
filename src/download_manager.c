@@ -1005,6 +1005,22 @@ static void perform_download(Download *d) {
  * Fields: id  url  output_dir  filename  state  progress  speed_bps
  *         total_bytes  downloaded_bytes  start_time  end_time
  */
+/* Helper: copy a field while replacing tabs/CR/LF with spaces so the
+   on-disk TAB-separated format remains stable. Buffers are sized to
+   match the in-memory field sizes. */
+static void sanitize_field(const char *src, char *dst, size_t dst_sz) {
+    size_t pos = 0;
+    if (!dst || dst_sz == 0) return;
+    dst[0] = '\0';
+    if (!src) return;
+    while (*src != '\0' && pos + 1 < dst_sz) {
+        char c = *src++;
+        if (c == '\t' || c == '\r' || c == '\n') c = ' ';
+        dst[pos++] = c;
+    }
+    dst[pos] = '\0';
+}
+
 static void db_save_and_archive(void) {
     /* Check if the existing DB has crossed the archive threshold */
 #ifdef _WIN32
@@ -1012,8 +1028,10 @@ static void db_save_and_archive(void) {
 #else
     struct stat st;
 #endif
-    // int trigger_archive = (dm_stat_utf8(DB_PATH, &st) == 0 && st.st_size >= DB_MAX_BYTES);
-    int trigger_archive = (dm_stat_utf8(DB_PATH, &st) == 0);
+     /* Only trigger archiving when the existing DB exceeds the size threshold.
+         Previously this was replaced by an existence-only check which prevented
+         the intended size-based archival behavior. */
+     int trigger_archive = (dm_stat_utf8(DB_PATH, &st) == 0 && st.st_size >= DB_MAX_BYTES);
 
      /* Write to a temporary file first for atomic safety against crashes.
          Use text mode so newline semantics are consistent with db_load on
@@ -1027,6 +1045,7 @@ static void db_save_and_archive(void) {
         dm_log("[shutdown] DB size > 10KB. Moving completed tasks to archive...");
     }
 
+
     ludo_mutex_lock(&g_mgr.list_mutex);
     for (Download *d = g_mgr.list; d; d = d->next) {
         /* Determine if the task is finished */
@@ -1035,17 +1054,50 @@ static void db_save_and_archive(void) {
         /* TASK 1: Update size from disk for active/paused items before saving */
         if (!is_finished) sync_download_size_from_disk(d);
 
-        char line[2048];
-        snprintf(line, sizeof(line), "%d\t%s\t%s\t%s\t%d\t%.2f\t%.2f\t%lld\t%lld\t%lld\t%lld\n",
-                d->status.id, d->url, d->output_dir, d->status.filename,
-                (int)d->status.state, d->status.progress, d->status.speed_bps,
-                (long long)d->status.total_bytes, (long long)d->status.downloaded_bytes,
-                (long long)d->status.start_time, (long long)d->status.end_time);
+        char s_url[4096];
+        char s_output_dir[1024];
+        char s_filename[512];
+        char s_original_url[4096];
+        int has_distinct_original;
+        /* Prefer the preserved user-supplied original URL for the primary
+           DB URL field so redirects do not overwrite what the user entered. */
+        const char *url_to_save = (d->original_url[0] != '\0') ? d->original_url : d->url;
+        sanitize_field(url_to_save, s_url, sizeof(s_url));
+        sanitize_field(d->output_dir, s_output_dir, sizeof(s_output_dir));
+        sanitize_field(d->status.filename, s_filename, sizeof(s_filename));
+        sanitize_field(d->original_url, s_original_url, sizeof(s_original_url));
+        has_distinct_original = (s_original_url[0] != '\0' && strcmp(s_original_url, s_url) != 0);
 
         if (trigger_archive && f_gz && is_finished) {
-            gzwrite(f_gz, line, (unsigned)strlen(line));
+            if (has_distinct_original) {
+                gzprintf(f_gz, "%d\t%s\t%s\t%s\t%d\t%.2f\t%.2f\t%lld\t%lld\t%lld\t%lld\t%s\n",
+                         d->status.id, s_url, s_output_dir, s_filename,
+                         (int)d->status.state, d->status.progress, d->status.speed_bps,
+                         (long long)d->status.total_bytes, (long long)d->status.downloaded_bytes,
+                         (long long)d->status.start_time, (long long)d->status.end_time,
+                         s_original_url);
+            } else {
+                gzprintf(f_gz, "%d\t%s\t%s\t%s\t%d\t%.2f\t%.2f\t%lld\t%lld\t%lld\t%lld\n",
+                         d->status.id, s_url, s_output_dir, s_filename,
+                         (int)d->status.state, d->status.progress, d->status.speed_bps,
+                         (long long)d->status.total_bytes, (long long)d->status.downloaded_bytes,
+                         (long long)d->status.start_time, (long long)d->status.end_time);
+            }
         } else {
-            fwrite(line, 1, strlen(line), f_db);
+            if (has_distinct_original) {
+                fprintf(f_db, "%d\t%s\t%s\t%s\t%d\t%.2f\t%.2f\t%lld\t%lld\t%lld\t%lld\t%s\n",
+                        d->status.id, s_url, s_output_dir, s_filename,
+                        (int)d->status.state, d->status.progress, d->status.speed_bps,
+                        (long long)d->status.total_bytes, (long long)d->status.downloaded_bytes,
+                        (long long)d->status.start_time, (long long)d->status.end_time,
+                        s_original_url);
+            } else {
+                fprintf(f_db, "%d\t%s\t%s\t%s\t%d\t%.2f\t%.2f\t%lld\t%lld\t%lld\t%lld\n",
+                        d->status.id, s_url, s_output_dir, s_filename,
+                        (int)d->status.state, d->status.progress, d->status.speed_bps,
+                        (long long)d->status.total_bytes, (long long)d->status.downloaded_bytes,
+                        (long long)d->status.start_time, (long long)d->status.end_time);
+            }
         }
     }
     ludo_mutex_unlock(&g_mgr.list_mutex);
@@ -1119,8 +1171,8 @@ static void db_load(const char *path) {
         if (!d) break;
 
         char *p = line;
-        char *fields[11];
-        for (int i = 0; i < 11; i++) {
+        char *fields[12];
+        for (int i = 0; i < 12; i++) {
             fields[i] = p;
             if (p) {
                 p = strchr(p, '\t');
@@ -1128,7 +1180,7 @@ static void db_load(const char *path) {
             }
         }
 
-        /* If we didn't find all 11 fields, skip it */
+        /* If we didn't find at least the first 11 fields, skip the line */
         if (!fields[10]) {
             free(d);
             /* reset buffer for next iteration */
@@ -1138,9 +1190,19 @@ static void db_load(const char *path) {
             continue;
         }
 
-        d->status.id = g_mgr.next_id++; // Best Practice: Discard the old DB ID and assign a fresh, sequential one
-        strncpy(d->url, fields[1], sizeof(d->url)-1);
-        d->url[sizeof(d->url)-1] = '\0';
+        d->status.id = g_mgr.next_id++; // assign fresh sequential ID
+        /* When a legacy row carries both the redirected runtime URL and the
+           original URL, restore the original as the canonical URL in memory
+           so the next save rewrites the DB with the user-entered value. */
+        {
+            const char *canonical_url = (fields[11] && fields[11][0] != '\0')
+                                          ? fields[11]
+                                          : fields[1];
+            strncpy(d->url, canonical_url, sizeof(d->url)-1);
+            d->url[sizeof(d->url)-1] = '\0';
+            strncpy(d->original_url, canonical_url, sizeof(d->original_url)-1);
+            d->original_url[sizeof(d->original_url)-1] = '\0';
+        }
         strncpy(d->output_dir, fields[2], sizeof(d->output_dir)-1);
         d->output_dir[sizeof(d->output_dir)-1] = '\0';
         strncpy(d->status.filename, fields[3], sizeof(d->status.filename)-1);
@@ -1260,6 +1322,18 @@ void download_manager_init(int num_workers, const char *output_dir) {
     db_load(DB_PATH);
     dm_log("[init] db loaded");
 
+    /* At startup, notify the GUI only about tasks that are not completed
+       so the UI doesn't re-display finished entries. */
+    ludo_mutex_lock(&g_mgr.list_mutex);
+    for (Download *d = g_mgr.list; d; d = d->next) {
+        if (d->status.state != DOWNLOAD_STATE_COMPLETED) {
+            ProgressUpdate upd = {0};
+            upd.status = d->status;
+            gui_dispatch_update(&upd);
+        }
+    }
+    ludo_mutex_unlock(&g_mgr.list_mutex);
+
     g_mgr.workers = (ludo_thread_t *)calloc((size_t)num_workers,
                                             sizeof(ludo_thread_t));
     if (!g_mgr.workers) {
@@ -1346,7 +1420,8 @@ void download_manager_shutdown(void) {
     dm_log_close();
 }
 
-int download_manager_add(const char *url, const char *output_dir, DownloadMode mode, DownloadAddResult *result)
+int download_manager_add(const char *url, const char *output_dir, DownloadMode mode,
+                         const char *original_url, DownloadAddResult *result)
 {
     (void)mode; /* DOWNLOAD_NOW vs DOWNLOAD_QUEUE handled via queue order */
     Download *d;
@@ -1369,6 +1444,15 @@ int download_manager_add(const char *url, const char *output_dir, DownloadMode m
 
     d->status.id = g_mgr.next_id++;
     strncpy(d->url, url, sizeof(d->url) - 1);
+    /* Preserve the original user-supplied URL so redirects or plugin-resolved
+       mirror URLs do not overwrite what the user entered. */
+    if (original_url && original_url[0] != '\0')
+        strncpy(d->original_url, original_url, sizeof(d->original_url) - 1);
+    else
+        strncpy(d->original_url, url, sizeof(d->original_url) - 1);
+    d->original_url[sizeof(d->original_url) - 1] = '\0';
+    dm_log("[add] url=%s", d->url);
+    dm_log("[add] original_url=%s", d->original_url);
     if (output_dir && output_dir[0] != '\0')
         strncpy(d->output_dir, output_dir, sizeof(d->output_dir) - 1);
     else
@@ -1543,6 +1627,9 @@ Download *download_manager_find(int id) {
 void download_manager_sync_ui(void) {
     ludo_mutex_lock(&g_mgr.list_mutex);
     for (Download *d = g_mgr.list; d; d = d->next) {
+        /* Only notify GUI about non-completed tasks to avoid re-displaying
+           finished items at startup or on explicit sync. */
+        if (d->status.state == DOWNLOAD_STATE_COMPLETED) continue;
         ProgressUpdate upd = {0};
         upd.status = d->status;
         /* Re-dispatch the loaded status to the GUI */

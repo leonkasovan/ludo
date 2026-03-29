@@ -28,5 +28,6 @@ typedef struct {
  */
 void ludo_module_register(lua_State *L);
 void ludo_module_set_tester_bindings(lua_State *L, const LudoTesterBindings *bindings);
+void ludo_module_set_current_source_url(lua_State *L, const char *url);
 
 #endif /* LUDO_MODULE_H */

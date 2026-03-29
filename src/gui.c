@@ -246,6 +246,7 @@ static void *url_worker_thread(void *arg) {
             download_manager_add(task.url,
                                  download_manager_get_output_dir(),
                                  DOWNLOAD_NOW,
+                                 NULL,
                                  NULL);
         }
     }

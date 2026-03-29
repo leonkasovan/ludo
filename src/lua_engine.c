@@ -154,6 +154,7 @@ static lua_State *create_lua_state(void) {
     luaL_openlibs(L);
     http_module_register(L);
     ludo_module_register(L);
+    ludo_module_set_current_source_url(L, NULL);
 
     /* Register libui Lua bindings as "ui" */
     luaL_requiref(L, "ui", luaopen_libuilua, 1);
@@ -277,6 +278,7 @@ int lua_engine_process_url(const char *url) {
         gui_log(LOG_ERROR, "[lua_engine] failed to create Lua state");
         return 0;
     }
+    ludo_module_set_current_source_url(L, url);
 
     int handled = 0;
 
