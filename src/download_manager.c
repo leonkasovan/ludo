@@ -1012,7 +1012,8 @@ static void db_save_and_archive(void) {
 #else
     struct stat st;
 #endif
-    int trigger_archive = (dm_stat_utf8(DB_PATH, &st) == 0 && st.st_size >= DB_MAX_BYTES);
+    // int trigger_archive = (dm_stat_utf8(DB_PATH, &st) == 0 && st.st_size >= DB_MAX_BYTES);
+    int trigger_archive = (dm_stat_utf8(DB_PATH, &st) == 0);
 
      /* Write to a temporary file first for atomic safety against crashes.
          Use text mode so newline semantics are consistent with db_load on
@@ -1129,16 +1130,6 @@ static void db_load(const char *path) {
 
         /* If we didn't find all 11 fields, skip it */
         if (!fields[10]) {
-            free(d);
-            /* reset buffer for next iteration */
-            free(line);
-            line = NULL;
-            cap = 0;
-            continue;
-        }
-
-        // if fields[4] (state) is COMPLETED, skip it
-        if (atoi(fields[4]) == DOWNLOAD_STATE_COMPLETED) {
             free(d);
             /* reset buffer for next iteration */
             free(line);
@@ -1462,7 +1453,7 @@ bool download_manager_resume(int id) {
             d->status.state = DOWNLOAD_STATE_QUEUED;
             d->status.speed_bps = 0.0;
             d->stop_requested = 0;
-            gui_log(LOG_SUCCESS, "Download id=%d queued for resume", d->status.id);
+            gui_log(LOG_INFO, "Resuming %s", d->status.filename);
             result = true;
 
             /* Push an internal task to tell the worker thread to resume this ID */
@@ -1500,13 +1491,13 @@ bool download_manager_remove(int id) {
                 target->status.speed_bps = 0.0;
                 target->stop_requested = 1;
                 target->marked_for_removal = 1;               /* Tells worker to free it */
-                gui_log(LOG_SUCCESS, "Download id=%d is marked for garbage collection.", id);
+                gui_log(LOG_INFO, "Removing %s for garbage collection.", target->status.filename);
                 result = true;
             } else {
                 /* Safe to delete immediately */
                 *prev = target->next;
                 free(target);
-                gui_log(LOG_SUCCESS, "Download id=%d removed immediately.", id);
+                gui_log(LOG_SUCCESS, "%s removed", target->status.filename);
                 result = true;
             }
             break;

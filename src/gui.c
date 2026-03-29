@@ -901,6 +901,7 @@ static uiTableValue *downloads_modelCellValue(uiTableModelHandler *mh, uiTableMo
     if (row < 0 || row >= g_gui.row_count) return NULL;
     DownloadRow *r = &g_gui.rows[row];
     char buf[128];
+    time_t now = time(NULL);
     switch (column) {
         case 0: return uiNewTableValueInt(r->selected);
         case 1: return uiNewTableValueString(r->filename[0] ? r->filename : "");
@@ -946,7 +947,12 @@ static uiTableValue *downloads_modelCellValue(uiTableModelHandler *mh, uiTableMo
         case 4: {
             if (r->start_time) {
                 struct tm *t = localtime(&r->start_time);
-                snprintf(buf, sizeof(buf), "%02d:%02d:%02d", t->tm_hour, t->tm_min, t->tm_sec);
+                // if less than 24 hours, show HH:MM:SS, else show date
+                if (now - r->start_time >= 24*3600) {
+                    snprintf(buf, sizeof(buf), "%04d-%02d-%02d", t->tm_year + 1900, t->tm_mon + 1, t->tm_mday);
+                } else {
+                    snprintf(buf, sizeof(buf), "%02d:%02d:%02d", t->tm_hour, t->tm_min, t->tm_sec);
+                }
             } else snprintf(buf, sizeof(buf), "-");
             return uiNewTableValueString(buf);
         }
