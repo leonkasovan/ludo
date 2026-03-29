@@ -316,49 +316,12 @@ static int is_valid_url(const char *s) {
     return 1;
 }
 
-/* Multiple URLs validator used before pasting clipboard contents. */
-static int is_valid_urls(const char *s) {
-    if (!s) return 0;
-    char *copy = strdup(s);
-    if (!copy) return 0;
-    char *p = copy;
-    int valid = 1;
-    while (p && *p) {
-        char *line = p;
-        char *next = strchr(p, '\n');
-        if (next) {
-            *next = '\0';
-            p = next + 1;
-        } else {
-            p = NULL;
-        }
-        /* Trim trailing CR/LF that can appear on Windows clipboard lines */
-        line[strcspn(line, "\r\n")] = '\0';
-        while (*line && isspace((unsigned char)*line)) line++;
-        if (*line && !is_valid_url(line)) {
-            valid = 0;
-            break;
-        }
-    }
-    free(copy);
-    return valid;
-}
-
-static void show_add_urls_window(const char *initial_text);
-void paste_clipboard_url_if_valid(void) {
-    if (!g_gui.url_entry) return;
-    char *cur = uiEntryText(g_gui.url_entry);
-    int should_paste = 0;
-    if (!cur || cur[0] == '\0') should_paste = 1;
-    if (cur) uiFreeText(cur);
-    if (!should_paste) return;
-
+/* Helper function to get clipboard text */
+char *get_clipboard_text(void) {
     char *clipboard_text = NULL;
-
-    /* Platform-specific clipboard retrieval */
 #ifdef _WIN32
-    if (!IsClipboardFormatAvailable(CF_UNICODETEXT) && !IsClipboardFormatAvailable(CF_TEXT)) return;
-    if (!OpenClipboard(NULL)) return;
+    if (!IsClipboardFormatAvailable(CF_UNICODETEXT) && !IsClipboardFormatAvailable(CF_TEXT)) return NULL;
+    if (!OpenClipboard(NULL)) return NULL;
     HANDLE h = GetClipboardData(CF_UNICODETEXT);
     if (h) {
         wchar_t *wtext = (wchar_t *)GlobalLock(h);
@@ -384,49 +347,41 @@ void paste_clipboard_url_if_valid(void) {
 #elif defined(__linux__) || defined(__unix__)
     gchar *txt = gtk_clipboard_wait_for_text(gtk_clipboard_get(GDK_SELECTION_CLIPBOARD));
     if (txt) clipboard_text = txt; /* gtk memory handled properly when freed below */
-#endif
+#endif    
+    return clipboard_text;
+}
 
+void free_clipboard_text(char *text) {
+#ifdef _WIN32
+    free(text);
+#elif defined(__linux__) || defined(__unix__)
+    g_free(text);
+#endif
+}
+
+void paste_clipboard_url_if_valid(void) {
+    if (!g_gui.url_entry) return;
+
+    char *clipboard_text = get_clipboard_text();
     if (!clipboard_text) return;
 
-    /* Parse clipboard to count valid URLs */
-    int url_count = 0;
-    char first_url[4096] = {0};
-    char *p = clipboard_text;
-    
-    while (p && *p) {
-        char *end = strchr(p, '\n');
-        if (end) *end = '\0';
-        
-        char *url = p;
-        while (*url && isspace((unsigned char)*url)) url++;
-        size_t url_len = strlen(url);
-        if (url_len > 0) {
-            char *tail = url + url_len - 1;
-            while (tail >= url && isspace((unsigned char)*tail)) { *tail = '\0'; tail--; }
-        }
-        
-        if (is_valid_url(url)) {
-            if (url_count == 0) {
-                strncpy(first_url, url, sizeof(first_url)-1);
-            }
-            url_count++;
-        }
-        
-        if (end) *end = '\n'; /* Restore newline for the Multiline window */
-        p = end ? end + 1 : NULL;
+    /* Use only up to the first newline and trim whitespace. */
+    char *line_end = strchr(clipboard_text, '\n');
+    if (line_end) *line_end = '\0';
+
+    /* Trim leading whitespace */
+    char *s = clipboard_text;
+    while (*s && isspace((unsigned char)*s)) s++;
+
+    /* Trim trailing whitespace (in-place) */
+    size_t slen = strlen(s);
+    while (slen > 0 && isspace((unsigned char)s[slen - 1])) { s[slen - 1] = '\0'; slen--; }
+
+    if (s[0] != '\0' && is_valid_url(s)) {
+        uiEntrySetText(g_gui.url_entry, s);
     }
 
-    if (url_count == 1) {
-        uiEntrySetText(g_gui.url_entry, first_url);
-    } else if (url_count > 1) {
-        show_add_urls_window(clipboard_text);
-    }
-
-#if defined(__linux__) || defined(__unix__)
-    g_free(clipboard_text);
-#else
-    free(clipboard_text);
-#endif
+    free_clipboard_text(clipboard_text);
 }
 
 /* ------------------------------------------------------------------ */
@@ -1269,7 +1224,7 @@ static void on_add_urls_submit(uiButton *b, void *ud) {
 }
 
 static void show_add_urls_window(const char *initial_text) {
-    uiWindow *win = uiNewWindow("Add Multiple URLs", 500, 400, 0);
+    uiWindow *win = uiNewWindow("Add Multiple URLs", 700, 400, 0);
     uiWindowSetMargined(win, 1);
     
     uiBox *vbox = uiNewVerticalBox();
@@ -1667,7 +1622,16 @@ static int on_should_quit(void *data) {
 /* ========================================================================= */
 static void menu_add_urls_cb(uiMenuItem *sender, uiWindow *w, void *data) {
     (void)sender; (void)w; (void)data;
-    show_add_urls_window("");
+    char *clipboard = get_clipboard_text();
+    if (clipboard && clipboard[0] != '\0') {
+        // check if clipboard contains "https://" or  "http://" before showing the dialog
+        if (strstr(clipboard, "http://") || strstr(clipboard, "https://")) {
+            show_add_urls_window(clipboard);
+        } else {
+            show_add_urls_window(NULL);
+        }
+        free_clipboard_text(clipboard);
+    }
 }
 static void menu_pause_cb(uiMenuItem *sender, uiWindow *w, void *data)   { on_pause_clicked(NULL, NULL); }
 static void menu_resume_cb(uiMenuItem *sender, uiWindow *w, void *data)  { on_resume_clicked(NULL, NULL); }
