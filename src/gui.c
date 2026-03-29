@@ -139,15 +139,8 @@ static void play_sound(const char *filepath) {
 /* ------------------------------------------------------------------ */
 
 typedef struct {
-    int             download_id;
+    DownloadStatus  status;
     int             selected;      /* checkbox selection state */
-    char            filename[512]; /* filename or URL snippet */
-    DownloadState   state;
-    int             progress_pct;  /* 0-100 */
-    double          speed_bps;
-    int64_t         total_bytes;
-    int64_t         downloaded_bytes;
-    time_t          start_time;
 } DownloadRow;
 
 /* Table model for downloads */
@@ -857,14 +850,14 @@ static void lua_test_on_exec(uiButton *b, void *ud) {
 
 static DownloadRow *find_row(int id) {
     for (int i = 0; i < g_gui.row_count; i++) {
-        if (g_gui.rows[i].download_id == id) return &g_gui.rows[i];
+        if (g_gui.rows[i].status.id == id) return &g_gui.rows[i];
     }
     return NULL;
 }
 
 static int find_row_index(int id) {
     for (int i = 0; i < g_gui.row_count; i++) {
-        if (g_gui.rows[i].download_id == id) return i;
+        if (g_gui.rows[i].status.id == id) return i;
     }
     return -1;
 }
@@ -905,28 +898,32 @@ static uiTableValue *downloads_modelCellValue(uiTableModelHandler *mh, uiTableMo
     time_t now = time(NULL);
     switch (column) {
         case 0: return uiNewTableValueInt(r->selected);
-        case 1: return uiNewTableValueString(r->filename[0] ? r->filename : "");
+        case 1: return uiNewTableValueString(r->status.filename[0] ? r->status.filename : "");
         case 2: {
-            if (r->state == DOWNLOAD_STATE_COMPLETED && r->total_bytes > 0) {
+            if (r->status.state == DOWNLOAD_STATE_COMPLETED && r->status.total_bytes > 0) {
                 /* Format strictly as a single size */
-                if (r->total_bytes >= (1LL<<30))
-                    snprintf(buf, sizeof(buf), "%.2f GB", r->total_bytes/1024.0/1024.0/1024.0);
-                else if (r->total_bytes >= (1LL<<20))
-                    snprintf(buf, sizeof(buf), "%.2f MB", r->total_bytes/1024.0/1024.0);
+                if (r->status.total_bytes >= (1LL<<30))
+                    snprintf(buf, sizeof(buf), "%.2f GB", r->status.total_bytes/1024.0/1024.0/1024.0);
+                else if (r->status.total_bytes >= (1LL<<20))
+                    snprintf(buf, sizeof(buf), "%.2f MB", r->status.total_bytes/1024.0/1024.0);
                 else
-                    snprintf(buf, sizeof(buf), "%lld B", (long long)r->total_bytes);
-            } else if (r->total_bytes > 0) {
+                    snprintf(buf, sizeof(buf), "%lld B", (long long)r->status.total_bytes);
+            } else if (r->status.total_bytes > 0) {
                 /* Active: Show Downloaded / Total */
-                double dl = (double)r->downloaded_bytes, tot = (double)r->total_bytes;
+                double dl = (double)r->status.downloaded_bytes, tot = (double)r->status.total_bytes;
                 if (tot >= (1LL<<30))
                     snprintf(buf, sizeof(buf), "%.2f / %.2f GB", dl/1073741824.0, tot/1073741824.0);
                 else if (tot >= (1LL<<20))
                     snprintf(buf, sizeof(buf), "%.2f / %.2f MB", dl/1048576.0, tot/1048576.0);
                 else
-                    snprintf(buf, sizeof(buf), "%lld / %lld B", (long long)r->downloaded_bytes, (long long)r->total_bytes);
-            } else if (r->downloaded_bytes > 0) {
-                if (r->downloaded_bytes >= (1LL<<20)) snprintf(buf, sizeof(buf), "%.2f MB", r->downloaded_bytes/1048576.0);
-                else snprintf(buf, sizeof(buf), "%lld B", (long long)r->downloaded_bytes);
+                    snprintf(buf, sizeof(buf), "%lld / %lld B",
+                             (long long)r->status.downloaded_bytes,
+                             (long long)r->status.total_bytes);
+            } else if (r->status.downloaded_bytes > 0) {
+                if (r->status.downloaded_bytes >= (1LL<<20))
+                    snprintf(buf, sizeof(buf), "%.2f MB", r->status.downloaded_bytes/1048576.0);
+                else
+                    snprintf(buf, sizeof(buf), "%lld B", (long long)r->status.downloaded_bytes);
             } else {
                 snprintf(buf, sizeof(buf), "-");
             }
@@ -935,7 +932,7 @@ static uiTableValue *downloads_modelCellValue(uiTableModelHandler *mh, uiTableMo
         case 3: {
             /* Status string */
             const char *st = "?";
-            switch (r->state) {
+            switch (r->status.state) {
                 case DOWNLOAD_STATE_QUEUED: st = "Queued"; break;
                 case DOWNLOAD_STATE_RUNNING: st = "Running"; break;
                 case DOWNLOAD_STATE_PAUSED: st = "Paused"; break;
@@ -946,10 +943,10 @@ static uiTableValue *downloads_modelCellValue(uiTableModelHandler *mh, uiTableMo
             return uiNewTableValueString(st);
         }
         case 4: {
-            if (r->start_time) {
-                struct tm *t = localtime(&r->start_time);
+            if (r->status.start_time) {
+                struct tm *t = localtime(&r->status.start_time);
                 // if less than 24 hours, show HH:MM:SS, else show date
-                if (now - r->start_time >= 24*3600) {
+                if (now - r->status.start_time >= 24*3600) {
                     snprintf(buf, sizeof(buf), "%04d-%02d-%02d", t->tm_year + 1900, t->tm_mon + 1, t->tm_mday);
                 } else {
                     snprintf(buf, sizeof(buf), "%02d:%02d:%02d", t->tm_hour, t->tm_min, t->tm_sec);
@@ -958,18 +955,23 @@ static uiTableValue *downloads_modelCellValue(uiTableModelHandler *mh, uiTableMo
             return uiNewTableValueString(buf);
         }
         case 5: {
-            if (r->speed_bps > 0.0) {
-                if (r->speed_bps >= 1024.0*1024.0) snprintf(buf, sizeof(buf), "%.2f MB/s", r->speed_bps/1024.0/1024.0);
-                else if (r->speed_bps >= 1024.0) snprintf(buf, sizeof(buf), "%.2f KB/s", r->speed_bps/1024.0);
-                else snprintf(buf, sizeof(buf), "%.0f B/s", r->speed_bps);
+            if (r->status.speed_bps > 0.0) {
+                if (r->status.speed_bps >= 1024.0*1024.0) snprintf(buf, sizeof(buf), "%.2f MB/s", r->status.speed_bps/1024.0/1024.0);
+                else if (r->status.speed_bps >= 1024.0) snprintf(buf, sizeof(buf), "%.2f KB/s", r->status.speed_bps/1024.0);
+                else snprintf(buf, sizeof(buf), "%.0f B/s", r->status.speed_bps);
             } else snprintf(buf, sizeof(buf), "-");
             return uiNewTableValueString(buf);
         }
-        case 6: return uiNewTableValueInt(r->progress_pct);
+        case 6: {
+            int pct = (int)r->status.progress;
+            if (pct < 0) pct = 0;
+            if (pct > 100) pct = 100;
+            return uiNewTableValueInt(pct);
+        }
         case 7: {
             /* Button text based on state */
             const char *btn = "⚙";
-            switch (r->state) {
+            switch (r->status.state) {
                 case DOWNLOAD_STATE_COMPLETED: 
                 case DOWNLOAD_STATE_FAILED:    btn = "❌"; break; /* Remove */
                 case DOWNLOAD_STATE_QUEUED: 
@@ -996,10 +998,10 @@ static void downloads_modelSetCellValue(uiTableModelHandler *mh, uiTableModel *m
     }
     /* NEW: Handle the inline button click */
     else if (column == 7) {
-        int target_id = r->download_id; /* BEST PRACTICE: Store before shifting the array! */
+        int target_id = r->status.id; /* BEST PRACTICE: Store before shifting the array! */
         
         /* Determine action based on state */
-        if (r->state == DOWNLOAD_STATE_COMPLETED || r->state == DOWNLOAD_STATE_FAILED) {
+        if (r->status.state == DOWNLOAD_STATE_COMPLETED || r->status.state == DOWNLOAD_STATE_FAILED) {
             /* Remove the download */
             download_manager_remove(target_id);
             for (int j = row; j < g_gui.row_count - 1; j++) {
@@ -1008,9 +1010,9 @@ static void downloads_modelSetCellValue(uiTableModelHandler *mh, uiTableModel *m
             g_gui.row_count--;
             if (g_downloads_model) uiTableModelRowDeleted(g_downloads_model, row);
             gui_log(LOG_INFO, "Removed download id=%d via inline button", target_id);
-        } else if (r->state == DOWNLOAD_STATE_QUEUED || r->state == DOWNLOAD_STATE_RUNNING) {
+        } else if (r->status.state == DOWNLOAD_STATE_QUEUED || r->status.state == DOWNLOAD_STATE_RUNNING) {
             download_manager_pause(target_id);
-        } else if (r->state == DOWNLOAD_STATE_PAUSED || r->state == DOWNLOAD_STATE_FAILED) {
+        } else if (r->status.state == DOWNLOAD_STATE_PAUSED || r->status.state == DOWNLOAD_STATE_FAILED) {
             download_manager_resume(target_id);
         }
     }
@@ -1167,16 +1169,12 @@ static DownloadRow *add_row(int id, const char *filename) {
     if (g_gui.row_count >= MAX_DOWNLOAD_ROWS) return NULL;
 
     DownloadRow *r = &g_gui.rows[g_gui.row_count];
-    r->download_id = id;
+    memset(r, 0, sizeof(*r));
+    r->status.id = id;
     r->selected = 0;
-    strncpy(r->filename, filename ? filename : "", sizeof(r->filename)-1);
-    r->filename[sizeof(r->filename)-1] = '\0';
-    r->state = DOWNLOAD_STATE_QUEUED;
-    r->progress_pct = 0;
-    r->speed_bps = 0.0;
-    r->total_bytes = 0;
-    r->downloaded_bytes = 0;
-    r->start_time = 0;
+    strncpy(r->status.filename, filename ? filename : "", sizeof(r->status.filename)-1);
+    r->status.filename[sizeof(r->status.filename)-1] = '\0';
+    r->status.state = DOWNLOAD_STATE_QUEUED;
     int idx = g_gui.row_count;
     g_gui.row_count++;
     if (g_downloads_model)
@@ -1295,8 +1293,8 @@ static void on_pause_clicked(uiButton *sender, void *data) {
     for (int i = 0; i < g_gui.row_count; i++) {
         DownloadRow *r = &g_gui.rows[i];
         if (r->selected) {
-            if (r->download_id > 0) {
-                if (download_manager_pause(r->download_id)) {
+            if (r->status.id > 0) {
+                if (download_manager_pause(r->status.id)) {
                     acted++;
                 }
             }
@@ -1317,8 +1315,8 @@ static void on_resume_clicked(uiButton *sender, void *data) {
     for (int i = 0; i < g_gui.row_count; i++) {
         DownloadRow *r = &g_gui.rows[i];
         if (r->selected) {
-            if (r->download_id > 0) {
-                if (download_manager_resume(r->download_id)) {
+            if (r->status.id > 0) {
+                if (download_manager_resume(r->status.id)) {
                     acted++;
                 }
             }
@@ -1341,10 +1339,10 @@ static void on_remove_clicked(uiButton *sender, void *data) {
     for (int i = g_gui.row_count - 1; i >= 0; i--) {
         DownloadRow *r = &g_gui.rows[i];
         if (r->selected) {
-            if (r->download_id > 0) {
+            if (r->status.id > 0) {
                 // /* 1. Tell backend to pause and safely remove */
-                // download_manager_pause(r->download_id); 
-                if (download_manager_remove(r->download_id)) {
+                // download_manager_pause(r->status.id); 
+                if (download_manager_remove(r->status.id)) {
                     acted++;
                 }
             }
@@ -1545,34 +1543,39 @@ void gui_on_progress(const ProgressUpdate *update, void *user_data) {
     }
 
     /* Update stored data fields */
-    if (update->status.filename[0]) strncpy(r->filename, update->status.filename, sizeof(r->filename)-1);
-    r->filename[sizeof(r->filename)-1] = '\0';
-    DownloadState prev_state = r->state;
-    r->state = update->status.state;
+    DownloadState prev_state = r->status.state;
+    {
+        char prev_filename[sizeof(r->status.filename)];
+        time_t prev_start_time = r->status.start_time;
+
+        strncpy(prev_filename, r->status.filename, sizeof(prev_filename) - 1);
+        prev_filename[sizeof(prev_filename) - 1] = '\0';
+        r->status = update->status;
+        if (update->status.filename[0] == '\0') {
+            strncpy(r->status.filename, prev_filename, sizeof(r->status.filename) - 1);
+            r->status.filename[sizeof(r->status.filename) - 1] = '\0';
+        }
+        if (r->status.start_time <= 0) {
+            if (prev_start_time > 0) {
+                r->status.start_time = prev_start_time;
+            } else if (r->status.state == DOWNLOAD_STATE_RUNNING) {
+                r->status.start_time = time(NULL);
+            }
+        }
+    }
     /* --- SOUND NOTIFICATION HOOKS --- */
-    if (prev_state != r->state) {
-        if (prev_state == DOWNLOAD_STATE_QUEUED && r->state == DOWNLOAD_STATE_RUNNING) {
+    if (prev_state != r->status.state) {
+        if (prev_state == DOWNLOAD_STATE_QUEUED && r->status.state == DOWNLOAD_STATE_RUNNING) {
             play_sound("res/sounds/start_download.wav");
         } 
-        else if (prev_state != DOWNLOAD_STATE_COMPLETED && r->state == DOWNLOAD_STATE_COMPLETED) {
+        else if (prev_state != DOWNLOAD_STATE_COMPLETED && r->status.state == DOWNLOAD_STATE_COMPLETED) {
             play_sound("res/sounds/complete_download.wav");
         } 
-        else if (prev_state != DOWNLOAD_STATE_FAILED && r->state == DOWNLOAD_STATE_FAILED) {
+        else if (prev_state != DOWNLOAD_STATE_FAILED && r->status.state == DOWNLOAD_STATE_FAILED) {
             play_sound("res/sounds/error_download.wav");
         }
     }
     /* -------------------------------- */
-    int pct = (int)update->status.progress;
-    if (pct < 0) pct = 0; if (pct > 100) pct = 100;
-    r->progress_pct = pct;
-    r->speed_bps = update->status.speed_bps;
-    r->total_bytes = update->status.total_bytes;
-    r->downloaded_bytes = update->status.downloaded_bytes;
-    if (update->status.start_time > 0) {
-        r->start_time = update->status.start_time;
-    } else if (r->start_time == 0 && r->state == DOWNLOAD_STATE_RUNNING) {
-        r->start_time = time(NULL);
-    }
 
     int idx = find_row_index(update->status.id);
     if (idx >= 0 && g_downloads_model) uiTableModelRowChanged(g_downloads_model, idx);
@@ -1751,11 +1754,11 @@ static int cmp_rows(const void *a, const void *b) {
     DownloadRow *rb = (DownloadRow *)b;
     int res = 0;
     switch (g_sort_col) {
-        case 1: res = strcmp(ra->filename, rb->filename); break; /* Name */
-        case 2: res = (ra->total_bytes > rb->total_bytes) - (ra->total_bytes < rb->total_bytes); break; /* Size */
-        case 3: res = (ra->state > rb->state) - (ra->state < rb->state); break; /* Status */
-        case 4: res = (ra->start_time > rb->start_time) - (ra->start_time < rb->start_time); break; /* Added */
-        case 5: res = (ra->speed_bps > rb->speed_bps) - (ra->speed_bps < rb->speed_bps); break; /* Speed */
+        case 1: res = strcmp(ra->status.filename, rb->status.filename); break; /* Name */
+        case 2: res = (ra->status.total_bytes > rb->status.total_bytes) - (ra->status.total_bytes < rb->status.total_bytes); break; /* Size */
+        case 3: res = (ra->status.state > rb->status.state) - (ra->status.state < rb->status.state); break; /* Status */
+        case 4: res = (ra->status.start_time > rb->status.start_time) - (ra->status.start_time < rb->status.start_time); break; /* Added */
+        case 5: res = (ra->status.speed_bps > rb->status.speed_bps) - (ra->status.speed_bps < rb->status.speed_bps); break; /* Speed */
     }
     return g_sort_asc ? res : -res;
 }

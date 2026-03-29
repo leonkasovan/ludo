@@ -27,7 +27,7 @@ typedef enum {
 /* Download item                                                        */
 /* ------------------------------------------------------------------ */
 
-/* Mutable runtime fields shared by Download and ProgressUpdate.
+/* Mutable runtime fields shared by Download, ProgressUpdate, and GUI rows.
    Embed this in both so field declarations only exist once. */
 typedef struct {
     int            id;
@@ -41,7 +41,9 @@ typedef struct {
     time_t         end_time;
 } DownloadStatus;
 
-typedef struct Download {
+typedef struct Download Download;
+
+struct Download {
     DownloadStatus   status;
     char             url[4096];
     char             original_url[4096]; /* preserve user-supplied URL */
@@ -55,8 +57,8 @@ typedef struct Download {
     size_t           bytes_since_last_flush;
     volatile int     stop_requested;
     int              marked_for_removal;
-    struct Download *next;
-} Download;
+    Download        *next;
+};
 
 /* ------------------------------------------------------------------ */
 /* Progress callback (invoked on main/GUI thread via uiQueueMain)       */

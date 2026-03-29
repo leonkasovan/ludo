@@ -1,6 +1,6 @@
-1. Update ludo.newDownload (src\ludo_module.c) to return download id, status and headers. Don't forget to update the documentation. This will allow us to track downloads more effectively and handle errors better.
-2. Update CMakeLists.txt to use static zlib (third_party\zlib-1.2.8) instead of dynamic linking to avoid issues with missing DLLs on some systems. 
-3. Remove hardcoded settings and create config.ini and implement ludo.setting.maxDownloadRetry, ludo.setting.maxThread, etc.
-
+0. Fix add debug log for request and response header (done)
+1. Fix multi URLS clipboard monitor (done)
+2. Change Added date in GUI to display the date of the file instead of the time. (done)
+3. Check error when Play sound
 4. Find downloads history
 5. Plugins LUA: convert output audio , convert images into cbs.
