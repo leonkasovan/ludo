@@ -337,7 +337,7 @@ else()
     # 4. OS-Specific Linking (Propagated to Ludo)
     if(WIN32)
         target_link_libraries(libui_static INTERFACE
-            user32 kernel32 gdi32 comctl32 uxtheme msimg32
+            user32 kernel32 gdi32 comctl32 uxtheme msimg32 winmm
             comdlg32 d2d1 dwrite ole32 oleaut32 oleacc usp10
             gdiplus windowscodecs
         )
@@ -414,7 +414,7 @@ target_compile_definitions(ludo PRIVATE
 
 if(WIN32)
     target_link_libraries(ludo PRIVATE
-        user32 kernel32 gdi32 comctl32 uxtheme msimg32
+        user32 kernel32 gdi32 comctl32 uxtheme msimg32 winmm
         comdlg32 d2d1 dwrite ole32 oleaut32 oleacc usp10
         gdiplus ws2_32 wldap32 crypt32 normaliz secur32 bcrypt iphlpapi
     )

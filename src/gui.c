@@ -102,6 +102,39 @@ static FILE *gui_fopen_utf8(const char *path, const char *mode) {
 #endif
 
 /* ------------------------------------------------------------------ */
+/* Sound Helper                                                         */
+/* ------------------------------------------------------------------ */
+#ifdef _WIN32
+#include <mmsystem.h>
+/* NOTE: You must link against winmm.lib (e.g., add -lwinmm to your Makefile) */
+static void play_sound(const char *filepath) {
+    wchar_t *wpath = utf8_to_wide_dup(filepath);
+    if (wpath) {
+        /* SND_ASYNC plays sound in background, SND_NODEFAULT prevents beep on missing file */
+        PlaySoundW(wpath, NULL, SND_FILENAME | SND_ASYNC | SND_NODEFAULT);
+        free(wpath);
+    } else {
+        PlaySoundA(filepath, NULL, SND_FILENAME | SND_ASYNC | SND_NODEFAULT);
+    }
+}
+#elif defined(__APPLE__)
+static void play_sound(const char *filepath) {
+    char cmd[1024];
+    /* afplay is the native macOS command-line audio player */
+    snprintf(cmd, sizeof(cmd), "afplay \"%s\" >/dev/null 2>&1 &", filepath);
+    system(cmd);
+}
+#else
+static void play_sound(const char *filepath) {
+    char cmd[1024];
+    /* aplay is standard for ALSA. paplay can be used for PulseAudio.
+       Running it with '&' ensures it doesn't block the GUI thread. */
+    snprintf(cmd, sizeof(cmd), "aplay -q \"%s\" >/dev/null 2>&1 &", filepath);
+    system(cmd);
+}
+#endif
+
+/* ------------------------------------------------------------------ */
 /* Download row UI element                                              */
 /* ------------------------------------------------------------------ */
 
@@ -1554,6 +1587,19 @@ void gui_on_progress(const ProgressUpdate *update, void *user_data) {
     r->filename[sizeof(r->filename)-1] = '\0';
     DownloadState prev_state = r->state;
     r->state = update->status.state;
+    /* --- SOUND NOTIFICATION HOOKS --- */
+    if (prev_state != r->state) {
+        if (prev_state == DOWNLOAD_STATE_QUEUED && r->state == DOWNLOAD_STATE_RUNNING) {
+            play_sound("res/sounds/start_download.wav");
+        } 
+        else if (prev_state != DOWNLOAD_STATE_COMPLETED && r->state == DOWNLOAD_STATE_COMPLETED) {
+            play_sound("res/sounds/complete_download.wav");
+        } 
+        else if (prev_state != DOWNLOAD_STATE_FAILED && r->state == DOWNLOAD_STATE_FAILED) {
+            play_sound("res/sounds/error_download.wav");
+        }
+    }
+    /* -------------------------------- */
     int pct = (int)update->status.progress;
     if (pct < 0) pct = 0; if (pct > 100) pct = 100;
     r->progress_pct = pct;

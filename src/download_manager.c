@@ -1137,6 +1137,16 @@ static void db_load(const char *path) {
             continue;
         }
 
+        // if fields[4] (state) is COMPLETED, skip it
+        if (atoi(fields[4]) == DOWNLOAD_STATE_COMPLETED) {
+            free(d);
+            /* reset buffer for next iteration */
+            free(line);
+            line = NULL;
+            cap = 0;
+            continue;
+        }
+
         d->status.id = g_mgr.next_id++; // Best Practice: Discard the old DB ID and assign a fresh, sequential one
         strncpy(d->url, fields[1], sizeof(d->url)-1);
         d->url[sizeof(d->url)-1] = '\0';
