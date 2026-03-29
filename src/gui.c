@@ -242,7 +242,7 @@ static void *url_worker_thread(void *arg) {
             snprintf(msg, sizeof(msg),
                      "[ludo] No plugin for URL — starting direct download: %s",
                      task.url);
-            gui_log(LOG_INFO, msg);
+            gui_log(LOG_INFO, "%s", msg);
             download_manager_add(task.url,
                                  download_manager_get_output_dir(),
                                  DOWNLOAD_NOW,
@@ -1324,7 +1324,7 @@ static void on_add_clicked(uiButton *sender, void *data) {
     uiEntrySetText(g_gui.url_entry, "");
     char msg[512];
     snprintf(msg, sizeof(msg), "Queued: %s", url);
-    gui_log(LOG_INFO, msg);
+    gui_log(LOG_INFO, "%s", msg);
 }
 
 static void on_pause_clicked(uiButton *sender, void *data) {
@@ -1420,7 +1420,7 @@ static void on_plugin_clicked(uiButton *sender, void *data) {
 
     char msg[1024];
     snprintf(msg, sizeof(msg), "Plugins reloaded from: %s", folder);
-    gui_log(LOG_SUCCESS, msg);
+    gui_log(LOG_SUCCESS, "%s", msg);
     uiFreeText(folder);
 }
 
@@ -1437,7 +1437,7 @@ static void on_setting_clicked(uiButton *sender, void *data) {
 
     char msg[1024];
     snprintf(msg, sizeof(msg), "Default output directory changed to: %s", folder);
-    gui_log(LOG_SUCCESS, msg);
+    gui_log(LOG_SUCCESS, "%s", msg);
     uiFreeText(folder);
 }
 
@@ -1972,7 +1972,7 @@ void gui_create(void) {
     {
         char msg[256];
         snprintf(msg, sizeof(msg), "LUDO v%s - %s (%s)", LUDO_VERSION_STR, LUDO_DESCRIPTION, LUDO_COMPANY);
-        gui_log(LOG_INFO, msg);
+        gui_log(LOG_INFO, "%s", msg);
         lua_engine_info();
     }
     

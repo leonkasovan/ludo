@@ -293,7 +293,7 @@ int lua_engine_process_url(const char *url) {
             char msg[512];
             snprintf(msg, sizeof(msg), "[lua_engine] load error %s: %s",
                      plugins[i].path, e ? e : "?");
-            gui_log(LOG_ERROR, msg);
+            gui_log(LOG_ERROR, "%s", msg);
             lua_pop(L, 1);
             continue;
         }
@@ -302,7 +302,7 @@ int lua_engine_process_url(const char *url) {
             char msg[512];
             snprintf(msg, sizeof(msg), "[lua_engine] exec error %s: %s",
                      plugins[i].path, e ? e : "?");
-            gui_log(LOG_ERROR, msg);
+            gui_log(LOG_ERROR, "%s", msg);
             lua_pop(L, 1);
             continue;
         }
@@ -324,7 +324,7 @@ int lua_engine_process_url(const char *url) {
             snprintf(msg, sizeof(msg),
                      "[lua_engine] validate error in %s: %s",
                      plugins[i].path, e ? e : "?");
-            gui_log(LOG_ERROR, msg);
+            gui_log(LOG_ERROR, "%s", msg);
             lua_pop(L, 2); /* pop error + plugin table */
             continue;
         }
@@ -349,7 +349,7 @@ int lua_engine_process_url(const char *url) {
             snprintf(msg, sizeof(msg),
                      "[lua_engine] process error in %s: %s",
                      plugins[i].path, e ? e : "?");
-            gui_log(LOG_ERROR, msg);
+            gui_log(LOG_ERROR, "%s", msg);
             lua_pop(L, 2);
             continue;
         }
@@ -375,5 +375,5 @@ void lua_engine_shutdown(void) {
 void lua_engine_info(void) {
     char msg[256];
     snprintf(msg, sizeof(msg), "%d plugin(s) loaded ", g_engine.count);
-    gui_log(LOG_INFO, msg);
+    gui_log(LOG_INFO, "%s", msg);
 }

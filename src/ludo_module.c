@@ -153,19 +153,19 @@ static int lua_ludo_lua_tester_printf(lua_State *L) {
 
 static int lua_ludo_log_error(lua_State *L) {
     const char *msg = luaL_checkstring(L, 1);
-    gui_log(LOG_ERROR, msg);
+    gui_log(LOG_ERROR, "%s", msg);
     return 0;
 }
 
 static int lua_ludo_log_success(lua_State *L) {
     const char *msg = luaL_checkstring(L, 1);
-    gui_log(LOG_SUCCESS, msg);
+    gui_log(LOG_SUCCESS, "%s", msg);
     return 0;
 }
 
 static int lua_ludo_log_info(lua_State *L) {
     const char *msg = luaL_checkstring(L, 1);
-    gui_log(LOG_INFO, msg);
+    gui_log(LOG_INFO, "%s", msg);
     return 0;
 }
 
