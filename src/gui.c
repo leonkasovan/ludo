@@ -108,29 +108,87 @@ static FILE *gui_fopen_utf8(const char *path, const char *mode) {
 #include <mmsystem.h>
 /* NOTE: You must link against winmm.lib (e.g., add -lwinmm to your Makefile) */
 static void play_sound(const char *filepath) {
+    if (!filepath || filepath[0] == '\0') {
+        gui_log(LOG_WARNING, "play_sound: empty filepath");
+        return;
+    }
+    gui_log(LOG_INFO, "play_sound: attempting to play: %s", filepath);
+
+    /* Check file existence using the UTF-8 aware fopen helper */
+    FILE *f = gui_fopen_utf8(filepath, "rb");
+    if (!f) {
+        gui_log(LOG_WARNING, "play_sound: file not found: %s", filepath);
+    } else {
+        fclose(f);
+    }
+
     wchar_t *wpath = utf8_to_wide_dup(filepath);
+    BOOL ok = FALSE;
     if (wpath) {
         /* SND_ASYNC plays sound in background, SND_NODEFAULT prevents beep on missing file */
-        PlaySoundW(wpath, NULL, SND_FILENAME | SND_ASYNC | SND_NODEFAULT);
+        ok = PlaySoundW(wpath, NULL, SND_FILENAME | SND_ASYNC | SND_NODEFAULT);
         free(wpath);
     } else {
-        PlaySoundA(filepath, NULL, SND_FILENAME | SND_ASYNC | SND_NODEFAULT);
+        ok = PlaySoundA(filepath, NULL, SND_FILENAME | SND_ASYNC | SND_NODEFAULT);
+    }
+
+    if (!ok) {
+        DWORD err = GetLastError();
+        gui_log(LOG_ERROR, "play_sound: PlaySound failed for %s (res=%d, GetLastError=%lu)", filepath, (int)ok, (unsigned long)err);
+    } else {
+        gui_log(LOG_INFO, "play_sound: PlaySound succeeded for %s", filepath);
     }
 }
 #elif defined(__APPLE__)
 static void play_sound(const char *filepath) {
-    char cmd[1024];
+    if (!filepath || filepath[0] == '\0') {
+        gui_log(LOG_WARNING, "play_sound: empty filepath");
+        return;
+    }
+    gui_log(LOG_INFO, "play_sound: attempting to play: %s", filepath);
+
+    FILE *f = gui_fopen_utf8(filepath, "rb");
+    if (!f) {
+        gui_log(LOG_WARNING, "play_sound: file not found: %s", filepath);
+    } else {
+        fclose(f);
+    }
+
+    char cmd[2048];
     /* afplay is the native macOS command-line audio player */
     snprintf(cmd, sizeof(cmd), "afplay \"%s\" >/dev/null 2>&1 &", filepath);
-    system(cmd);
+    int rc = system(cmd);
+    if (rc == -1) {
+        gui_log(LOG_ERROR, "play_sound: failed to execute afplay for %s", filepath);
+    } else {
+        gui_log(LOG_INFO, "play_sound: executed: %s (rc=%d)", filepath, rc);
+    }
 }
 #else
 static void play_sound(const char *filepath) {
-    char cmd[1024];
+    if (!filepath || filepath[0] == '\0') {
+        gui_log(LOG_WARNING, "play_sound: empty filepath");
+        return;
+    }
+    gui_log(LOG_INFO, "play_sound: attempting to play: %s", filepath);
+
+    FILE *f = gui_fopen_utf8(filepath, "rb");
+    if (!f) {
+        gui_log(LOG_WARNING, "play_sound: file not found: %s", filepath);
+    } else {
+        fclose(f);
+    }
+
+    char cmd[2048];
     /* aplay is standard for ALSA. paplay can be used for PulseAudio.
        Running it with '&' ensures it doesn't block the GUI thread. */
     snprintf(cmd, sizeof(cmd), "aplay -q \"%s\" >/dev/null 2>&1 &", filepath);
-    system(cmd);
+    int rc = system(cmd);
+    if (rc == -1) {
+        gui_log(LOG_ERROR, "play_sound: failed to execute aplay/paplay for %s", filepath);
+    } else {
+        gui_log(LOG_INFO, "play_sound: executed: %s (rc=%d)", filepath, rc);
+    }
 }
 #endif
 
@@ -220,6 +278,161 @@ static struct {
 /* Task queue shared with worker threads (initialised in main.c) */
 extern TaskQueue g_url_queue;
 
+static const LudoGuiWindowId g_main_window_config_id = LUDO_GUI_WINDOW_MAIN;
+static const LudoGuiWindowId g_add_urls_window_config_id = LUDO_GUI_WINDOW_ADD_URLS;
+static const LudoGuiWindowId g_http_test_window_config_id = LUDO_GUI_WINDOW_HTTP_TEST;
+static const LudoGuiWindowId g_lua_test_window_config_id = LUDO_GUI_WINDOW_LUA_TEST;
+
+static const LudoGuiWindowConfig *gui_window_config(LudoGuiWindowId window_id) {
+    const LudoConfig *cfg = ludo_config_get();
+
+    if (!cfg) return NULL;
+
+    switch (window_id) {
+    case LUDO_GUI_WINDOW_MAIN:
+        return &cfg->gui.main_window;
+    case LUDO_GUI_WINDOW_ADD_URLS:
+        return &cfg->gui.add_urls_window;
+    case LUDO_GUI_WINDOW_HTTP_TEST:
+        return &cfg->gui.http_test_window;
+    case LUDO_GUI_WINDOW_LUA_TEST:
+        return &cfg->gui.lua_test_window;
+    default:
+        return NULL;
+    }
+}
+
+static const int *gui_table_widths(LudoGuiTableId table_id, size_t *count) {
+    const LudoConfig *cfg = ludo_config_get();
+
+    if (count) *count = 0;
+    if (!cfg) return NULL;
+
+    switch (table_id) {
+    case LUDO_GUI_TABLE_DOWNLOADS:
+        if (count) *count = LUDO_GUI_DOWNLOADS_TABLE_COLUMN_COUNT;
+        return cfg->gui.downloads_table_widths;
+    case LUDO_GUI_TABLE_SNIPPETS:
+        if (count) *count = LUDO_GUI_SNIPPET_TABLE_COLUMN_COUNT;
+        return cfg->gui.snippet_table_widths;
+    default:
+        return NULL;
+    }
+}
+
+static void gui_get_window_size(LudoGuiWindowId window_id,
+                                int default_width,
+                                int default_height,
+                                int *width,
+                                int *height) {
+    const LudoGuiWindowConfig *window_cfg = gui_window_config(window_id);
+
+    if (width) *width = window_cfg ? window_cfg->width : default_width;
+    if (height) *height = window_cfg ? window_cfg->height : default_height;
+}
+
+static void gui_apply_window_position(uiWindow *window, LudoGuiWindowId window_id) {
+    const LudoGuiWindowConfig *window_cfg;
+
+    if (!window) return;
+
+    window_cfg = gui_window_config(window_id);
+    if (!window_cfg) return;
+    if (window_cfg->pos_x == -1 && window_cfg->pos_y == -1) return;
+
+    uiWindowSetPosition(window, window_cfg->pos_x, window_cfg->pos_y);
+}
+
+static void gui_capture_window_geometry(uiWindow *window, LudoGuiWindowId window_id) {
+    int width = 0;
+    int height = 0;
+    int pos_x = 0;
+    int pos_y = 0;
+
+    if (!window) return;
+
+    uiWindowContentSize(window, &width, &height);
+    if (width > 0 && height > 0) {
+        ludo_config_set_window_size(window_id, width, height);
+    }
+
+    uiWindowPosition(window, &pos_x, &pos_y);
+    ludo_config_set_window_position(window_id, pos_x, pos_y);
+}
+
+static void gui_apply_table_widths(uiTable *table, LudoGuiTableId table_id) {
+    size_t column_count = 0;
+    const int *widths = gui_table_widths(table_id, &column_count);
+
+    if (!table || !widths) return;
+
+    for (size_t column = 0; column < column_count; column++) {
+        if (widths[column] > 0) {
+            uiTableColumnSetWidth(table, (int)column, widths[column]);
+        }
+    }
+}
+
+static void gui_capture_table_widths(uiTable *table, LudoGuiTableId table_id) {
+    size_t column_count = 0;
+    const int *widths = gui_table_widths(table_id, &column_count);
+
+    if (!table || !widths) return;
+
+    for (size_t column = 0; column < column_count; column++) {
+        int width = uiTableColumnWidth(table, (int)column);
+        if (width > 0) {
+            ludo_config_set_table_column_width(table_id, (int)column, width);
+        }
+    }
+}
+
+static void on_window_position_changed(uiWindow *window, void *data) {
+    const LudoGuiWindowId *window_id = (const LudoGuiWindowId *)data;
+
+    if (!window_id) return;
+    gui_capture_window_geometry(window, *window_id);
+}
+
+static void on_window_content_size_changed(uiWindow *window, void *data) {
+    const LudoGuiWindowId *window_id = (const LudoGuiWindowId *)data;
+
+    if (!window_id) return;
+    gui_capture_window_geometry(window, *window_id);
+}
+
+static void gui_enable_window_persistence(uiWindow *window, const LudoGuiWindowId *window_id) {
+    if (!window || !window_id) return;
+
+    gui_apply_window_position(window, *window_id);
+    uiWindowOnPositionChanged(window, on_window_position_changed, (void *)window_id);
+    uiWindowOnContentSizeChanged(window, on_window_content_size_changed, (void *)window_id);
+}
+
+static void persist_main_window_state(void) {
+    gui_capture_window_geometry(g_gui.window, LUDO_GUI_WINDOW_MAIN);
+    gui_capture_table_widths(g_downloads_table, LUDO_GUI_TABLE_DOWNLOADS);
+    ludo_config_save();
+}
+
+static void persist_add_urls_window_state(uiWindow *window) {
+    gui_capture_window_geometry(window, LUDO_GUI_WINDOW_ADD_URLS);
+    ludo_config_save();
+}
+
+static void persist_http_test_window_state(uiWindow *window) {
+    gui_capture_window_geometry(window, LUDO_GUI_WINDOW_HTTP_TEST);
+    ludo_config_save();
+}
+
+static void persist_lua_test_window_state(LuaTestCtx *ctx) {
+    if (!ctx) return;
+
+    gui_capture_window_geometry(ctx->win, LUDO_GUI_WINDOW_LUA_TEST);
+    gui_capture_table_widths(ctx->snippet_table, LUDO_GUI_TABLE_SNIPPETS);
+    ludo_config_save();
+}
+
 /* ------------------------------------------------------------------ */
 /* Worker thread: pulls URLs, drives Lua engine                         */
 /* ------------------------------------------------------------------ */
@@ -247,41 +460,7 @@ static void *url_worker_thread(void *arg) {
 }
 
 /* Auto-size table columns based on content (simple char-count heuristic) */
-static void autosize_downloads_table(void) {
-    if (!g_downloads_table) return;
-    if (!g_gui.window) return;
-
-    /* Desired percentage widths for columns 0..7: id,name,size,status,started,speed,progress,actions */
-    const int percents[8] = {2, 30, 10, 8, 8, 10, 16, 2};
-
-    int win_w = 0, win_h = 0;
-    uiWindowContentSize(g_gui.window, &win_w, &win_h);
-    if (win_w <= 0) return;
-
-    /* Account for some padding/margins inside the window */
-    int available = win_w - 40; if (available < 200) available = win_w;
-
-    for (int col = 0; col < 8; col++) {
-        int w = (available * percents[col]) / 100;
-        /* Enforce sensible minimums */
-        if (col == 0) { if (w < 20) w = 20; }
-        else if (col == 1) { if (w < 160) w = 160; }
-        else if (col == 2) { if (w < 100) w = 100; }
-        else if (col == 3) { if (w < 70) w = 70; }
-        else if (col == 4) { if (w < 70) w = 70; }
-        else if (col == 5) { if (w < 80) w = 80; }
-        else if (col == 6) { if (w < 110) w = 110; }
-        else if (col == 7) { if (w < 25) w = 25; }
-        uiTableColumnSetWidth(g_downloads_table, col, w);
-    }
-}
-
 /* Window position/size changed handler — recompute column widths */
-static void on_main_window_pos_changed(uiWindow *w, void *data) {
-    (void)w; (void)data;
-    autosize_downloads_table();
-}
-
 /* When the main window gains focus, check clipboard for a URL and paste it into the URL entry
    if the entry is currently empty. Only implemented on Windows for now. */
 static void on_main_window_focus_changed(uiWindow *w, void *data) {
@@ -628,6 +807,7 @@ static void on_snippet_row_double_clicked(uiTable *t, int row, void *data) {
 static int destroy_http_test_window(uiWindow *w, void *data) {
     HttpTestCtx *ctx = (HttpTestCtx *)data;
 
+    persist_http_test_window_state(w);
     if (g_active_http_test_ctx == ctx) {
         g_active_http_test_ctx = NULL;
     }
@@ -640,6 +820,7 @@ static int destroy_lua_test_window(uiWindow *w, void *data) {
     LuaTestCtx *ctx = (LuaTestCtx *)data;
 
     if (ctx) {
+        persist_lua_test_window_state(ctx);
         free(ctx->snippets);
         if (ctx->snippet_model) {
             uiFreeTableModel(ctx->snippet_model);
@@ -1179,8 +1360,6 @@ static DownloadRow *add_row(int id, const char *filename) {
     g_gui.row_count++;
     if (g_downloads_model)
         uiTableModelRowInserted(g_downloads_model, idx);
-    /* Adjust column widths to fit content */
-    autosize_downloads_table();
     return r;
 }
 
@@ -1192,7 +1371,8 @@ typedef struct {
 
 /* Free dialog context on user-initiated close. */
 static int on_child_window_closing(uiWindow *w, void *data) {
-    if (data) free(data); 
+    persist_add_urls_window_state(w);
+    if (data) free(data);
     uiControlDestroy(uiControl(w));
     return 0;
 }
@@ -1224,12 +1404,17 @@ static void on_add_urls_submit(uiButton *b, void *ud) {
         }
         uiFreeText(text);
     }
+    persist_add_urls_window_state(ctx->win);
     uiControlDestroy(uiControl(ctx->win));
     free(ctx);
 }
 
 static void show_add_urls_window(const char *initial_text) {
-    uiWindow *win = uiNewWindow("Add Multiple URLs", 700, 400, 0);
+    int window_width = 700;
+    int window_height = 400;
+
+    gui_get_window_size(LUDO_GUI_WINDOW_ADD_URLS, 700, 400, &window_width, &window_height);
+    uiWindow *win = uiNewWindow("Add Multiple URLs", window_width, window_height, 0);
     uiWindowSetMargined(win, 1);
     
     uiBox *vbox = uiNewVerticalBox();
@@ -1258,6 +1443,7 @@ static void show_add_urls_window(const char *initial_text) {
     uiWindowOnClosing(win, (int (*)(uiWindow *, void *))on_child_window_closing, ctx);
     
     uiWindowSetChild(win, uiControl(vbox));
+    gui_enable_window_persistence(win, &g_add_urls_window_config_id);
     uiControlShow(uiControl(win));
 }
 
@@ -1362,7 +1548,6 @@ static void on_remove_clicked(uiButton *sender, void *data) {
 
     if (acted > 0) {
         gui_log(LOG_INFO, "Removed checked downloads");
-        autosize_downloads_table(); /* Re-adjust column sizing */
     } else {
         gui_log(LOG_WARNING, "No action taken.");
     }
@@ -1405,7 +1590,11 @@ static void on_http_clicked(uiButton *sender, void *data) {
     (void)sender; (void)data;
 
     // --- HTTP Test Window ---
-    uiWindow *win = uiNewWindow("HTTP Request Tester", 900, 700, 0);
+    int window_width = 900;
+    int window_height = 700;
+
+    gui_get_window_size(LUDO_GUI_WINDOW_HTTP_TEST, 900, 700, &window_width, &window_height);
+    uiWindow *win = uiNewWindow("HTTP Request Tester", window_width, window_height, 0);
     uiWindowSetMargined(win, 1);
 
     uiBox *vbox = uiNewVerticalBox();
@@ -1445,6 +1634,7 @@ static void on_http_clicked(uiButton *sender, void *data) {
 
     uiButtonOnClicked(send_btn, http_test_on_send, ctx);
     uiWindowSetChild(win, uiControl(vbox));
+    gui_enable_window_persistence(win, &g_http_test_window_config_id);
     uiControlShow(uiControl(win));
     uiWindowOnClosing(win, destroy_http_test_window, ctx);
 }
@@ -1452,7 +1642,11 @@ static void on_http_clicked(uiButton *sender, void *data) {
 static void on_lua_clicked(uiButton *sender, void *data) {
     (void)sender; (void)data;
     // --- Lua Test Window ---
-    uiWindow *win = uiNewWindow("Lua Script Tester", 960, 640, 0);
+    int window_width = 960;
+    int window_height = 640;
+
+    gui_get_window_size(LUDO_GUI_WINDOW_LUA_TEST, 960, 640, &window_width, &window_height);
+    uiWindow *win = uiNewWindow("Lua Script Tester", window_width, window_height, 0);
     uiWindowSetMargined(win, 1);
 
     uiBox *content_box = uiNewHorizontalBox();
@@ -1505,7 +1699,7 @@ static void on_lua_clicked(uiButton *sender, void *data) {
         uiTableHeaderSetVisible(ctx->snippet_table, 0);
         uiTableSetSelectionMode(ctx->snippet_table, uiTableSelectionModeOne);
         uiTableOnRowDoubleClicked(ctx->snippet_table, on_snippet_row_double_clicked, ctx);
-        uiTableColumnSetWidth(ctx->snippet_table, 0, 220);
+        gui_apply_table_widths(ctx->snippet_table, LUDO_GUI_TABLE_SNIPPETS);
         uiBoxAppend(snippet_box, uiControl(ctx->snippet_table), 1);
     }
 
@@ -1515,6 +1709,7 @@ static void on_lua_clicked(uiButton *sender, void *data) {
     uiButtonOnClicked(exec_btn, lua_test_on_exec, ctx);
 
     uiWindowSetChild(win, uiControl(content_box));
+    gui_enable_window_persistence(win, &g_lua_test_window_config_id);
     uiControlShow(uiControl(win));
     uiWindowOnClosing(win, destroy_lua_test_window, ctx);
 }
@@ -1579,8 +1774,6 @@ void gui_on_progress(const ProgressUpdate *update, void *user_data) {
 
     int idx = find_row_index(update->status.id);
     if (idx >= 0 && g_downloads_model) uiTableModelRowChanged(g_downloads_model, idx);
-    /* Recompute column widths when content changes */
-    autosize_downloads_table();
 }
 
 /* ------------------------------------------------------------------ */
@@ -1590,6 +1783,7 @@ void gui_on_progress(const ProgressUpdate *update, void *user_data) {
 static void begin_app_shutdown(void) {
     if (g_gui.shutdown_requested) return;
 
+    persist_main_window_state();
     g_gui.shutdown_requested = 1;
     task_queue_shutdown(&g_url_queue);
     gui_shutdown();
@@ -1794,7 +1988,11 @@ void gui_create(void) {
     memset(&g_gui, 0, sizeof(g_gui));
 
     /* Outer window */
-    g_gui.window = uiNewWindow("LUDO - LUa DOwnloader", 800, 600, 1);
+    int main_window_width = 800;
+    int main_window_height = 600;
+
+    gui_get_window_size(LUDO_GUI_WINDOW_MAIN, 800, 600, &main_window_width, &main_window_height);
+    g_gui.window = uiNewWindow("LUDO - LUa DOwnloader", main_window_width, main_window_height, 1);
     uiWindowSetMargined(g_gui.window, 1);
     uiWindowOnClosing(g_gui.window, on_window_close, NULL);
     uiOnShouldQuit(on_should_quit, NULL);
@@ -1908,6 +2106,7 @@ void gui_create(void) {
     uiTableAppendTextColumn(t, "Speed", 5, uiTableModelColumnNeverEditable, NULL);
     uiTableAppendProgressBarColumn(t, "Progress", 6);
     uiTableAppendButtonColumn(t, "@", 7, 8);
+    gui_apply_table_widths(t, LUDO_GUI_TABLE_DOWNLOADS);
 
     uiBoxAppend(root, uiControl(t), 1);
 
@@ -1923,10 +2122,8 @@ void gui_create(void) {
     uiBoxAppend(root, uiControl(log_group), 1 /* stretchy */);
 
     uiWindowSetChild(g_gui.window, uiControl(root));
+    gui_enable_window_persistence(g_gui.window, &g_main_window_config_id);
     uiControlShow(uiControl(g_gui.window));
-    /* Apply percentage column widths initially and on resize */
-    uiWindowOnPositionChanged(g_gui.window, on_main_window_pos_changed, NULL);
-    autosize_downloads_table();
     /* Apply clipboard check now (on creation) and also when window is focused */
     paste_clipboard_url_if_valid();
     uiWindowOnFocusChanged(g_gui.window, on_main_window_focus_changed, NULL);
