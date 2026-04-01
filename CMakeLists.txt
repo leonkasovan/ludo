@@ -283,8 +283,61 @@ ExternalProject_Add(curl_ext
     BUILD_BYPRODUCTS ${CURL_INSTALL_DIR}/lib/${CURL_LIB_NAME}
 )
 
-add_library(libcurl_static STATIC IMPORTED GLOBAL)
-set_target_properties(libcurl_static PROPERTIES IMPORTED_LOCATION ${CURL_INSTALL_DIR}/lib/${CURL_LIB_NAME})
+# Build libcurl from bundled source instead of ExternalProject
+# Configure curl build options for in-tree build
+set(BUILD_SHARED_LIBS OFF CACHE BOOL "Build shared libraries" FORCE)
+set(BUILD_STATIC_LIBS ON CACHE BOOL "Build static libraries" FORCE)
+set(BUILD_CURL_EXE OFF CACHE BOOL "Build curl executable" FORCE)
+set(BUILD_TESTING OFF CACHE BOOL "Disable testing for curl" FORCE)
+set(CURL_USE_PKGCONFIG OFF CACHE BOOL "Disable pkg-config for curl" FORCE)
+set(CURL_ENABLE_SSL ON CACHE BOOL "Enable SSL support in curl" FORCE)
+set(ENABLE_THREADED_RESOLVER ON CACHE BOOL "Enable threaded resolver" FORCE)
+set(CURL_BROTLI ON CACHE BOOL "Enable Brotli in curl" FORCE)
+set(CURL_ZSTD ON CACHE BOOL "Enable Zstd in curl" FORCE)
+set(CURL_ZLIB ON CACHE BOOL "Enable zlib in curl" FORCE)
+set(CURL_DROP_UNUSED ON CACHE BOOL "Drop unused code/data from curl" FORCE)
+
+# Provide zlib include/library locations (use vendored zlib)
+set(ZLIB_INCLUDE_DIR ${ZLIB_SRC_DIR} CACHE PATH "Zlib include dir" FORCE)
+set(ZLIB_LIBRARY ${ZLIB_STATIC_LIBRARY} CACHE FILEPATH "Zlib library" FORCE)
+
+# Help curl find our built brotli/zstd outputs
+set(CMAKE_INCLUDE_PATH "${ZSTD_INSTALL_DIR}/include;${BROTLI_INSTALL_DIR}/include;${ZLIB_SRC_DIR}" CACHE STRING "Additional include paths for curl" FORCE)
+set(CMAKE_LIBRARY_PATH "${ZSTD_INSTALL_DIR}/lib;${BROTLI_INSTALL_DIR}/lib;${ZLIB_OUTPUT_DIR}" CACHE STRING "Additional library paths for curl" FORCE)
+
+# Add curl as a subdirectory so it is built as part of the main build
+# Limit protocols/features to only what's needed by a download manager
+# Prefer HTTP/HTTPS only. This overrides individual CURL_DISABLE_* options.
+set(HTTP_ONLY ON CACHE BOOL "Disable all protocols except HTTP (This overrides all CURL_DISABLE_* options)" FORCE)
+set(CURL_DISABLE_ALTSVC ON CACHE BOOL "Disable alt-svc support" FORCE)
+set(CURL_DISABLE_LIBCURL_OPTION ON CACHE BOOL "Disable --libcurl option from curl tool" FORCE)
+set(CURL_USE_LIBPSL OFF CACHE BOOL "Disable libpsl" FORCE)
+set(USE_LIBIDN2 OFF CACHE BOOL "Disable libidn2" FORCE)
+
+add_subdirectory(${CMAKE_SOURCE_DIR}/third_party/curl-8.19.0 ${CURL_BUILD_DIR})
+
+# Ensure the produced libcurl target (libcurl_static) builds after external libs
+add_dependencies(libcurl_static zstd_ext brotli_ext zlib_static)
+
+# Tune libcurl_static to reduce size: enable sectioning and garbage-collect unused
+if(TARGET libcurl_static)
+    if(MSVC)
+        target_compile_options(libcurl_static PRIVATE $<$<CONFIG:Release>:/Gy>)
+        # final exe already uses /OPT:REF /OPT:ICF
+    else()
+        target_compile_options(libcurl_static PRIVATE $<$<CONFIG:Release>:-ffunction-sections> $<$<CONFIG:Release>:-fdata-sections> $<$<CONFIG:Release>:-O3>)
+        target_link_options(libcurl_static PRIVATE $<$<CONFIG:Release>:-Wl,--gc-sections> $<$<CONFIG:Release>:-s>)
+    endif()
+endif()
+
+# Helper: enable sectioning/stripping for a target in Release builds
+function(enable_dead_code_stripping target)
+    if(MSVC)
+        target_compile_options(${target} PRIVATE $<$<CONFIG:Release>:/Gy>)
+    else()
+        target_compile_options(${target} PRIVATE $<$<CONFIG:Release>:-ffunction-sections> $<$<CONFIG:Release>:-fdata-sections>)
+    endif()
+endfunction()
 
 # ------------------------------------------------------------
 # libui-ng (Native CMake Build - Fixed Linker Errors)
@@ -382,6 +435,26 @@ else()
     add_executable(ludo ${LUDO_SOURCES})
 endif()
 
+    # Apply dead-code stripping flags to main executable and in-repo static libs
+    if(TARGET ludo)
+        if(MSVC)
+            target_compile_options(ludo PRIVATE $<$<CONFIG:Release>:/Gy>)
+        else()
+            target_compile_options(ludo PRIVATE $<$<CONFIG:Release>:-ffunction-sections> $<$<CONFIG:Release>:-fdata-sections>)
+            target_link_options(ludo PRIVATE $<$<CONFIG:Release>:-Wl,--gc-sections> $<$<CONFIG:Release>:-s>)
+        endif()
+    endif()
+
+    # Enable sectioning on internal static libs to let linkers drop unused code
+    if(TARGET zlib_static)
+        enable_dead_code_stripping(zlib_static)
+    endif()
+    if(TARGET lua)
+        enable_dead_code_stripping(lua)
+    endif()
+    if(TARGET libui_static)
+        enable_dead_code_stripping(libui_static)
+    endif()
 set(LUDO_EXTERNAL_DEPENDENCIES curl_ext zstd_ext brotli_ext zlib_static)
 add_dependencies(ludo ${LUDO_EXTERNAL_DEPENDENCIES})
 
