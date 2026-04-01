@@ -2,5 +2,9 @@
 1. Fix multi URLS clipboard monitor (done)
 2. Change Added date in GUI to display the date of the file instead of the time. (done)
 3. Check error when Play sound
-4. Find downloads history
-5. Plugins LUA: convert output audio , convert images into cbs.
+4. Add json library to lua
+5. Add --script option to specify lua script to run and write output (ludo.logInfo, ludo.logError) to stdout
+5. Change ludo.newDownload to accept options like http.get and http.head
+6. Fix CURLOPT_USERAGENT to use lua options.user_agent for all requests (http.get, http.head, ludo.newDownload)
+7. Find downloads history
+8. Plugins LUA: convert output audio , convert images into cbs.
