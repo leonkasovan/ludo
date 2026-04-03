@@ -109,11 +109,32 @@ int main(int argc, char *argv[])
 #endif
 
     if (run_script && script_path) {
-        /* Run headlessly and exit */
+        /* Run headlessly and exit.
+         * Initialise subsystems that scripts/plugins may use to avoid
+         * crashes (task queue and download manager), and load plugins
+         * so script code can call plugin APIs.
+         */
+        if (task_queue_init(&g_url_queue, cfg ? cfg->url_queue_capacity : 256) != 0) {
+            fprintf(stderr, "Failed to initialise task queue\n");
+            ludo_config_shutdown();
+            return 1;
+        }
+
+        download_manager_init(cfg ? cfg->max_thread : 2,
+                              cfg ? cfg->output_dir : "downloads/");
+
         lua_engine_init();
+        lua_engine_load_plugins(cfg ? cfg->plugin_dir : "plugins");
+
         lua_engine_run_script(script_path);
         dm_log("Script %s execution completed", script_path);
+
+        /* Shutdown in a consistent order with the GUI mode teardown. */
+        task_queue_shutdown(&g_url_queue);
+        download_manager_shutdown();
         lua_engine_shutdown();
+        task_queue_destroy(&g_url_queue);
+
         free(script_path);
         ludo_config_shutdown();
         return 0;
