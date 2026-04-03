@@ -23,6 +23,9 @@ void gui_create(void);
  */
 void gui_shutdown(void);
 
+/* Return non-zero if shutdown has been requested */
+int gui_is_shutdown_requested(void);
+
 /*
  * Append a message to the on-screen log panel.
  * Thread-safe: routes to the main thread via uiQueueMain when needed.

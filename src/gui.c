@@ -1824,6 +1824,10 @@ void gui_shutdown(void) {
     g_gui.url_worker_started = 0;
 }
 
+int gui_is_shutdown_requested(void) {
+    return g_gui.shutdown_requested;
+}
+
 static int on_window_close(uiWindow *w, void *data) {
     (void)w; (void)data;
     begin_app_shutdown();
