@@ -51,17 +51,15 @@ pacman -S --needed \
   mingw-w64-x86_64-meson
 ```
 
-> If you do not have Meson (for example in `w64devkit`), see the prebuilt `libui` option below.
+> This project builds `libui-ng` from source via CMake; Meson is not required.
 
 ## Build
-
-### Option A: Build `libui-ng` via Meson (default)
 
 From repository root:
 
 ```bash
 cmake -B build .
-cmake --build build --parallel 4
+cmake --build build --parallel
 ```
 
 ### Build Configurations (`Debug` / `Release`)
@@ -75,39 +73,20 @@ Single-config examples:
 
 ```bash
 cmake -B build -DCMAKE_BUILD_TYPE=Debug .
-cmake --build build --parallel 4
+cmake --build build --parallel
 ```
 
 ```bash
 cmake -B build -DCMAKE_BUILD_TYPE=Release .
-cmake --build build --parallel 4
+cmake --build build --parallel
 ```
 
 Multi-config examples:
 
 ```bash
 cmake -B build .
-cmake --build build --config Debug --parallel 4
-cmake --build build --config Release --parallel 4
-```
-
-### Option B: Use prebuilt `libui.a` (no Meson required)
-
-CMake supports a prebuilt `libui` flow:
-
-- `LUDO_USE_PREBUILT_LIBUI=ON`
-- `LUDO_LIBUI_LIBRARY=<path to libui.a>`
-- `LUDO_LIBUI_INCLUDE_DIR=<path containing ui.h>`
-
-Example:
-
-```bash
-cmake -B build . \
-  -DLUDO_USE_PREBUILT_LIBUI=ON \
-  -DLUDO_LIBUI_LIBRARY="C:/path/to/libui.a" \
-  -DLUDO_LIBUI_INCLUDE_DIR="C:/path/to/libui/headers"
-
-cmake --build build --parallel 4
+cmake --build build --config Debug --parallel
+cmake --build build --config Release --parallel
 ```
 
 ## Run
@@ -199,9 +178,9 @@ taskkill /IM ludo.exe /F
 cmake --build build --target ludo --parallel 4
 ```
 
-### 3) Meson not found
+### 3) Meson note
 
-Either install Meson or use prebuilt `libui` mode (Option B above).
+This repository builds `libui-ng` from source using CMake; Meson is not required to build LUDO.
 
 ### 4) Plugins not loaded
 

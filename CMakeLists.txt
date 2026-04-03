@@ -52,9 +52,6 @@ find_package(Threads REQUIRED)
 # ------------------------------------------------------------
 # Build options
 # ------------------------------------------------------------
-option(LUDO_USE_PREBUILT_LIBUI "Use a prebuilt libui static library instead of building with Meson" OFF)
-set(LUDO_LIBUI_LIBRARY "" CACHE FILEPATH "Path to prebuilt libui static library (e.g. C:/path/to/libui.a)")
-set(LUDO_LIBUI_INCLUDE_DIR "${CMAKE_SOURCE_DIR}/third_party/libui-ng" CACHE PATH "Path to libui headers (ui.h)")
 
 # ------------------------------------------------------------
 # zlib 1.2.8 (built from vendored source, static)
@@ -349,69 +346,57 @@ endfunction()
 # ------------------------------------------------------------
 set(LIBUI_SRC_DIR ${CMAKE_SOURCE_DIR}/third_party/libui-ng)
 
-if(LUDO_USE_PREBUILT_LIBUI)
-    if(NOT EXISTS "${LUDO_LIBUI_LIBRARY}")
-        message(FATAL_ERROR "LUDO_USE_PREBUILT_LIBUI=ON but LUDO_LIBUI_LIBRARY does not exist: ${LUDO_LIBUI_LIBRARY}")
-    endif()
+# 1. Gather Source Files (Capturing both .c and .cpp)
+file(GLOB LIBUI_COMMON_SOURCES 
+    "${LIBUI_SRC_DIR}/common/*.c"
+    "${LIBUI_SRC_DIR}/common/*.cpp"
+)
 
-    add_library(libui_static STATIC IMPORTED GLOBAL)
-    set_target_properties(libui_static PROPERTIES
-        IMPORTED_LOCATION ${LUDO_LIBUI_LIBRARY}
-        INTERFACE_INCLUDE_DIRECTORIES ${LUDO_LIBUI_INCLUDE_DIR}
-    )
+# Remove ONLY the specific conflicting legacy files
+list(REMOVE_ITEM LIBUI_COMMON_SOURCES 
+    "${LIBUI_SRC_DIR}/common/OLD_table.c"
+    "${LIBUI_SRC_DIR}/common/test.c"
+)
+
+if(WIN32)
+    # On Windows, we need the .cpp files from the windows directory.
+    # CRITICAL: We no longer filter out "main" because windows/main.cpp 
+    # contains the core uiMain/uiQuit implementation.
+    file(GLOB LIBUI_OS_SOURCES "${LIBUI_SRC_DIR}/windows/*.cpp")
+elseif(APPLE)
+    file(GLOB LIBUI_OS_SOURCES "${LIBUI_SRC_DIR}/darwin/*.m")
 else()
-    # 1. Gather Source Files (Capturing both .c and .cpp)
-    file(GLOB LIBUI_COMMON_SOURCES 
-        "${LIBUI_SRC_DIR}/common/*.c"
-        "${LIBUI_SRC_DIR}/common/*.cpp"
-    )
-    
-    # Remove ONLY the specific conflicting legacy files
-    list(REMOVE_ITEM LIBUI_COMMON_SOURCES 
-        "${LIBUI_SRC_DIR}/common/OLD_table.c"
-        "${LIBUI_SRC_DIR}/common/test.c"
-    )
-    
-    if(WIN32)
-        # On Windows, we need the .cpp files from the windows directory.
-        # CRITICAL: We no longer filter out "main" because windows/main.cpp 
-        # contains the core uiMain/uiQuit implementation.
-        file(GLOB LIBUI_OS_SOURCES "${LIBUI_SRC_DIR}/windows/*.cpp")
-    elseif(APPLE)
-        file(GLOB LIBUI_OS_SOURCES "${LIBUI_SRC_DIR}/darwin/*.m")
-    else()
-        file(GLOB LIBUI_OS_SOURCES "${LIBUI_SRC_DIR}/unix/*.c")
-    endif()
+    file(GLOB LIBUI_OS_SOURCES "${LIBUI_SRC_DIR}/unix/*.c")
+endif()
 
-    # 2. Create the Static Target
-    add_library(libui_static STATIC ${LIBUI_COMMON_SOURCES} ${LIBUI_OS_SOURCES})
-    target_include_directories(libui_static PUBLIC ${LIBUI_SRC_DIR})
-    
-    # 3. Apply settings from libui's original meson.build
-    target_compile_definitions(libui_static PRIVATE libui_EXPORTS _UI_STATIC)
-    
-    if(MSVC)
-        target_compile_options(libui_static PRIVATE /wd4100 /bigobj)
-    else()
-        # Ensure we don't treat warnings as errors for external library code
-        target_compile_options(libui_static PRIVATE -Wno-unused-parameter -Wno-switch -Wno-deprecated-declarations)
-    endif()
+# 2. Create the Static Target
+add_library(libui_static STATIC ${LIBUI_COMMON_SOURCES} ${LIBUI_OS_SOURCES})
+target_include_directories(libui_static PUBLIC ${LIBUI_SRC_DIR})
 
-    # 4. OS-Specific Linking (Propagated to Ludo)
-    if(WIN32)
-        target_link_libraries(libui_static INTERFACE
-            user32 kernel32 gdi32 comctl32 uxtheme msimg32 winmm
-            comdlg32 d2d1 dwrite ole32 oleaut32 oleacc usp10
-            gdiplus windowscodecs
-        )
-    elseif(APPLE)
-        target_link_libraries(libui_static INTERFACE "-framework Cocoa")
-    else()
-        find_package(PkgConfig REQUIRED)
-        pkg_check_modules(GTK3 REQUIRED gtk+-3.0)
-        target_include_directories(libui_static PRIVATE ${GTK3_INCLUDE_DIRS})
-        target_link_libraries(libui_static INTERFACE ${GTK3_LIBRARIES} m dl)
-    endif()
+# 3. Apply settings from libui's original meson.build
+target_compile_definitions(libui_static PRIVATE libui_EXPORTS _UI_STATIC)
+
+if(MSVC)
+    target_compile_options(libui_static PRIVATE /wd4100 /bigobj)
+else()
+    # Ensure we don't treat warnings as errors for external library code
+    target_compile_options(libui_static PRIVATE -Wno-unused-parameter -Wno-switch -Wno-deprecated-declarations)
+endif()
+
+# 4. OS-Specific Linking (Propagated to Ludo)
+if(WIN32)
+    target_link_libraries(libui_static INTERFACE
+        user32 kernel32 gdi32 comctl32 uxtheme msimg32 winmm
+        comdlg32 d2d1 dwrite ole32 oleaut32 oleacc usp10
+        gdiplus windowscodecs
+    )
+elseif(APPLE)
+    target_link_libraries(libui_static INTERFACE "-framework Cocoa")
+else()
+    find_package(PkgConfig REQUIRED)
+    pkg_check_modules(GTK3 REQUIRED gtk+-3.0)
+    target_include_directories(libui_static PRIVATE ${GTK3_INCLUDE_DIRS})
+    target_link_libraries(libui_static INTERFACE ${GTK3_LIBRARIES} m dl)
 endif()
 
 # ------------------------------------------------------------
@@ -514,6 +499,15 @@ elseif(APPLE)
         "-framework Cocoa"
         "-framework CoreFoundation"
     )
+endif()
+
+# Set Debug output executable name to ludo-debug for Debug builds
+if(CMAKE_CONFIGURATION_TYPES)
+    set_target_properties(ludo PROPERTIES OUTPUT_NAME_DEBUG ludo-debug)
+else()
+    if(CMAKE_BUILD_TYPE STREQUAL "Debug")
+        set_target_properties(ludo PROPERTIES OUTPUT_NAME ludo-debug)
+    endif()
 endif()
 
 # Output Copy Commands
