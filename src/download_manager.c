@@ -26,35 +26,43 @@
 #define DB_MAX_BYTES 10240   /* 10 KB — archive trigger */
 
 /* ------------------------------------------------------------------ */
-/* Debug logging (writes to dm_debug.log; safe from any thread)        */
+/* Debug logging (writes to dm_debug.log; thread-safe, runtime toggle) */
 /* ------------------------------------------------------------------ */
 
 #include <stdarg.h>
 #include "dm_log.h"
 
-FILE *g_log_fp = NULL;
+static FILE *g_log_fp = NULL;
+static ludo_mutex_t g_log_mutex;
+static int g_log_mutex_init = 0;
+static int g_log_enabled = 0; /* runtime toggle: enabled in DEBUG or when LUDO_DEBUG=1 */
 
+/* Forward declarations for platform-aware helpers defined later in this file */
+static FILE *dm_fopen_utf8(const char *path, const char *mode);
 #ifdef _WIN32
-#include <windows.h>   /* for CRITICAL_SECTION */
-static CRITICAL_SECTION g_log_cs;
-static int g_log_cs_init = 0;
-static FILE *dm_fopen_utf8(const char *path, const char *mode);
 static int dm_stat_utf8(const char *path, struct _stat64 *st);
-static int dm_rename_utf8(const char *old_path, const char *new_path);
-static int dm_remove_utf8(const char *path);
 #else
-static FILE *dm_fopen_utf8(const char *path, const char *mode);
 static int dm_stat_utf8(const char *path, struct stat *st);
+#endif
 static int dm_rename_utf8(const char *old_path, const char *new_path);
 static int dm_remove_utf8(const char *path);
-#endif
 
 void dm_log_init(void) {
-#ifdef _WIN32
-    if (!g_log_cs_init) { InitializeCriticalSection(&g_log_cs); g_log_cs_init = 1; }
+    if (!g_log_mutex_init) { ludo_mutex_init(&g_log_mutex); g_log_mutex_init = 1; }
+
+#ifdef DEBUG
+    g_log_enabled = 1;
+#else
+    /* Allow users to enable debug logging at runtime via environment variable */
+    const char *env = getenv("LUDO_DEBUG");
+    g_log_enabled = (env && (env[0] == '1' || env[0] == 'y' || env[0] == 'Y' ||
+                             env[0] == 't' || env[0] == 'T'));
 #endif
-    g_log_fp = dm_fopen_utf8("dm_debug.log", "a");
-    if (!g_log_fp) return;
+
+    if (!g_log_enabled) return;
+
+    g_log_fp = dm_fopen_utf8("ludo.log", "a");
+    if (!g_log_fp) { g_log_enabled = 0; return; }
     /* Header line so runs are separated */
     fprintf(g_log_fp, "\n===== dm session start =====\n");
     fflush(g_log_fp);
@@ -62,9 +70,9 @@ void dm_log_init(void) {
 
 void dm_log(const char *fmt, ...) {
     if (!g_log_fp) return;
-#ifdef _WIN32
-    if (g_log_cs_init) EnterCriticalSection(&g_log_cs);
-#endif
+    if (!g_log_mutex_init) return;
+
+    ludo_mutex_lock(&g_log_mutex);
     /* Timestamp */
     time_t now = time(NULL);
     struct tm *tm_info = localtime(&now);
@@ -78,22 +86,18 @@ void dm_log(const char *fmt, ...) {
     va_end(ap);
     fprintf(g_log_fp, "\n");
     fflush(g_log_fp);
-#ifdef _WIN32
-    if (g_log_cs_init) LeaveCriticalSection(&g_log_cs);
-#endif
+    ludo_mutex_unlock(&g_log_mutex);
 }
 
 void dm_log_close(void) {
     if (!g_log_fp) return;
-#ifdef _WIN32
-    if (g_log_cs_init) EnterCriticalSection(&g_log_cs);
-#endif
+    if (!g_log_mutex_init) return;
+
+    ludo_mutex_lock(&g_log_mutex);
     fprintf(g_log_fp, "===== dm session end =====\n");
     fclose(g_log_fp);
     g_log_fp = NULL;
-#ifdef _WIN32
-    if (g_log_cs_init) LeaveCriticalSection(&g_log_cs);
-#endif
+    ludo_mutex_unlock(&g_log_mutex);
 }
 
 /* ------------------------------------------------------------------ */
@@ -1292,7 +1296,7 @@ static void *worker_thread(void *arg) {
 
 void download_manager_init(int num_workers, const char *output_dir) {
     const LudoConfig *cfg = ludo_config_get();
-    dm_log_init();
+    // dm_log_init();
     dm_log("[init] num_workers=%d  output_dir=%s",
            num_workers, output_dir ? output_dir : "(null -> ./downloads/)");
 
@@ -1417,7 +1421,7 @@ void download_manager_shutdown(void) {
     g_mgr.shutdown_complete = 1;
     g_mgr.initialized = 0;
     dm_log("[shutdown] complete");
-    dm_log_close();
+    // dm_log_close();
 }
 
 int download_manager_add(const char *url, const char *output_dir, DownloadMode mode,
@@ -1580,8 +1584,8 @@ bool download_manager_remove(int id) {
             } else {
                 /* Safe to delete immediately */
                 *prev = target->next;
-                free(target);
                 gui_log(LOG_SUCCESS, "%s removed", target->status.filename);
+                free(target);
                 result = true;
             }
             break;

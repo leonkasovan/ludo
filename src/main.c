@@ -3,7 +3,7 @@
 #include "download_manager.h"
 #include "config.h"
 #include "thread_queue.h"
-
+#include "dm_log.h"
 #include "ui.h"
 
 #include <stdio.h>
@@ -65,6 +65,59 @@ int main(int argc, char *argv[])
         fprintf(stderr, "Failed to load config.ini\n");
     }
     const LudoConfig *cfg = ludo_config_get();
+    dm_log_init();
+
+    /* -------------------------------------------------------------- */
+    /* Early-Check: Headless script mode                              */
+    /* -------------------------------------------------------------- */
+    int run_script = 0;
+    char *script_path = NULL;
+
+#ifdef _WIN32
+    int argc_w = 0;
+    LPWSTR *argv_w_pre = CommandLineToArgvW(GetCommandLineW(), &argc_w);
+    if (argv_w_pre) {
+        for (int i = 1; i < argc_w; i++) {
+            char arg_utf8[4096];
+            if (wide_to_utf8(argv_w_pre[i], arg_utf8, sizeof(arg_utf8)) && arg_utf8[0] != '\0') {
+                if (strcmp(arg_utf8, "--script") == 0 || strcmp(arg_utf8, "-s") == 0) {
+                    if (i + 1 < argc_w) {
+                        char next_utf8[4096];
+                        if (wide_to_utf8(argv_w_pre[i+1], next_utf8, sizeof(next_utf8))) {
+                            script_path = malloc(strlen(next_utf8) + 1);
+                            strcpy(script_path, next_utf8);
+                            run_script = 1;
+                        }
+                    }
+                    break;
+                }
+            }
+        }
+        LocalFree(argv_w_pre);
+    }
+#else
+    for (int i = 1; i < argc; i++) {
+        if (strcmp(argv[i], "--script") == 0 || strcmp(argv[i], "-s") == 0) {
+            if (i + 1 < argc) {
+                script_path = malloc(strlen(argv[i+1]) + 1);
+                strcpy(script_path, argv[i+1]);
+                run_script = 1;
+            }
+            break;
+        }
+    }
+#endif
+
+    if (run_script && script_path) {
+        /* Run headlessly and exit */
+        lua_engine_init();
+        lua_engine_run_script(script_path);
+        dm_log("Script %s execution completed", script_path);
+        lua_engine_shutdown();
+        free(script_path);
+        ludo_config_shutdown();
+        return 0;
+    }
 
     /* -------------------------------------------------------------- */
     /* 1. Initialise libui                                              */
@@ -117,7 +170,6 @@ int main(int argc, char *argv[])
     /* --------------------------------------------------------------------- */
 #ifdef _WIN32
     /* Convert wide Windows argv to UTF-8 so URLs survive non-ASCII input. */
-    int argc_w = 0;
     LPWSTR *argv_w = CommandLineToArgvW(GetCommandLineW(), &argc_w);
     if (argv_w) {
         for (int i = 1; i < argc_w; i++) {
@@ -151,7 +203,7 @@ int main(int argc, char *argv[])
     lua_engine_shutdown();
     task_queue_destroy(&g_url_queue);
     ludo_config_shutdown();
-
     uiUninit();
+    dm_log_close();
     return 0;
 }

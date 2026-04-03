@@ -600,7 +600,23 @@ void gui_log(LogLevel level, const char *fmt, ...) {
     fprintf(stderr, "[gui_log][%d] %s\n", (int)level, pkt->msg);
     fflush(stderr);
 #endif
-    uiQueueMain(log_on_main, pkt);
+
+    /* Build the prefix for the log file */
+    const char *prefix;
+    switch (pkt->level) {
+        case LOG_SUCCESS: prefix = "[SUCCESS] "; break;
+        case LOG_WARNING: prefix = "[WARNING] "; break;
+        case LOG_ERROR:   prefix = "[ERROR]  "; break;
+        default:          prefix = "[INFO] "; break;
+    }
+
+    /* Queue to GUI if it was initialized, otherwise free the packet */
+    if (g_gui.log_view) {
+        uiQueueMain(log_on_main, pkt);
+    } else {
+        dm_log("%s%s", prefix, pkt->msg);
+        free(pkt);
+    }
 }
 
 static void append_multiline_text(uiMultilineEntry *entry, const char *text, int newline) {

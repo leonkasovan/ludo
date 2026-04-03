@@ -379,3 +379,31 @@ void lua_engine_info(void) {
     snprintf(msg, sizeof(msg), "%d plugin(s) loaded ", g_engine.count);
     gui_log(LOG_INFO, "%s", msg);
 }
+
+/* Run a specific Lua script file headlessly. Returns 1 on success, 0 on error. */
+int lua_engine_run_script(const char *path) {
+    lua_State *L = create_lua_state();
+    if (!L) {
+        gui_log(LOG_ERROR, "[lua_engine] failed to create Lua state for script");
+        return 0;
+    }
+
+    /* Load the file */
+    if (lua_loadfile_utf8(L, path) != LUA_OK) {
+        const char *e = lua_tostring(L, -1);
+        gui_log(LOG_ERROR, "[lua_engine] load error %s: %s", path, e ? e : "?");
+        lua_close(L);
+        return 0;
+    }
+
+    /* Execute the chunk */
+    if (lua_pcall(L, 0, 0, 0) != LUA_OK) {
+        const char *e = lua_tostring(L, -1);
+        gui_log(LOG_ERROR, "[lua_engine] exec error %s: %s", path, e ? e : "?");
+        lua_close(L);
+        return 0;
+    }
+
+    lua_close(L);
+    return 1;
+}
