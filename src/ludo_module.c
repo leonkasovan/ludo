@@ -12,14 +12,16 @@ static char ludo_tester_bindings_key;
 static char ludo_current_source_url_key;
 
 /* ------------------------------------------------------------------ */
-/* ludo.newDownload(url, output_dir, mode) -> id, status, output_path */
+/* ludo.newDownload(url, output_dir, mode [, filename])               */
+/*   -> id, status, output_path                                        */
 /* ------------------------------------------------------------------ */
 
 static int lua_ludo_new_download(lua_State *L) {
-    const char *url        = luaL_checkstring(L, 1);
-    const char *output_dir = luaL_optstring(L, 2, NULL);
+    const char *url          = luaL_checkstring(L, 1);
+    const char *output_dir   = luaL_optstring(L, 2, NULL);
     const char *original_url;
-    int         mode       = (int)luaL_optinteger(L, 3, DOWNLOAD_NOW);
+    int         mode         = (int)luaL_optinteger(L, 3, DOWNLOAD_NOW);
+    const char *hint_filename = luaL_optstring(L, 4, NULL);
     DownloadAddResult result;
 
     /* Use default output dir if none provided */
@@ -30,7 +32,8 @@ static int lua_ludo_new_download(lua_State *L) {
     lua_gettable(L, LUA_REGISTRYINDEX);
     original_url = lua_tostring(L, -1);
     memset(&result, 0, sizeof(result));
-    int id = download_manager_add(url, output_dir, (DownloadMode)mode, original_url, &result);
+    int id = download_manager_add(url, output_dir, (DownloadMode)mode, original_url,
+                                  hint_filename, &result);
     lua_pop(L, 1);
     if (id < 0) result.id = id;
     lua_pushinteger(L, (lua_Integer)result.id);

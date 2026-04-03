@@ -29,9 +29,9 @@ local PLAYER_CLIENTS = {
         api_host = "https://www.youtube.com",
         client_name = "ANDROID_VR",
         client_number = 28,
-        client_version = "1.65.10",
+        client_version = "1.71.26",
         android_sdk_version = 32,
-        user_agent = "com.google.android.apps.youtube.vr.oculus/1.65.10 (Linux; U; Android 12L; eureka-user Build/SQ3A.220605.009.A1) gzip",
+        user_agent = "com.google.android.apps.youtube.vr.oculus/1.71.26 (Linux; U; Android 12L; eureka-user Build/SQ3A.220605.009.A1) gzip",
         os_name = "Android",
         os_version = "12L",
         device_make = "Oculus",
@@ -75,304 +75,10 @@ local AUDIO_QUALITY_SCORE = {
     AUDIO_QUALITY_HIGH = 30,
 }
 
-local JSON_NULL = {}
+local json = json or require("json")
 
 local function trim(s)
     return (tostring(s or ""):gsub("^%s+", ""):gsub("%s+$", ""))
-end
-
-local function is_digit(ch)
-    return ch ~= nil and ch ~= "" and ch:match("%d") ~= nil
-end
-
-local function utf8_char(codepoint)
-    if codepoint <= 0x7F then
-        return string.char(codepoint)
-    end
-    if codepoint <= 0x7FF then
-        return string.char(
-            0xC0 + math.floor(codepoint / 0x40),
-            0x80 + (codepoint % 0x40)
-        )
-    end
-    if codepoint <= 0xFFFF then
-        return string.char(
-            0xE0 + math.floor(codepoint / 0x1000),
-            0x80 + (math.floor(codepoint / 0x40) % 0x40),
-            0x80 + (codepoint % 0x40)
-        )
-    end
-    if codepoint <= 0x10FFFF then
-        return string.char(
-            0xF0 + math.floor(codepoint / 0x40000),
-            0x80 + (math.floor(codepoint / 0x1000) % 0x40),
-            0x80 + (math.floor(codepoint / 0x40) % 0x40),
-            0x80 + (codepoint % 0x40)
-        )
-    end
-    return utf8_char(0xFFFD)
-end
-
-local function json_error(index, message)
-    error("JSON decode error at character " .. tostring(index) .. ": " .. message)
-end
-
-local function skip_json_whitespace(text, index)
-    while index <= #text do
-        local ch = text:sub(index, index)
-        if ch ~= " " and ch ~= "\n" and ch ~= "\r" and ch ~= "\t" then
-            break
-        end
-        index = index + 1
-    end
-    return index
-end
-
-local parse_json_value
-
-local function parse_json_string(text, index)
-    index = index + 1
-    local parts = {}
-    local chunk_start = index
-
-    while index <= #text do
-        local ch = text:sub(index, index)
-
-        if ch == '"' then
-            table.insert(parts, text:sub(chunk_start, index - 1))
-            return table.concat(parts), index + 1
-        end
-
-        if ch == "\\" then
-            table.insert(parts, text:sub(chunk_start, index - 1))
-
-            local esc = text:sub(index + 1, index + 1)
-            if esc == "" then
-                json_error(index, "unterminated escape sequence")
-            elseif esc == '"' or esc == "\\" or esc == "/" then
-                table.insert(parts, esc)
-                index = index + 2
-            elseif esc == "b" then
-                table.insert(parts, "\b")
-                index = index + 2
-            elseif esc == "f" then
-                table.insert(parts, "\f")
-                index = index + 2
-            elseif esc == "n" then
-                table.insert(parts, "\n")
-                index = index + 2
-            elseif esc == "r" then
-                table.insert(parts, "\r")
-                index = index + 2
-            elseif esc == "t" then
-                table.insert(parts, "\t")
-                index = index + 2
-            elseif esc == "u" then
-                local hex = text:sub(index + 2, index + 5)
-                if not hex:match("^%x%x%x%x$") then
-                    json_error(index, "invalid unicode escape")
-                end
-
-                local codepoint = tonumber(hex, 16)
-                index = index + 6
-
-                if codepoint >= 0xD800 and codepoint <= 0xDBFF and text:sub(index, index + 1) == "\\u" then
-                    local low_hex = text:sub(index + 2, index + 5)
-                    if low_hex:match("^%x%x%x%x$") then
-                        local low = tonumber(low_hex, 16)
-                        if low >= 0xDC00 and low <= 0xDFFF then
-                            codepoint = 0x10000
-                                + (codepoint - 0xD800) * 0x400
-                                + (low - 0xDC00)
-                            index = index + 6
-                        end
-                    end
-                end
-
-                table.insert(parts, utf8_char(codepoint))
-            else
-                json_error(index, "unsupported escape \\" .. esc)
-            end
-
-            chunk_start = index
-        else
-            local byte = string.byte(ch)
-            if byte and byte < 32 then
-                json_error(index, "unescaped control character")
-            end
-            index = index + 1
-        end
-    end
-
-    json_error(index, "unterminated string")
-end
-
-local function parse_json_number(text, index)
-    local start_index = index
-    local ch = text:sub(index, index)
-
-    if ch == "-" then
-        index = index + 1
-        ch = text:sub(index, index)
-    end
-
-    if ch == "0" then
-        index = index + 1
-    elseif is_digit(ch) then
-        repeat
-            index = index + 1
-            ch = text:sub(index, index)
-        until not is_digit(ch)
-    else
-        json_error(index, "invalid number")
-    end
-
-    ch = text:sub(index, index)
-    if ch == "." then
-        index = index + 1
-        ch = text:sub(index, index)
-        if not is_digit(ch) then
-            json_error(index, "invalid fractional number")
-        end
-        repeat
-            index = index + 1
-            ch = text:sub(index, index)
-        until not is_digit(ch)
-    end
-
-    ch = text:sub(index, index)
-    if ch == "e" or ch == "E" then
-        index = index + 1
-        ch = text:sub(index, index)
-        if ch == "+" or ch == "-" then
-            index = index + 1
-            ch = text:sub(index, index)
-        end
-        if not is_digit(ch) then
-            json_error(index, "invalid exponent")
-        end
-        repeat
-            index = index + 1
-            ch = text:sub(index, index)
-        until not is_digit(ch)
-    end
-
-    local value = tonumber(text:sub(start_index, index - 1))
-    if value == nil then
-        json_error(start_index, "could not parse number")
-    end
-
-    return value, index
-end
-
-local function parse_json_array(text, index)
-    index = skip_json_whitespace(text, index + 1)
-    local result = {}
-
-    if text:sub(index, index) == "]" then
-        return result, index + 1
-    end
-
-    while true do
-        local value
-        value, index = parse_json_value(text, index)
-        table.insert(result, value)
-
-        index = skip_json_whitespace(text, index)
-        local ch = text:sub(index, index)
-
-        if ch == "," then
-            index = skip_json_whitespace(text, index + 1)
-        elseif ch == "]" then
-            return result, index + 1
-        else
-            json_error(index, "expected ',' or ']'")
-        end
-    end
-end
-
-local function parse_json_object(text, index)
-    index = skip_json_whitespace(text, index + 1)
-    local result = {}
-
-    if text:sub(index, index) == "}" then
-        return result, index + 1
-    end
-
-    while true do
-        if text:sub(index, index) ~= '"' then
-            json_error(index, "expected string key")
-        end
-
-        local key
-        key, index = parse_json_string(text, index)
-        index = skip_json_whitespace(text, index)
-
-        if text:sub(index, index) ~= ":" then
-            json_error(index, "expected ':' after object key")
-        end
-
-        index = skip_json_whitespace(text, index + 1)
-
-        local value
-        value, index = parse_json_value(text, index)
-        result[key] = value
-
-        index = skip_json_whitespace(text, index)
-        local ch = text:sub(index, index)
-
-        if ch == "," then
-            index = skip_json_whitespace(text, index + 1)
-        elseif ch == "}" then
-            return result, index + 1
-        else
-            json_error(index, "expected ',' or '}'")
-        end
-    end
-end
-
-parse_json_value = function(text, index)
-    index = skip_json_whitespace(text, index)
-    local ch = text:sub(index, index)
-
-    if ch == '"' then
-        return parse_json_string(text, index)
-    elseif ch == "{" then
-        return parse_json_object(text, index)
-    elseif ch == "[" then
-        return parse_json_array(text, index)
-    elseif ch == "-" or is_digit(ch) then
-        return parse_json_number(text, index)
-    elseif text:sub(index, index + 3) == "true" then
-        return true, index + 4
-    elseif text:sub(index, index + 4) == "false" then
-        return false, index + 5
-    elseif text:sub(index, index + 3) == "null" then
-        return JSON_NULL, index + 4
-    end
-
-    json_error(index, "unexpected value")
-end
-
-local function json_decode(text)
-    local value, index = parse_json_value(text, 1)
-    index = skip_json_whitespace(text, index)
-    if index <= #text then
-        json_error(index, "trailing characters")
-    end
-    return value
-end
-
-local function json_escape(str)
-    str = tostring(str or "")
-    str = str:gsub("\\", "\\\\")
-    str = str:gsub('"', '\\"')
-    str = str:gsub("\b", "\\b")
-    str = str:gsub("\f", "\\f")
-    str = str:gsub("\n", "\\n")
-    str = str:gsub("\r", "\\r")
-    str = str:gsub("\t", "\\t")
-    return '"' .. str .. '"'
 end
 
 local function normalize_json_response(text)
@@ -455,11 +161,20 @@ local function extract_page_value(page_body, key)
     if type(page_body) ~= "string" or page_body == "" then
         return nil
     end
-    return page_body:match('"' .. key .. '"%s*:%s*"([^"]+)"')
+    return page_body:match('"' .. key .. '"%s*:%s*"([^\"]+)"')
 end
 
 local function load_api_context(watch_url)
     local pages_to_try = { watch_url, MUSIC_HOME_URL }
+    -- Also try the canonical www.youtube.com watch page when possible; some
+    -- fields (INNERTUBE_API_KEY, signatureTimestamp) are present there.
+    local p = http.parse_url(watch_url)
+    if p and p.query and p.host and p.host:match("music%.youtube%.com") then
+        local q = parse_query(p.query)
+        if q and q.v and q.v ~= "" then
+            table.insert(pages_to_try, 2, "https://www.youtube.com/watch?v=" .. q.v)
+        end
+    end
     local last_error = nil
 
     for _, candidate_url in ipairs(pages_to_try) do
@@ -467,11 +182,24 @@ local function load_api_context(watch_url)
         if page then
             local api_key = extract_page_value(page.body, "INNERTUBE_API_KEY")
             if api_key then
-                return {
+                local ctx = {
                     api_key = api_key,
                     visitor_data = extract_page_value(page.body, "VISITOR_DATA"),
                     referer = page.final_url,
                 }
+
+                -- API key/visitor/STS discovered (do not log sensitive values in normal operation)
+
+                -- Try to extract signatureTimestamp (sts) from the page (several patterns)
+                local sts = page.body:match('"sts"%s*:%s*(%d+)')
+                         or page.body:match('"STS"%s*:%s*(%d+)')
+                         or page.body:match('var%s+sts%s*=%s*(%d+)')
+                         or page.body:match('signatureTimestamp%s*[:=]%s*(%d+)')
+                if sts then
+                    ctx.signatureTimestamp = tonumber(sts)
+                end
+
+                return ctx
             end
             last_error = "Could not find INNERTUBE_API_KEY on " .. candidate_url
         else
@@ -482,55 +210,44 @@ local function load_api_context(watch_url)
     return nil, last_error or "Could not load Music YouTube configuration"
 end
 
-local function build_player_request(video_id, client)
-    local client_fields = {
-        '"hl":', json_escape(client.hl), ",",
-        '"gl":', json_escape(client.gl), ",",
-        '"clientName":', json_escape(client.client_name), ",",
-        '"clientVersion":', json_escape(client.client_version),
+local function build_player_request(video_id, client, api_context)
+    local req = {
+        videoId = video_id,
+        context = {
+            client = {
+                hl = client.hl,
+                gl = client.gl,
+                clientName = client.client_name,
+                clientVersion = client.client_version,
+            }
+        },
+        playbackContext = {
+            contentPlaybackContext = {
+                html5Preference = "HTML5_PREF_WANTS",
+            }
+        },
+        contentCheckOk = true,
+        racyCheckOk = true,
     }
 
-    if client.android_sdk_version then
-        table.insert(client_fields, ',')
-        table.insert(client_fields, '"androidSdkVersion":')
-        table.insert(client_fields, tostring(client.android_sdk_version))
-    end
-    if client.user_agent then
-        table.insert(client_fields, ',')
-        table.insert(client_fields, '"userAgent":')
-        table.insert(client_fields, json_escape(client.user_agent))
-    end
-    if client.os_name then
-        table.insert(client_fields, ',')
-        table.insert(client_fields, '"osName":')
-        table.insert(client_fields, json_escape(client.os_name))
-    end
-    if client.os_version then
-        table.insert(client_fields, ',')
-        table.insert(client_fields, '"osVersion":')
-        table.insert(client_fields, json_escape(client.os_version))
-    end
-    if client.device_make then
-        table.insert(client_fields, ',')
-        table.insert(client_fields, '"deviceMake":')
-        table.insert(client_fields, json_escape(client.device_make))
-    end
-    if client.device_model then
-        table.insert(client_fields, ',')
-        table.insert(client_fields, '"deviceModel":')
-        table.insert(client_fields, json_escape(client.device_model))
+    local c = req.context.client
+    if client.android_sdk_version then c.androidSdkVersion = client.android_sdk_version end
+    if client.user_agent then c.userAgent = client.user_agent end
+    if client.os_name then c.osName = client.os_name end
+    if client.os_version then c.osVersion = client.os_version end
+    if client.device_make then c.deviceMake = client.device_make end
+    if client.device_model then c.deviceModel = client.device_model end
+
+    -- Include timezone hints; default to UTC
+    c.timeZone = api_context and api_context.timeZone or "UTC"
+    c.utcOffsetMinutes = api_context and api_context.utcOffsetMinutes or 0
+
+    -- Include signatureTimestamp when available (commonly known as STS)
+    if api_context and api_context.signatureTimestamp then
+        req.playbackContext.contentPlaybackContext.signatureTimestamp = api_context.signatureTimestamp
     end
 
-    return table.concat({
-        "{",
-        '"videoId":', json_escape(video_id), ",",
-        '"context":{"client":{',
-        table.concat(client_fields),
-        "}}",
-        ',"contentCheckOk":true',
-        ',"racyCheckOk":true',
-        "}",
-    })
+    return json.encode(req)
 end
 
 local function fetch_player_response(video_id, api_context, client)
@@ -551,13 +268,16 @@ local function fetch_player_response(video_id, api_context, client)
         headers["X-Goog-Visitor-Id"] = api_context.visitor_data
     end
 
+    local request_body = build_player_request(video_id, client, api_context)
+
     local body, status = http.post(
         endpoint,
-        build_player_request(video_id, client),
+        request_body,
         {
             user_agent = client.user_agent or WATCH_USER_AGENT,
             follow_redirects = true,
             timeout = REQUEST_TIMEOUT,
+            http_version = 1,
             headers = headers,
         }
     )
@@ -566,7 +286,7 @@ local function fetch_player_response(video_id, api_context, client)
         return nil, "HTTP " .. tostring(status) .. " from the player API"
     end
 
-    local ok, data = pcall(json_decode, normalize_json_response(body))
+    local ok, data = pcall(json.decode, normalize_json_response(body))
     if not ok then
         return nil, trim(data)
     end
@@ -672,6 +392,34 @@ local function describe_format(fmt)
     return table.concat(parts, ", ")
 end
 
+-- Derive a safe output filename from the track title and selected format.
+-- Returns e.g. "Track Title.webm" or "Track Title.m4a".
+local function make_output_filename(title, fmt)
+    -- Pick an extension from the mime type
+    local ext = "audio"
+    local mime = tostring(fmt and fmt.mimeType or "")
+    if mime:match("^audio/webm") then
+        ext = "webm"
+    elseif mime:match("^audio/mp4") or mime:match("^audio/x%-m4a") then
+        ext = "m4a"
+    elseif mime:match("^audio/mpeg") then
+        ext = "mp3"
+    elseif mime:match("^audio/ogg") then
+        ext = "ogg"
+    elseif mime:match("^video/") then
+        ext = mime:match("^video/mp4") and "mp4" or "mkv"
+    end
+
+    -- Sanitise the title: remove characters forbidden in Windows filenames
+    local safe = tostring(title or "track")
+    safe = safe:gsub('[\\/:*?"<>|]', "_")
+    safe = safe:gsub("%s+", " ")
+    safe = trim(safe)
+    if safe == "" then safe = "track" end
+
+    return safe .. "." .. ext
+end
+
 local function is_downloader_safe_url(url)
     local parts = http.parse_url(url)
     if not parts or type(parts.query) ~= "string" then
@@ -720,7 +468,7 @@ local function pick_default_format(player_response)
                     and fmt.cipher == nil
                     and fmt.drmFamilies == nil then
 
-                    local is_safe = is_downloader_safe_url(fmt.url)
+                    local is_safe, reason = is_downloader_safe_url(fmt.url)
                     if not is_safe then
                         goto continue
                     end
@@ -808,7 +556,8 @@ function plugin.process(url)
         local id, status, output = ludo.newDownload(
             selected_format.url,
             ludo.getOutputDirectory(),
-            DOWNLOAD_MODE
+            DOWNLOAD_MODE,
+            make_output_filename(title or get_title(player_response, video_id), selected_format)
         )
 
         if status == 200 or status == 206 then

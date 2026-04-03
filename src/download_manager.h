@@ -89,9 +89,12 @@ void download_manager_prepare_for_shutdown(void);
 void download_manager_shutdown(void);
 
 /* Queue a new download. Returns the assigned download ID (>0) or -1 on error.
+   hint_filename: optional base filename (without directory) to use instead of
+                  the URL-derived name. Pass NULL to keep the default behaviour.
    When result is non-NULL, fills it with preflight status/output-path data. */
 int  download_manager_add(const char *url, const char *output_dir, DownloadMode mode,
-                          const char *original_url, DownloadAddResult *result);
+                          const char *original_url, const char *hint_filename,
+                          DownloadAddResult *result);
 
 /* Pause / resume / remove — may be called from the GUI thread */
 bool download_manager_pause(int id);

@@ -119,6 +119,18 @@ static struct curl_slist *apply_options(lua_State *L, CURL *curl, int opts_idx) 
         curl_easy_setopt(curl, CURLOPT_TIMEOUT, (long)lua_tonumber(L, -1));
     lua_pop(L, 1);
 
+    /* http_version (optional): numeric 1 => HTTP/1.1, 2 => HTTP/2.0 */
+    lua_getfield(L, opts_idx, "http_version");
+    if (lua_isnumber(L, -1)) {
+        int hv = (int)lua_tointeger(L, -1);
+        if (hv == 1) {
+            curl_easy_setopt(curl, CURLOPT_HTTP_VERSION, CURL_HTTP_VERSION_1_1);
+        } else if (hv == 2) {
+            curl_easy_setopt(curl, CURLOPT_HTTP_VERSION, CURL_HTTP_VERSION_2_0);
+        }
+    }
+    lua_pop(L, 1);
+
     /* headers table */
     lua_getfield(L, opts_idx, "headers");
     if (lua_istable(L, -1)) {

@@ -19,6 +19,7 @@ that returns a table with two functions: `validate(url)` and `process(url)`.
 
 1. [Lua Language Basics](#1-lua-language-basics)
 2. [Standard Lua Library](#2-standard-lua-library)
+3. [JSON Library (`json`)](#json-library-json)
 3. [HTTP Library (`http`)](#3-http-library)
 4. [Ludo Library (`ludo`)](#4-ludo-library)
 5. [UI Library (`ui`)](#5-ui-library)
@@ -357,6 +358,54 @@ bit32.extract(0xFF, 4, 4)   --> 15  (extract 4 bits from bit 4)
 
 ---
 
+## JSON Library (`json`)
+
+Ludo bundles a fast JSON implementation (Lua CJSON) exposed as the global
+`json` module. A "safe" wrapper is also available as `cjson_safe` which
+returns `nil, err` instead of throwing on parse/encode errors.
+
+**Key functions:**
+- `json.encode(value)` → string: serialise a Lua value (tables, numbers,
+    booleans, strings, `json.null`) to JSON. Use `json.null` to represent
+    JSON `null` in Lua tables.
+- `json.decode(text)` → lua value: parse a JSON string and return the Lua
+    representation. `json.decode` raises on malformed input — use
+    `pcall(json.decode, text)` to catch errors, or use `require("cjson_safe")`
+    to get the safe wrapper that returns `nil, err`.
+
+**Special values & behaviour:**
+- `json.null` — a lightuserdata sentinel used to represent JSON `null`.
+    Compare with `if v == json.null then ... end`.
+- The decoder enforces strict JSON syntax and will error on invalid input.
+
+**Configuration functions:** (each returns the previous/current value)
+- `json.encode_sparse_array(convert, ratio, safe)` — control sparse array
+    handling when encoding.
+- `json.encode_max_depth(n)` — maximum nesting allowed when encoding.
+- `json.decode_max_depth(n)` — maximum nesting allowed when decoding.
+- `json.encode_number_precision(n)` — number-to-string precision for encode.
+- `json.encode_keep_buffer(true|false)` — reuse internal encode buffer.
+- `json.encode_invalid_numbers(option)` — how to handle NaN/Inf when
+    encoding (`off`, `on`, or `null`).
+- `json.decode_invalid_numbers(option)` — whether to accept non-standard
+    numbers when decoding.
+
+**Examples**
+```lua
+local json = json or require("json")
+
+-- Encode a request body (used by plugins/youtube.lua)
+local body = json.encode({ videoId = vid, context = { client = { hl = "en" } } })
+
+-- Decode safely
+local ok, data = pcall(json.decode, normalize_json_response(response_body))
+if not ok then
+        print("JSON error:", data)
+end
+```
+
+---
+
 ## 3. HTTP Library
 
 The `http` module is registered as a global table. It provides HTTP client
@@ -644,18 +693,19 @@ Ludo's HTTP engine supports transparent decompression for responses with
 The `ludo` module provides download management and application logging. It is
 registered as a global table.
 
-### 4.1 `ludo.newDownload(url [, output_dir [, mode]])` -> id, status, output_path
+### 4.1 `ludo.newDownload(url [, output_dir [, mode [, filename]]])` -> id, status, output_path
 
 Enqueue a new download.
 
-This function now returns three values: the assigned download ID, the HTTP
+This function returns three values: the assigned download ID, the HTTP
 status from the preflight HEAD request, and the resolved output path.
 
 **Parameters:**
 - `url` (string) — The URL to download.
 - `output_dir` (string, optional) — Destination directory. Defaults to the
-  application's configured output directory.
+    application's configured output directory.
 - `mode` (number, optional) — Download mode constant. Defaults to `ludo.DOWNLOAD_NOW`.
+- `filename` (string, optional) — Suggested output filename (basename). When provided, Ludo will use this as the filename during preflight and resolution; the final path may be adjusted to avoid collisions.
 
 **Returns:**
 - `id` (number) - The assigned download ID for tracking.
@@ -676,6 +726,10 @@ local id = ludo.newDownload("https://example.com/file.zip", "C:\\Downloads")
 
 -- Queue the download
 local id = ludo.newDownload("https://example.com/file.zip", nil, ludo.DOWNLOAD_QUEUE)
+
+-- Suggest an output filename (basename)
+local id, status, output_path = ludo.newDownload("https://example.com/stream", nil, ludo.DOWNLOAD_NOW, "my_show_episode1.mp4")
+print(output_path)  -- e.g. C:\\Downloads\\my_show_episode1.mp4
 ```
 
 ### 4.2 `ludo.pauseDownload(id)`
@@ -1469,7 +1523,9 @@ end
 function plugin.process(url)
     -- Process the URL: fetch pages, extract links, enqueue downloads
     ludo.logInfo("Processing: " .. url)
-    ludo.newDownload(url)
+    ludo.newDownload(url) -- enqueue using resolved filename
+    -- Optionally pass a filename hint (basename):
+    -- ludo.newDownload(url, nil, nil, "suggested-filename.ext")
 end
 
 return plugin
@@ -1669,7 +1725,7 @@ return plugin
 
 | Function | Signature | Returns |
 |----------|-----------|---------|
-| `ludo.newDownload` | `(url [, dir [, mode]])` | `id, status, output_path` |
+| `ludo.newDownload` | `(url [, dir [, mode [, filename]]])` | `id, status, output_path` |
 | `ludo.pauseDownload` | `(id)` | — |
 | `ludo.removeDownload` | `(id)` | — |
 | `ludo.logError` | `(msg)` | — |

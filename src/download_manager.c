@@ -1425,7 +1425,8 @@ void download_manager_shutdown(void) {
 }
 
 int download_manager_add(const char *url, const char *output_dir, DownloadMode mode,
-                         const char *original_url, DownloadAddResult *result)
+                         const char *original_url, const char *hint_filename,
+                         DownloadAddResult *result)
 {
     (void)mode; /* DOWNLOAD_NOW vs DOWNLOAD_QUEUE handled via queue order */
     Download *d;
@@ -1461,7 +1462,11 @@ int download_manager_add(const char *url, const char *output_dir, DownloadMode m
         strncpy(d->output_dir, output_dir, sizeof(d->output_dir) - 1);
     else
         strncpy(d->output_dir, g_mgr.output_dir, sizeof(d->output_dir) - 1);
-    filename_from_url(url, d->status.filename, sizeof(d->status.filename));
+    if (hint_filename && hint_filename[0] != '\0')
+        strncpy(d->status.filename, hint_filename, sizeof(d->status.filename) - 1);
+    else
+        filename_from_url(url, d->status.filename, sizeof(d->status.filename));
+    d->status.filename[sizeof(d->status.filename) - 1] = '\0';
     d->status.state = DOWNLOAD_STATE_QUEUED;
     d->status.start_time = time(NULL);
     d->next = g_mgr.list;

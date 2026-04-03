@@ -33,7 +33,7 @@ The application lets you paste URLs in the GUI, then resolves and downloads them
 - Worker threads handle URL tasks, Lua processing, and downloads
 - Lua plugin contract:
   - `validate(url)` -> boolean
-  - `process(url)` -> typically calls `ludo.newDownload(...)`
+    - `process(url)` -> typically calls `ludo.newDownload(...)` (may provide an optional filename hint as the 4th argument)
 - GUI updates are marshalled back to main thread through `uiQueueMain()`
 
 ## Prerequisites
