@@ -3383,6 +3383,9 @@ static CURLcode ssh_connect(struct Curl_easy *data, bool *done)
   }
 
 #endif /* CURL_DISABLE_PROXY */
+  /* Set recv/send handlers: prefer SCP handlers when SCP is enabled. If
+     CURL_DISABLE_SCP is set at configure time, always use SFTP handlers. */
+#ifndef CURL_DISABLE_SCP
   if(conn->scheme->protocol & CURLPROTO_SCP) {
     conn->recv[FIRSTSOCKET] = scp_recv;
     conn->send[FIRSTSOCKET] = scp_send;
@@ -3391,6 +3394,10 @@ static CURLcode ssh_connect(struct Curl_easy *data, bool *done)
     conn->recv[FIRSTSOCKET] = sftp_recv;
     conn->send[FIRSTSOCKET] = sftp_send;
   }
+#else
+  conn->recv[FIRSTSOCKET] = sftp_recv;
+  conn->send[FIRSTSOCKET] = sftp_send;
+#endif
 
   if(data->set.ssh_compression &&
      libssh2_session_flag(sshc->ssh_session, LIBSSH2_FLAG_COMPRESS, 1) < 0) {
@@ -3427,6 +3434,8 @@ static CURLcode ssh_connect(struct Curl_easy *data, bool *done)
   return result;
 }
 
+/* SCP: optionally omitted when CURL_DISABLE_SCP is set at configure time. */
+#ifndef CURL_DISABLE_SCP
 /*
  ***********************************************************************
  *
@@ -3595,6 +3604,7 @@ static CURLcode scp_recv(struct Curl_easy *data, int sockindex,
 
   return result;
 }
+#endif /* CURL_DISABLE_SCP */
 
 /*
  * =============== SFTP ===============
@@ -3772,10 +3782,15 @@ static CURLcode ssh_do(struct Curl_easy *data, bool *done)
 
   Curl_pgrsReset(data);
 
+#ifndef CURL_DISABLE_SCP
   if(conn->scheme->protocol & CURLPROTO_SCP)
     result = scp_perform(data, &connected, done);
   else
     result = sftp_perform(data, &connected, done);
+#else
+  /* SCP support disabled at configure time: always use SFTP path. */
+  result = sftp_perform(data, &connected, done);
+#endif
 
   return result;
 }
@@ -3820,6 +3835,7 @@ static void ssh_attach(struct Curl_easy *data, struct connectdata *conn)
 /*
  * SCP protocol handler.
  */
+#ifndef CURL_DISABLE_SCP
 const struct Curl_protocol Curl_protocol_scp = {
   ssh_setup_connection,                 /* setup_connection */
   ssh_do,                               /* do_it */
@@ -3839,6 +3855,7 @@ const struct Curl_protocol Curl_protocol_scp = {
   ssh_attach,                           /* attach */
   ZERO_NULL,                            /* follow */
 };
+#endif /* CURL_DISABLE_SCP */
 
 /*
  * SFTP protocol handler.

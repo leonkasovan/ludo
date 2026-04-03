@@ -88,6 +88,9 @@
 /* disables HSTS support */
 #cmakedefine CURL_DISABLE_HSTS 1
 
+/* disables SCP protocol */
+#cmakedefine CURL_DISABLE_SCP 1
+
 /* disables HTTP */
 #cmakedefine CURL_DISABLE_HTTP 1
 

@@ -1978,7 +1978,7 @@ curl_add_if("SMBS"          NOT CURL_DISABLE_SMB AND _ssl_enabled AND
                             _use_curl_ntlm_core AND (SIZEOF_CURL_OFF_T GREATER 4))
 curl_add_if("SMTP"          NOT CURL_DISABLE_SMTP)
 curl_add_if("SMTPS"         NOT CURL_DISABLE_SMTP AND _ssl_enabled)
-curl_add_if("SCP"           USE_LIBSSH2 OR USE_LIBSSH)
+curl_add_if("SCP"           (USE_LIBSSH2 OR USE_LIBSSH) AND NOT CURL_DISABLE_SCP)
 curl_add_if("SFTP"          USE_LIBSSH2 OR USE_LIBSSH)
 curl_add_if("IPFS"          NOT CURL_DISABLE_IPFS)
 curl_add_if("IPNS"          NOT CURL_DISABLE_IPFS)

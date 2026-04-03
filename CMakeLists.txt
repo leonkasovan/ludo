@@ -154,34 +154,58 @@ else()
     set(BROTLI_BUILD_CONFIG_ARG "")
 endif()
 
-ExternalProject_Add(brotli_ext
-    SOURCE_DIR ${CMAKE_SOURCE_DIR}/third_party/brotli
-    BINARY_DIR ${BROTLI_BUILD_DIR}
-    CMAKE_ARGS
-        -DCMAKE_BUILD_TYPE=${CMAKE_BUILD_TYPE}
-        -DCMAKE_INSTALL_PREFIX=${BROTLI_INSTALL_DIR}
-        -DCMAKE_INSTALL_LIBDIR=lib 
-        -DBROTLI_DISABLE_TESTS=ON
-        -DBROTLI_BUNDLED_MODE=OFF
-        -DBROTLI_BUILD_TOOLS=OFF
-        -DBROTLI_BUILD_TESTS=OFF
-        -DBROTLI_BUILD_SHARED_LIBS=OFF
-        -DBROTLI_BUILD_STATIC_LIBS=ON
-        -DBROTLI_BUILD_FOR_PACKAGE=ON
-    BUILD_COMMAND ${CMAKE_COMMAND} --build ${BROTLI_BUILD_DIR} ${BROTLI_BUILD_CONFIG_ARG} --parallel
-    INSTALL_COMMAND ${CMAKE_COMMAND} --install ${BROTLI_BUILD_DIR} ${BROTLI_BUILD_CONFIG_ARG}
-    BUILD_BYPRODUCTS
-        ${BROTLI_INSTALL_DIR}/lib/${BROTLI_LIB_NAME}
-        ${BROTLI_INSTALL_DIR}/lib/${BROTLI_ENC_NAME}
-        ${BROTLI_INSTALL_DIR}/lib/${BROTLI_COM_NAME}
-)
+## Build brotli in-tree instead of via ExternalProject
+# Force static-only, disable CLI/tools and tests to match previous ExternalProject settings.
+set(BROTLI_BUILD_TOOLS OFF CACHE BOOL "Build/install CLI tools" FORCE)
+set(BROTLI_BUILD_TESTS OFF CACHE BOOL "Build test suite" FORCE)
+set(BROTLI_DISABLE_TESTS ON CACHE BOOL "Disable tests" FORCE)
 
-add_library(brotlidec_static STATIC IMPORTED GLOBAL)
-add_library(brotlienc_static STATIC IMPORTED GLOBAL)
-add_library(brotlicommon_static STATIC IMPORTED GLOBAL)
-set_target_properties(brotlidec_static PROPERTIES IMPORTED_LOCATION ${BROTLI_INSTALL_DIR}/lib/${BROTLI_LIB_NAME})
-set_target_properties(brotlienc_static PROPERTIES IMPORTED_LOCATION ${BROTLI_INSTALL_DIR}/lib/${BROTLI_ENC_NAME})
-set_target_properties(brotlicommon_static PROPERTIES IMPORTED_LOCATION ${BROTLI_INSTALL_DIR}/lib/${BROTLI_COM_NAME})
+# Ensure we build static libraries for bundled brotli (global BUILD_SHARED_LIBS
+# is already forced off for our in-tree builds elsewhere; set again to be explicit).
+set(BUILD_SHARED_LIBS OFF CACHE BOOL "Build shared libraries" FORCE)
+
+add_subdirectory(${CMAKE_SOURCE_DIR}/third_party/brotli ${BROTLI_BUILD_DIR})
+
+# Provide compatibility targets used elsewhere in this CMakeLists.
+# brotli's CMake defines targets named either brotlidec/brotlienc/brotlicommon
+# (their type follows BUILD_SHARED_LIBS). Create *_static alias targets so
+# existing references (brotlidec_static, brotlienc_static, brotlicommon_static)
+# keep working. If brotli isn't available, fall back to the previous imported
+# target behavior pointing at the install directory.
+if(TARGET brotlidec OR TARGET brotlidec-static OR TARGET brotlienc OR TARGET brotlienc-static OR TARGET brotlicommon OR TARGET brotlicommon-static)
+    if(TARGET brotlidec)
+        add_library(brotlidec_static ALIAS brotlidec)
+    elseif(TARGET brotlidec-static)
+        add_library(brotlidec_static ALIAS brotlidec-static)
+    endif()
+
+    if(TARGET brotlienc)
+        add_library(brotlienc_static ALIAS brotlienc)
+    elseif(TARGET brotlienc-static)
+        add_library(brotlienc_static ALIAS brotlienc-static)
+    endif()
+
+    if(TARGET brotlicommon)
+        add_library(brotlicommon_static ALIAS brotlicommon)
+    elseif(TARGET brotlicommon-static)
+        add_library(brotlicommon_static ALIAS brotlicommon-static)
+    endif()
+
+    # Expose include/library paths so Find modules (e.g. curl) can locate brotli.
+    set(BROTLI_INCLUDE_DIR ${CMAKE_SOURCE_DIR}/third_party/brotli/c/include CACHE PATH "Brotli include dir" FORCE)
+    if(DEFINED brotlicommon_BINARY_DIR)
+        set(BROTLI_LIBRARY ${brotlicommon_BINARY_DIR}/${BROTLI_COM_NAME} CACHE FILEPATH "Brotli library" FORCE)
+    else()
+        set(BROTLI_LIBRARY ${BROTLI_BUILD_DIR}/lib/${BROTLI_COM_NAME} CACHE FILEPATH "Brotli library" FORCE)
+    endif()
+else()
+    add_library(brotlidec_static STATIC IMPORTED GLOBAL)
+    add_library(brotlienc_static STATIC IMPORTED GLOBAL)
+    add_library(brotlicommon_static STATIC IMPORTED GLOBAL)
+    set_target_properties(brotlidec_static PROPERTIES IMPORTED_LOCATION ${BROTLI_INSTALL_DIR}/lib/${BROTLI_LIB_NAME})
+    set_target_properties(brotlienc_static PROPERTIES IMPORTED_LOCATION ${BROTLI_INSTALL_DIR}/lib/${BROTLI_ENC_NAME})
+    set_target_properties(brotlicommon_static PROPERTIES IMPORTED_LOCATION ${BROTLI_INSTALL_DIR}/lib/${BROTLI_COM_NAME})
+endif()
 
 set(ZSTD_BUILD_DIR ${CMAKE_BINARY_DIR}/zstd_build)
 set(ZSTD_INSTALL_DIR ${CMAKE_BINARY_DIR}/zstd_install)
@@ -192,23 +216,30 @@ else()
     set(ZSTD_LIB_NAME libzstd.a)
 endif()
 
-ExternalProject_Add(zstd_ext
-    SOURCE_DIR ${CMAKE_SOURCE_DIR}/third_party/zstd-dev
-    BINARY_DIR ${ZSTD_BUILD_DIR}
-    CMAKE_ARGS
-        -DCMAKE_BUILD_TYPE=${CMAKE_BUILD_TYPE}
-        -DCMAKE_INSTALL_PREFIX=${ZSTD_INSTALL_DIR}
-        -DCMAKE_INSTALL_LIBDIR=lib
-        -DZSTD_BUILD_PROGRAMS=OFF
-        -DZSTD_BUILD_TESTS=OFF
-        -DZSTD_BUILD_SHARED=OFF
-        -DZSTD_BUILD_STATIC=ON
-    INSTALL_COMMAND ${CMAKE_COMMAND} --install ${ZSTD_BUILD_DIR}
-    BUILD_BYPRODUCTS ${ZSTD_INSTALL_DIR}/lib/${ZSTD_LIB_NAME}
-)
+# Build zstd in-tree (was ExternalProject_Add)
+# Force static-only, no programs/tests to match previous ExternalProject settings.
+set(ZSTD_BUILD_PROGRAMS OFF CACHE BOOL "Build command-line programs" FORCE)
+set(ZSTD_BUILD_TESTS OFF CACHE BOOL "Build test suite" FORCE)
+set(ZSTD_BUILD_SHARED OFF CACHE BOOL "Build shared libraries" FORCE)
+set(ZSTD_BUILD_STATIC ON  CACHE BOOL "Build static libraries" FORCE)
 
-add_library(zstd_static STATIC IMPORTED GLOBAL)
-set_target_properties(zstd_static PROPERTIES IMPORTED_LOCATION ${ZSTD_INSTALL_DIR}/lib/${ZSTD_LIB_NAME})
+add_subdirectory(${CMAKE_SOURCE_DIR}/third_party/zstd-dev ${ZSTD_BUILD_DIR})
+
+# Provide compatibility targets used elsewhere in this CMakeLists
+if(TARGET libzstd_static)
+    add_library(zstd_static ALIAS libzstd_static)
+    set(ZSTD_INCLUDE_DIR ${CMAKE_SOURCE_DIR}/third_party/zstd-dev/lib CACHE PATH "Zstd include dir" FORCE)
+    if(DEFINED libzstd_BINARY_DIR)
+        set(ZSTD_LIBRARY ${libzstd_BINARY_DIR}/${ZSTD_LIB_NAME} CACHE FILEPATH "Zstd library" FORCE)
+    else()
+        set(ZSTD_LIBRARY ${ZSTD_BUILD_DIR}/lib/${ZSTD_LIB_NAME} CACHE FILEPATH "Zstd library" FORCE)
+    endif()
+    set(ZSTD_USE_STATIC_LIBS ON CACHE BOOL "Configure for static zstd libraries" FORCE)
+else()
+    # Fallback to imported target pointing to install location (if used)
+    add_library(zstd_static STATIC IMPORTED GLOBAL)
+    set_target_properties(zstd_static PROPERTIES IMPORTED_LOCATION ${ZSTD_INSTALL_DIR}/lib/${ZSTD_LIB_NAME})
+endif()
 
 set(CURL_BUILD_DIR ${CMAKE_BINARY_DIR}/curl_build)
 set(CURL_INSTALL_DIR ${CMAKE_BINARY_DIR}/curl_install)
@@ -224,64 +255,25 @@ else()
     endif()
 endif()
 
-# Dynamic SSL selection based on target OS
+# Configure curl SSL backend selection for in-tree build
+# When building libcurl in-tree (`add_subdirectory`), set the curl
+# SSL backend cache variables directly so the curl CMake picks the
+# correct backend (Schannel on Windows, OpenSSL on Unix-like).
 if(WIN32)
-    set(CURL_SSL_ARGS "-DCURL_USE_SCHANNEL=ON" "-DCURL_USE_OPENSSL=OFF")
+    set(CURL_USE_SCHANNEL ON CACHE BOOL "Enable Windows native SSL/TLS (Schannel)" FORCE)
+    set(CURL_USE_OPENSSL OFF CACHE BOOL "Disable OpenSSL for SSL/TLS on Windows" FORCE)
 elseif(APPLE)
-    set(CURL_SSL_ARGS "-DCURL_USE_SECTRANSP=ON" "-DCURL_USE_OPENSSL=OFF")
+    # Prefer OpenSSL on macOS if available; curl can still enable Apple SecTrust
+    # for certificate verification (USE_APPLE_SECTRUST) if configured later.
+    set(CURL_USE_OPENSSL ON CACHE BOOL "Enable OpenSSL for SSL/TLS on macOS" FORCE)
+    set(CURL_USE_SCHANNEL OFF CACHE BOOL "Disable Schannel on non-Windows" FORCE)
 else()
-    set(CURL_SSL_ARGS "-DCURL_USE_OPENSSL=ON" "-DCURL_USE_SCHANNEL=OFF")
+    set(CURL_USE_OPENSSL ON CACHE BOOL "Enable OpenSSL for SSL/TLS on Unix-like systems" FORCE)
+    set(CURL_USE_SCHANNEL OFF CACHE BOOL "Disable Schannel on non-Windows" FORCE)
 endif()
 
-ExternalProject_Add(curl_ext
-    SOURCE_DIR ${CMAKE_SOURCE_DIR}/third_party/curl-8.19.0
-    BINARY_DIR ${CURL_BUILD_DIR}
-    DEPENDS zstd_ext brotli_ext zlib_static
-    CMAKE_ARGS
-        -DCMAKE_BUILD_TYPE=${CMAKE_BUILD_TYPE}
-        -DCMAKE_INSTALL_PREFIX=${CURL_INSTALL_DIR}
-        -DCMAKE_INSTALL_LIBDIR=lib
-        -DBUILD_SHARED_LIBS=OFF
-        -DBUILD_STATIC_LIBS=ON
-        -DBUILD_CURL_EXE=OFF
-        -DBUILD_TESTING=OFF
-        ${CURL_SSL_ARGS}
-        # Disable Unused Protocols (Mail, Chat, Legacy)
-        -DCURL_DISABLE_DICT=ON
-        -DCURL_DISABLE_GOPHER=ON
-        -DCURL_DISABLE_IMAP=ON
-        -DCURL_DISABLE_POP3=ON
-        -DCURL_DISABLE_SMTP=ON
-        -DCURL_DISABLE_RTSP=ON
-        -DCURL_DISABLE_SMB=ON
-        -DCURL_DISABLE_TELNET=ON
-        -DCURL_DISABLE_TFTP=ON
-        -DCURL_DISABLE_MQTT=ON
-        -DCURL_DISABLE_WEBSOCKETS=ON
-        -DCURL_DISABLE_FILE=ON
-        -DCURL_DISABLE_LDAP=ON
-        -DCURL_DISABLE_LDAPS=ON
-        # Disable Unused Features
-        -DCURL_DISABLE_ALTSVC=ON
-        -DCURL_USE_LIBPSL=OFF
-        -DUSE_LIBIDN2=OFF
-        -DUSE_NGHTTP2=OFF
-        -DCURL_USE_LIBSSH2=OFF
-        -DCURL_USE_LIBSSH=OFF
-        # Performance and Core Features (Keep these)
-        -DCURL_BROTLI=ON
-        -DCURL_ZSTD=ON
-        -DCURL_ZLIB=ON
-        -DCURL_ENABLE_SSL=ON
-        -DENABLE_THREADED_RESOLVER=ON
-        -DZLIB_INCLUDE_DIR=${ZLIB_SRC_DIR}
-        -DZLIB_LIBRARY=${ZLIB_STATIC_LIBRARY}
-        -DCURL_USE_PKGCONFIG=OFF
-        -DCMAKE_INCLUDE_PATH=${ZSTD_INSTALL_DIR}/include;${BROTLI_INSTALL_DIR}/include;${ZLIB_SRC_DIR}
-        -DCMAKE_LIBRARY_PATH=${ZSTD_INSTALL_DIR}/lib;${BROTLI_INSTALL_DIR}/lib;${ZLIB_OUTPUT_DIR}
-    INSTALL_COMMAND ${CMAKE_COMMAND} --install ${CURL_BUILD_DIR}
-    BUILD_BYPRODUCTS ${CURL_INSTALL_DIR}/lib/${CURL_LIB_NAME}
-)
+ # ExternalProject_Add(curl_ext) removed — build curl in-tree via add_subdirectory.
+ # Curl's important CMake options (BROTLI/ZSTD/SSL/etc.) are preserved below for in-tree build.
 
 # Build libcurl from bundled source instead of ExternalProject
 # Configure curl build options for in-tree build
@@ -297,13 +289,25 @@ set(CURL_ZSTD ON CACHE BOOL "Enable Zstd in curl" FORCE)
 set(CURL_ZLIB ON CACHE BOOL "Enable zlib in curl" FORCE)
 set(CURL_DROP_UNUSED ON CACHE BOOL "Drop unused code/data from curl" FORCE)
 
+# Disable authentication and policy features not needed for a simple
+# download manager to reduce footprint and avoid pulling GSSAPI/SSPI.
+set(CURL_DISABLE_NEGOTIATE_AUTH ON CACHE BOOL "Disable Negotiate (SPNEGO) authentication" FORCE)
+set(CURL_DISABLE_KERBEROS_AUTH ON CACHE BOOL "Disable Kerberos authentication" FORCE)
+set(CURL_DISABLE_HSTS ON CACHE BOOL "Disable HSTS support" FORCE)
+# Disable SCP/SFTP and SSH backends to keep libcurl HTTP/HTTPS-only for the
+# download manager. These MUST be set before add_subdirectory(curl-8.19.0).
+set(CURL_DISABLE_SCP ON CACHE BOOL "Disable SCP protocol" FORCE)
+set(CURL_DISABLE_SFTP ON CACHE BOOL "Disable SFTP protocol" FORCE)
+# Force libssh/libssh2 off so curl won't find or link SSH backends.
+set(CURL_USE_LIBSSH2 OFF CACHE BOOL "Disable libssh2 support" FORCE)
+set(CURL_USE_LIBSSH OFF CACHE BOOL "Disable libssh support" FORCE)
 # Provide zlib include/library locations (use vendored zlib)
 set(ZLIB_INCLUDE_DIR ${ZLIB_SRC_DIR} CACHE PATH "Zlib include dir" FORCE)
 set(ZLIB_LIBRARY ${ZLIB_STATIC_LIBRARY} CACHE FILEPATH "Zlib library" FORCE)
 
 # Help curl find our built brotli/zstd outputs
-set(CMAKE_INCLUDE_PATH "${ZSTD_INSTALL_DIR}/include;${BROTLI_INSTALL_DIR}/include;${ZLIB_SRC_DIR}" CACHE STRING "Additional include paths for curl" FORCE)
-set(CMAKE_LIBRARY_PATH "${ZSTD_INSTALL_DIR}/lib;${BROTLI_INSTALL_DIR}/lib;${ZLIB_OUTPUT_DIR}" CACHE STRING "Additional library paths for curl" FORCE)
+set(CMAKE_INCLUDE_PATH "${CMAKE_SOURCE_DIR}/third_party/zstd-dev/lib;${CMAKE_SOURCE_DIR}/third_party/brotli/c/include;${ZLIB_SRC_DIR}" CACHE STRING "Additional include paths for curl" FORCE)
+set(CMAKE_LIBRARY_PATH "${ZSTD_BUILD_DIR}/lib;${BROTLI_BUILD_DIR}/lib;${ZLIB_OUTPUT_DIR}" CACHE STRING "Additional library paths for curl" FORCE)
 
 # Add curl as a subdirectory so it is built as part of the main build
 # Limit protocols/features to only what's needed by a download manager
@@ -317,7 +321,7 @@ set(USE_LIBIDN2 OFF CACHE BOOL "Disable libidn2" FORCE)
 add_subdirectory(${CMAKE_SOURCE_DIR}/third_party/curl-8.19.0 ${CURL_BUILD_DIR})
 
 # Ensure the produced libcurl target (libcurl_static) builds after external libs
-add_dependencies(libcurl_static zstd_ext brotli_ext zlib_static)
+add_dependencies(libcurl_static libzstd_static brotlidec_static brotlienc_static brotlicommon_static zlib_static)
 
 # Tune libcurl_static to reduce size: enable sectioning and garbage-collect unused
 if(TARGET libcurl_static)
@@ -455,13 +459,12 @@ endif()
     if(TARGET libui_static)
         enable_dead_code_stripping(libui_static)
     endif()
-set(LUDO_EXTERNAL_DEPENDENCIES curl_ext zstd_ext brotli_ext zlib_static)
+set(LUDO_EXTERNAL_DEPENDENCIES libzstd_static brotlidec_static brotlienc_static brotlicommon_static zlib_static)
 add_dependencies(ludo ${LUDO_EXTERNAL_DEPENDENCIES})
 
 target_include_directories(ludo PRIVATE
     ${CMAKE_SOURCE_DIR}/src
     ${CMAKE_SOURCE_DIR}/third_party/libuilua
-    "$<BUILD_INTERFACE:${CMAKE_BINARY_DIR}/curl_install/include>"
     "$<BUILD_INTERFACE:${CMAKE_BINARY_DIR}/generated>"
 )
 
@@ -513,29 +516,14 @@ elseif(APPLE)
 endif()
 
 # Output Copy Commands
+# Executes all copy and directory creation tasks in a single post-build step.
 add_custom_command(TARGET ludo POST_BUILD
     COMMAND ${CMAKE_COMMAND} -E copy_directory ${CMAKE_SOURCE_DIR}/plugins $<TARGET_FILE_DIR:ludo>/plugins
-    COMMENT "Copying plugins directory..."
-)
-
-add_custom_command(TARGET ludo POST_BUILD
     COMMAND ${CMAKE_COMMAND} -E copy_directory ${CMAKE_SOURCE_DIR}/snippets $<TARGET_FILE_DIR:ludo>/snippets
-    COMMENT "Copying snippets directory..."
-)
-
-add_custom_command(TARGET ludo POST_BUILD
     COMMAND ${CMAKE_COMMAND} -E copy_directory ${CMAKE_SOURCE_DIR}/res $<TARGET_FILE_DIR:ludo>/res
-    COMMENT "Copying UI resources..."
-)
-
-add_custom_command(TARGET ludo POST_BUILD
     COMMAND ${CMAKE_COMMAND} -E copy_if_different ${CMAKE_SOURCE_DIR}/config.ini $<TARGET_FILE_DIR:ludo>/config.ini
-    COMMENT "Copying config.ini..."
-)
-
-add_custom_command(TARGET ludo POST_BUILD
     COMMAND ${CMAKE_COMMAND} -E make_directory $<TARGET_FILE_DIR:ludo>/downloads
-    COMMENT "Creating downloads directory..."
+    COMMENT "Copying runtime assets (plugins, snippets, res, config) and initializing output directories..."
 )
 
 install(TARGETS ludo DESTINATION bin)
