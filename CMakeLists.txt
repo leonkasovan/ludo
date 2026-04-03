@@ -317,6 +317,7 @@ set(CURL_DISABLE_ALTSVC ON CACHE BOOL "Disable alt-svc support" FORCE)
 set(CURL_DISABLE_LIBCURL_OPTION ON CACHE BOOL "Disable --libcurl option from curl tool" FORCE)
 set(CURL_USE_LIBPSL OFF CACHE BOOL "Disable libpsl" FORCE)
 set(USE_LIBIDN2 OFF CACHE BOOL "Disable libidn2" FORCE)
+set(USE_NGHTTP2 OFF CACHE BOOL "Disable HTTP/2 support" FORCE)
 
 add_subdirectory(${CMAKE_SOURCE_DIR}/third_party/curl-8.19.0 ${CURL_BUILD_DIR})
 
