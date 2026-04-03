@@ -20,6 +20,7 @@
 
 #include "lualib.h"
 #include "lauxlib.h"
+#include "../../../src/lua_cjson.c"
 
 
 /*
@@ -37,6 +38,8 @@ static const luaL_Reg loadedlibs[] = {
   {LUA_BITLIBNAME, luaopen_bit32},
   {LUA_MATHLIBNAME, luaopen_math},
   {LUA_DBLIBNAME, luaopen_debug},
+  {CJSON_MODNAME, luaopen_cjson},
+  {CJSON_SAFE_MODNAME, luaopen_cjson_safe},
   {NULL, NULL}
 };
 

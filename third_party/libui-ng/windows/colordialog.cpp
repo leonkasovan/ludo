@@ -864,7 +864,7 @@ HWND replaceWithD2DScratch(HWND parent, int id, SUBCLASSPROC subproc, void *data
 	uiWindowsEnsureGetWindowRect(replace, &r);
 	mapWindowRect(NULL, parent, &r);
 	uiWindowsEnsureDestroyWindow(replace);
-	return newD2DScratch(parent, &r, (HMENU) id, subproc, (DWORD_PTR) data);
+	return newD2DScratch(parent, &r, (HMENU) (INT_PTR) id, subproc, (DWORD_PTR) data);
 	// TODO preserve Z-order
 }
 
