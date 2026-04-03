@@ -886,6 +886,9 @@ static void perform_download(Download *d) {
         
         if (resume_from > 0) {
             curl_easy_setopt(curl, CURLOPT_RESUME_FROM_LARGE, resume_from);
+        } else if (strstr(d->url, "videoplayback")) {
+            /* Some servers (e.g. YouTube) require a Range header even for fresh downloads of certain URLs */
+            curl_easy_setopt(curl, CURLOPT_RANGE, "0-");
         }
 
         res = curl_easy_perform(curl);
