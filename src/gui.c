@@ -1200,14 +1200,10 @@ static void downloads_modelSetCellValue(uiTableModelHandler *mh, uiTableModel *m
         
         /* Determine action based on state */
         if (r->status.state == DOWNLOAD_STATE_COMPLETED || r->status.state == DOWNLOAD_STATE_FAILED) {
-            /* Remove the download */
+            /* Remove the download.  download_manager_remove dispatches a final
+             * marked_for_removal progress update; gui_on_progress deletes the row. */
             download_manager_remove(target_id);
-            for (int j = row; j < g_gui.row_count - 1; j++) {
-                g_gui.rows[j] = g_gui.rows[j + 1];
-            }
-            g_gui.row_count--;
-            if (g_downloads_model) uiTableModelRowDeleted(g_downloads_model, row);
-            gui_log(LOG_INFO, "Removed download id=%d via inline button", target_id);
+            gui_log(LOG_INFO, "Scheduled removal of download id=%d via inline button", target_id);
         } else if (r->status.state == DOWNLOAD_STATE_QUEUED || r->status.state == DOWNLOAD_STATE_RUNNING) {
             download_manager_pause(target_id);
         } else if (r->status.state == DOWNLOAD_STATE_PAUSED || r->status.state == DOWNLOAD_STATE_FAILED) {
@@ -1543,20 +1539,24 @@ static void on_remove_clicked(uiButton *sender, void *data) {
         DownloadRow *r = &g_gui.rows[i];
         if (r->selected) {
             if (r->status.id > 0) {
-                // /* 1. Tell backend to pause and safely remove */
-                // download_manager_pause(r->status.id); 
                 if (download_manager_remove(r->status.id)) {
                     acted++;
+                    /* download_manager_remove dispatches a final marked_for_removal
+                     * progress update for all states (immediately for stopped ones,
+                     * deferred via the worker for RUNNING/QUEUED).  Either way,
+                     * gui_on_progress owns the row deletion — skip it here to
+                     * prevent a use-after-free / dangling-state mismatch. */
+                    continue;
                 }
             }
-            
-            /* 2. Remove from GUI array by shifting remaining elements left */
+
+            /* Fallback: backend remove was not applicable (id == 0) or failed.
+             * Clean up the GUI row directly so it does not become a zombie. */
             for (int j = i; j < g_gui.row_count - 1; j++) {
                 g_gui.rows[j] = g_gui.rows[j + 1];
             }
             g_gui.row_count--;
 
-            /* 3. Notify the table model that this exact row index was deleted */
             if (g_downloads_model) {
                 uiTableModelRowDeleted(g_downloads_model, i);
             }
@@ -1747,6 +1747,20 @@ void gui_on_progress(const ProgressUpdate *update, void *user_data) {
     (void)user_data;
 
     g_gui.active_download_id = update->status.id;
+
+    /* Backend has fully freed this download.  Delete the GUI row and bail out
+     * before any find_row / add_row call — that avoids resurrecting a ghost
+     * row when a deferred worker cleanup arrives after on_remove_clicked. */
+    if (update->marked_for_removal) {
+        int idx = find_row_index(update->status.id);
+        if (idx >= 0) {
+            for (int j = idx; j < g_gui.row_count - 1; j++)
+                g_gui.rows[j] = g_gui.rows[j + 1];
+            g_gui.row_count--;
+            if (g_downloads_model) uiTableModelRowDeleted(g_downloads_model, idx);
+        }
+        return;
+    }
 
     DownloadRow *r = find_row(update->status.id);
     if (!r) {

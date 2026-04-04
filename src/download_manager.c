@@ -979,6 +979,22 @@ static void perform_download(Download *d) {
 
         if (is_deleted) {
             free(d);
+
+            /* Drive GUI row deletion via the progress callback so the GUI
+             * never has to race against the worker when deciding whether
+             * the row is still live.  All fields were captured above while
+             * the mutex was held, so this is safe after free(d). */
+            upd.status.id               = final_id;
+            upd.status.state            = DOWNLOAD_STATE_FAILED; /* cancelled = failed */
+            upd.status.progress         = final_progress;
+            upd.status.start_time       = start_ts;
+            upd.status.end_time         = finish_ts;
+            upd.status.downloaded_bytes = final_downloaded_bytes;
+            upd.status.total_bytes      = final_total_bytes;
+            upd.status.speed_bps        = 0.0;
+            strncpy(upd.status.filename, final_filename, sizeof(upd.status.filename) - 1);
+            upd.marked_for_removal      = 1;
+            gui_dispatch_update(&upd);
             return;
         }
 
@@ -1573,6 +1589,9 @@ bool download_manager_resume(int id) {
 
 bool download_manager_remove(int id) {
     bool result = false;
+    ProgressUpdate final_upd;
+    int dispatch_final = 0;
+
     ludo_mutex_lock(&g_mgr.list_mutex);
     Download **prev = &g_mgr.list;
     while (*prev) {
@@ -1590,7 +1609,13 @@ bool download_manager_remove(int id) {
                 gui_log(LOG_INFO, "Removing %s for garbage collection.", target->status.filename);
                 result = true;
             } else {
-                /* Safe to delete immediately */
+                /* Safe to delete immediately.  Capture data before free() so we
+                 * can dispatch the final GUI notification outside the lock. */
+                memset(&final_upd, 0, sizeof(final_upd));
+                final_upd.status             = target->status;
+                final_upd.marked_for_removal = 1;
+                dispatch_final = 1;
+
                 *prev = target->next;
                 gui_log(LOG_SUCCESS, "%s removed", target->status.filename);
                 free(target);
@@ -1601,6 +1626,11 @@ bool download_manager_remove(int id) {
         prev = &(*prev)->next;
     }
     ludo_mutex_unlock(&g_mgr.list_mutex);
+
+    /* Notify the GUI outside the lock; gui_on_progress will delete the row. */
+    if (dispatch_final)
+        gui_dispatch_update(&final_upd);
+
     return result;
 }
 

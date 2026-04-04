@@ -67,6 +67,7 @@ struct Download {
 typedef struct {
     DownloadStatus   status;
     char             error_msg[256];
+    int              marked_for_removal; /* 1 = backend freed this download; GUI must delete its row */
 } ProgressUpdate;
 
 typedef struct {
