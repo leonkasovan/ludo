@@ -174,6 +174,8 @@ static lua_State *create_lua_state(void) {
  */
 static int plugin_check_contract(lua_State *L, const char *path) {
     int status;
+    int has_validate;
+    int has_process;
 
     status = lua_loadfile_utf8(L, path);
     if (status != LUA_OK || lua_pcall(L, 0, 1, 0) != LUA_OK) {
@@ -191,10 +193,10 @@ static int plugin_check_contract(lua_State *L, const char *path) {
         return 0;
     }
     lua_getfield(L, -1, "validate");
-    int has_validate = lua_isfunction(L, -1);
+    has_validate = lua_isfunction(L, -1);
     lua_pop(L, 1);
     lua_getfield(L, -1, "process");
-    int has_process = lua_isfunction(L, -1);
+    has_process = lua_isfunction(L, -1);
     lua_pop(L, 1);
     lua_pop(L, 1); /* pop plugin table */
 
@@ -235,16 +237,28 @@ void lua_engine_load_plugins(const char *plugin_dir) {
         return;
     }
     do {
+        wchar_t full_path[512];
+        char utf8_path[512];
+        lua_State *check_L;
+
         if (fd.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) continue;
+        if (_snwprintf(full_path, sizeof(full_path) / sizeof(full_path[0]), L"%ls\\%ls", base_dir, fd.cFileName) < 0)
+            continue;
+        if (!wide_to_utf8(full_path, utf8_path, sizeof(utf8_path)))
+            continue;
+
+        check_L = create_lua_state();
+        if (!check_L) continue;
+        if (!plugin_check_contract(check_L, utf8_path)) {
+            lua_close(check_L);
+            continue;
+        }
+        lua_close(check_L);
+
         ludo_mutex_lock(&g_engine.mutex);
         if (g_engine.count < MAX_PLUGINS) {
-            wchar_t full_path[512];
-            if (_snwprintf(full_path, sizeof(full_path) / sizeof(full_path[0]), L"%ls\\%ls", base_dir, fd.cFileName) >= 0 &&
-                wide_to_utf8(full_path,
-                             g_engine.plugins[g_engine.count].path,
-                             sizeof(g_engine.plugins[g_engine.count].path))) {
-                g_engine.count++;
-            }
+            memcpy(g_engine.plugins[g_engine.count].path, utf8_path, sizeof(utf8_path));
+            g_engine.count++;
         }
         ludo_mutex_unlock(&g_engine.mutex);
     } while (FindNextFileW(hFind, &fd));
@@ -255,14 +269,26 @@ void lua_engine_load_plugins(const char *plugin_dir) {
     if (!dir) return;
     struct dirent *ent;
     while ((ent = readdir(dir))) {
+        char path[sizeof(g_engine.plugins[0].path)];
+        lua_State *check_L;
         size_t nlen = strlen(ent->d_name);
+
         if (nlen < 5) continue;
         if (strcmp(ent->d_name + nlen - 4, ".lua") != 0) continue;
+
+        snprintf(path, sizeof(path), "%s/%s", plugin_dir, ent->d_name);
+
+        check_L = create_lua_state();
+        if (!check_L) continue;
+        if (!plugin_check_contract(check_L, path)) {
+            lua_close(check_L);
+            continue;
+        }
+        lua_close(check_L);
+
         ludo_mutex_lock(&g_engine.mutex);
         if (g_engine.count < MAX_PLUGINS) {
-            snprintf(g_engine.plugins[g_engine.count].path,
-                     sizeof(g_engine.plugins[0].path),
-                     "%s/%s", plugin_dir, ent->d_name);
+            memcpy(g_engine.plugins[g_engine.count].path, path, sizeof(path));
             g_engine.count++;
         }
         ludo_mutex_unlock(&g_engine.mutex);
