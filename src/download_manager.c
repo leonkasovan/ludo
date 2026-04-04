@@ -1450,7 +1450,6 @@ int download_manager_add(const char *url, const char *output_dir, DownloadMode m
     (void)mode; /* DOWNLOAD_NOW vs DOWNLOAD_QUEUE handled via queue order */
     Download *d;
     URLTask task;
-    HeaderCtx probe;
     ProgressUpdate upd;
 
     if (result) memset(result, 0, sizeof(*result));
@@ -1499,32 +1498,12 @@ int download_manager_add(const char *url, const char *output_dir, DownloadMode m
     strncpy(upd.status.filename, d->status.filename, sizeof(upd.status.filename) - 1);
     gui_dispatch_update(&upd);
 
+    /* Fill result immediately with provisional data.  The worker thread will
+       run probe_download_head() as part of perform_download() and dispatch any
+       filename update via the progress callback — no blocking network call here. */
     if (result) {
-        memset(&probe, 0, sizeof(probe));
-        probe.download_id = d->status.id;
-        probe_download_head(url, &probe);
-
         result->id = d->status.id;
-        result->status_code = probe.response_code;
-
-        ludo_mutex_lock(&g_mgr.list_mutex);
-        d->has_preflight = 1;
-        d->preflight_status_code = probe.response_code;
-        d->preflight_content_length = probe.content_length;
-        if (probe.has_filename) {
-            strncpy(d->preflight_filename, probe.filename, sizeof(d->preflight_filename) - 1);
-            strncpy(d->status.filename, probe.filename, sizeof(d->status.filename) - 1);
-        }
-        ludo_mutex_unlock(&g_mgr.list_mutex);
-
-        if (probe.has_filename) {
-            ProgressUpdate preflight_upd = {0};
-            preflight_upd.status.id = d->status.id;
-            preflight_upd.status.state = DOWNLOAD_STATE_QUEUED;
-            strncpy(preflight_upd.status.filename, probe.filename, sizeof(preflight_upd.status.filename) - 1);
-            gui_dispatch_update(&preflight_upd);
-        }
-
+        result->status_code = 200; /* successfully queued */
         build_download_path(d, result->output_path, sizeof(result->output_path));
     }
 

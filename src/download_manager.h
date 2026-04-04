@@ -72,8 +72,13 @@ typedef struct {
 
 typedef struct {
     int  id;
-    long status_code;
-    char output_path[2048];
+    long status_code;  /* 200 = successfully queued; negative = error.
+                          The actual server HTTP status is delivered later
+                          via the progress callback once the worker probes
+                          the URL asynchronously. */
+    char output_path[2048]; /* provisional path based on URL-derived filename;
+                               may be updated via progress callback when the
+                               worker resolves the real Content-Disposition name */
 } DownloadAddResult;
 
 /* Callback registered by the GUI to receive progress updates */
