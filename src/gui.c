@@ -53,31 +53,9 @@ extern char **environ;
 
 #define TOOLBAR_BUTTON_SIZE 40
 
+#include "platform_utils.h"
+
 #ifdef _WIN32
-static wchar_t *utf8_to_wide_dup(const char *src) {
-    int needed;
-    wchar_t *dst;
-
-    if (!src) return NULL;
-    needed = MultiByteToWideChar(CP_UTF8, 0, src, -1, NULL, 0);
-    if (needed <= 0) return NULL;
-    dst = (wchar_t *)malloc((size_t)needed * sizeof(wchar_t));
-    if (!dst) return NULL;
-    if (MultiByteToWideChar(CP_UTF8, 0, src, -1, dst, needed) <= 0) {
-        free(dst);
-        return NULL;
-    }
-    return dst;
-}
-
-static int wide_to_utf8(const wchar_t *src, char *dst, size_t dst_sz) {
-    int needed;
-
-    if (!src || !dst || dst_sz == 0) return 0;
-    needed = WideCharToMultiByte(CP_UTF8, 0, src, -1, NULL, 0, NULL, NULL);
-    if (needed <= 0 || (size_t)needed > dst_sz) return 0;
-    return WideCharToMultiByte(CP_UTF8, 0, src, -1, dst, (int)dst_sz, NULL, NULL) > 0;
-}
 
 static FILE *gui_fopen_utf8(const char *path, const char *mode) {
     FILE *fp = NULL;
@@ -112,7 +90,7 @@ static void play_sound(const char *filepath) {
         gui_log(LOG_WARNING, "play_sound: empty filepath");
         return;
     }
-    gui_log(LOG_INFO, "play_sound: attempting to play: %s", filepath);
+    // gui_log(LOG_INFO, "play_sound: attempting to play: %s", filepath);
 
     /* Check file existence using the UTF-8 aware fopen helper */
     FILE *f = gui_fopen_utf8(filepath, "rb");
@@ -136,7 +114,7 @@ static void play_sound(const char *filepath) {
         DWORD err = GetLastError();
         gui_log(LOG_ERROR, "play_sound: PlaySound failed for %s (res=%d, GetLastError=%lu)", filepath, (int)ok, (unsigned long)err);
     } else {
-        gui_log(LOG_INFO, "play_sound: PlaySound succeeded for %s", filepath);
+        // gui_log(LOG_INFO, "play_sound: PlaySound succeeded for %s", filepath);
     }
 }
 #elif defined(__APPLE__)
@@ -145,7 +123,7 @@ static void play_sound(const char *filepath) {
         gui_log(LOG_WARNING, "play_sound: empty filepath");
         return;
     }
-    gui_log(LOG_INFO, "play_sound: attempting to play: %s", filepath);
+    // gui_log(LOG_INFO, "play_sound: attempting to play: %s", filepath);
 
     FILE *f = gui_fopen_utf8(filepath, "rb");
     if (!f) {
@@ -170,7 +148,7 @@ static void play_sound(const char *filepath) {
         gui_log(LOG_WARNING, "play_sound: empty filepath");
         return;
     }
-    gui_log(LOG_INFO, "play_sound: attempting to play: %s", filepath);
+    // gui_log(LOG_INFO, "play_sound: attempting to play: %s", filepath);
 
     FILE *f = gui_fopen_utf8(filepath, "rb");
     if (!f) {
@@ -265,8 +243,6 @@ static struct {
     int              shutdown_requested;
     ludo_thread_t    url_worker;
     int              url_worker_started;
-
-    ludo_mutex_t     log_mutex;
 
 #ifdef _WIN32
     void            *toolbar_icon_ctx;
@@ -2005,8 +1981,11 @@ static void on_header_clicked(uiTable *t, int column, void *data) {
     }
 
     qsort(g_gui.rows, g_gui.row_count, sizeof(DownloadRow), cmp_rows);
-    
-    /* Notify the table model that every row has changed */
+
+    /* Notify the model that every row has changed. libui-ng exposes no
+       bulk-invalidation call (uiTableModelRowChanged maps 1:1 to LVM_UPDATE
+       on Windows), so we send one notification per row. Row count is bounded
+       by MAX_DOWNLOAD_ROWS (64), so the overhead is acceptable. */
     for (int i = 0; i < g_gui.row_count; i++) {
         uiTableModelRowChanged(g_downloads_model, i);
     }

@@ -405,6 +405,7 @@ endif()
 set(LUDO_SOURCES
     src/main.c
     src/config.c
+    src/platform_utils.c
     src/gui.c
     src/win_toolbar_icons.cpp
     src/lua_engine.c

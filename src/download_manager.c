@@ -1206,10 +1206,7 @@ static void db_load(const char *path) {
         /* If we didn't find at least the first 11 fields, skip the line */
         if (!fields[10]) {
             free(d);
-            /* reset buffer for next iteration */
-            free(line);
-            line = NULL;
-            cap = 0;
+            line[0] = '\0'; /* reset without realloc */
             continue;
         }
 
@@ -1276,10 +1273,7 @@ static void db_load(const char *path) {
         d->next = g_mgr.list;
         g_mgr.list = d;
 
-        /* reset buffer for next line */
-        free(line);
-        line = NULL;
-        cap = 0;
+        line[0] = '\0'; /* reset without realloc */
     }
 
     free(line);

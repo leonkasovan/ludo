@@ -14,33 +14,10 @@
 #include <stdio.h>
 #include <wchar.h>
 
+#include "platform_utils.h"
+
 #ifdef _WIN32
 #include <windows.h>
-
-static wchar_t *utf8_to_wide_dup(const char *src) {
-    int needed;
-    wchar_t *dst;
-
-    if (!src) return NULL;
-    needed = MultiByteToWideChar(CP_UTF8, 0, src, -1, NULL, 0);
-    if (needed <= 0) return NULL;
-    dst = (wchar_t *)malloc((size_t)needed * sizeof(wchar_t));
-    if (!dst) return NULL;
-    if (MultiByteToWideChar(CP_UTF8, 0, src, -1, dst, needed) <= 0) {
-        free(dst);
-        return NULL;
-    }
-    return dst;
-}
-
-static int wide_to_utf8(const wchar_t *src, char *dst, size_t dst_sz) {
-    int needed;
-
-    if (!src || !dst || dst_sz == 0) return 0;
-    needed = WideCharToMultiByte(CP_UTF8, 0, src, -1, NULL, 0, NULL, NULL);
-    if (needed <= 0 || (size_t)needed > dst_sz) return 0;
-    return WideCharToMultiByte(CP_UTF8, 0, src, -1, dst, (int)dst_sz, NULL, NULL) > 0;
-}
 
 static FILE *fopen_utf8(const char *path, const char *mode) {
     FILE *fp = NULL;
@@ -259,6 +236,9 @@ void lua_engine_load_plugins(const char *plugin_dir) {
         if (g_engine.count < MAX_PLUGINS) {
             memcpy(g_engine.plugins[g_engine.count].path, utf8_path, sizeof(utf8_path));
             g_engine.count++;
+        } else {
+            gui_log(LOG_WARNING, "[lua_engine] MAX_PLUGINS (%d) reached; skipping %s",
+                    MAX_PLUGINS, utf8_path);
         }
         ludo_mutex_unlock(&g_engine.mutex);
     } while (FindNextFileW(hFind, &fd));
@@ -290,6 +270,9 @@ void lua_engine_load_plugins(const char *plugin_dir) {
         if (g_engine.count < MAX_PLUGINS) {
             memcpy(g_engine.plugins[g_engine.count].path, path, sizeof(path));
             g_engine.count++;
+        } else {
+            gui_log(LOG_WARNING, "[lua_engine] MAX_PLUGINS (%d) reached; skipping %s",
+                    MAX_PLUGINS, path);
         }
         ludo_mutex_unlock(&g_engine.mutex);
     }
@@ -299,22 +282,27 @@ void lua_engine_load_plugins(const char *plugin_dir) {
 
 int lua_engine_process_url(const char *url) {
     /* Each call gets a fresh Lua state (thread-safe, no shared state). */
-    lua_State *L = create_lua_state();
+    lua_State *L;
+    int handled;
+    int count;
+    PluginEntry plugins[MAX_PLUGINS];
+
+    L = create_lua_state();
     if (!L) {
         gui_log(LOG_ERROR, "[lua_engine] failed to create Lua state");
         return 0;
     }
     ludo_module_set_current_source_url(L, url);
 
-    int handled = 0;
+    handled = 0;
 
     ludo_mutex_lock(&g_engine.mutex);
-    int count = g_engine.count;
-    PluginEntry plugins[MAX_PLUGINS];
+    count = g_engine.count;
     memcpy(plugins, g_engine.plugins, (size_t)count * sizeof(PluginEntry));
     ludo_mutex_unlock(&g_engine.mutex);
 
     for (int i = 0; i < count; i++) {
+        int matches;
         /* Load the plugin file; it should return a table */
         if (lua_loadfile_utf8(L, plugins[i].path) != LUA_OK) {
             const char *e = lua_tostring(L, -1);
@@ -356,7 +344,7 @@ int lua_engine_process_url(const char *url) {
             lua_pop(L, 2); /* pop error + plugin table */
             continue;
         }
-        int matches = lua_toboolean(L, -1);
+        matches = lua_toboolean(L, -1);
         lua_pop(L, 1); /* pop result */
 
         if (!matches) {
