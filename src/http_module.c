@@ -223,6 +223,109 @@ static void push_headers_table(lua_State *L, const char *raw) {
     }
 }
 
+/* ------------------------------------------------------------------ */
+/* SHA-256 (standalone, no external dependency)                        */
+/* ------------------------------------------------------------------ */
+
+#include <stdint.h>
+
+static const uint32_t sha256_k[64] = {
+    0x428a2f98,0x71374491,0xb5c0fbcf,0xe9b5dba5,
+    0x3956c25b,0x59f111f1,0x923f82a4,0xab1c5ed5,
+    0xd807aa98,0x12835b01,0x243185be,0x550c7dc3,
+    0x72be5d74,0x80deb1fe,0x9bdc06a7,0xc19bf174,
+    0xe49b69c1,0xefbe4786,0x0fc19dc6,0x240ca1cc,
+    0x2de92c6f,0x4a7484aa,0x5cb0a9dc,0x76f988da,
+    0x983e5152,0xa831c66d,0xb00327c8,0xbf597fc7,
+    0xc6e00bf3,0xd5a79147,0x06ca6351,0x14292967,
+    0x27b70a85,0x2e1b2138,0x4d2c6dfc,0x53380d13,
+    0x650a7354,0x766a0abb,0x81c2c92e,0x92722c85,
+    0xa2bfe8a1,0xa81a664b,0xc24b8b70,0xc76c51a3,
+    0xd192e819,0xd6990624,0xf40e3585,0x106aa070,
+    0x19a4c116,0x1e376c08,0x2748774c,0x34b0bcb5,
+    0x391c0cb3,0x4ed8aa4a,0x5b9cca4f,0x682e6ff3,
+    0x748f82ee,0x78a5636f,0x84c87814,0x8cc70208,
+    0x90befffa,0xa4506ceb,0xbef9a3f7,0xc67178f2,
+};
+
+#define SHA256_ROTR(x,n) (((x) >> (n)) | ((x) << (32 - (n))))
+#define SHA256_CH(x,y,z) (((x) & (y)) ^ (~(x) & (z)))
+#define SHA256_MAJ(x,y,z)(((x) & (y)) ^ ((x) & (z)) ^ ((y) & (z)))
+#define SHA256_S0(x) (SHA256_ROTR(x,2)  ^ SHA256_ROTR(x,13) ^ SHA256_ROTR(x,22))
+#define SHA256_S1(x) (SHA256_ROTR(x,6)  ^ SHA256_ROTR(x,11) ^ SHA256_ROTR(x,25))
+#define SHA256_s0(x) (SHA256_ROTR(x,7)  ^ SHA256_ROTR(x,18) ^ ((x) >> 3))
+#define SHA256_s1(x) (SHA256_ROTR(x,17) ^ SHA256_ROTR(x,19) ^ ((x) >> 10))
+
+typedef struct {
+    uint32_t state[8];
+    uint64_t count;
+    uint8_t  buf[64];
+    size_t   buf_len;
+} Sha256Ctx;
+
+static void sha256_init(Sha256Ctx *ctx) {
+    ctx->state[0] = 0x6a09e667u; ctx->state[1] = 0xbb67ae85u;
+    ctx->state[2] = 0x3c6ef372u; ctx->state[3] = 0xa54ff53au;
+    ctx->state[4] = 0x510e527fu; ctx->state[5] = 0x9b05688cu;
+    ctx->state[6] = 0x1f83d9abu; ctx->state[7] = 0x5be0cd19u;
+    ctx->count = 0; ctx->buf_len = 0;
+}
+
+static void sha256_transform(uint32_t *state, const uint8_t *block) {
+    uint32_t w[64], a, b, c, d, e, f, g, h, t1, t2;
+    int i;
+    for (i = 0; i < 16; i++)
+        w[i] = ((uint32_t)block[i*4]<<24)|((uint32_t)block[i*4+1]<<16)|
+               ((uint32_t)block[i*4+2]<<8)|(uint32_t)block[i*4+3];
+    for (i = 16; i < 64; i++)
+        w[i] = SHA256_s1(w[i-2]) + w[i-7] + SHA256_s0(w[i-15]) + w[i-16];
+    a=state[0]; b=state[1]; c=state[2]; d=state[3];
+    e=state[4]; f=state[5]; g=state[6]; h=state[7];
+    for (i = 0; i < 64; i++) {
+        t1 = h + SHA256_S1(e) + SHA256_CH(e,f,g) + sha256_k[i] + w[i];
+        t2 = SHA256_S0(a) + SHA256_MAJ(a,b,c);
+        h=g; g=f; f=e; e=d+t1; d=c; c=b; b=a; a=t1+t2;
+    }
+    state[0]+=a; state[1]+=b; state[2]+=c; state[3]+=d;
+    state[4]+=e; state[5]+=f; state[6]+=g; state[7]+=h;
+}
+
+static void sha256_update(Sha256Ctx *ctx, const uint8_t *data, size_t len) {
+    while (len > 0) {
+        size_t room = 64 - ctx->buf_len;
+        size_t take = len < room ? len : room;
+        memcpy(ctx->buf + ctx->buf_len, data, take);
+        ctx->buf_len += take; ctx->count += take;
+        data += take; len -= take;
+        if (ctx->buf_len == 64) { sha256_transform(ctx->state, ctx->buf); ctx->buf_len = 0; }
+    }
+}
+
+static void sha256_final(Sha256Ctx *ctx, uint8_t *digest) {
+    uint64_t bit_count = ctx->count * 8;
+    uint8_t pad = 0x80;
+    sha256_update(ctx, &pad, 1);
+    while (ctx->buf_len != 56) { uint8_t z = 0; sha256_update(ctx, &z, 1); }
+    for (int i = 7; i >= 0; i--) { uint8_t bv = (uint8_t)(bit_count >> (i * 8)); sha256_update(ctx, &bv, 1); }
+    for (int i = 0; i < 8; i++) {
+        digest[i*4+0]=(ctx->state[i]>>24)&0xFF; digest[i*4+1]=(ctx->state[i]>>16)&0xFF;
+        digest[i*4+2]=(ctx->state[i]>>8)&0xFF;  digest[i*4+3]=ctx->state[i]&0xFF;
+    }
+}
+
+/* http.sha256(str) → 32-byte raw binary digest */
+static int http_sha256(lua_State *L) {
+    size_t in_len;
+    const unsigned char *in = (const unsigned char *)luaL_checklstring(L, 1, &in_len);
+    Sha256Ctx ctx;
+    uint8_t digest[32];
+    sha256_init(&ctx);
+    sha256_update(&ctx, in, in_len);
+    sha256_final(&ctx, digest);
+    lua_pushlstring(L, (const char *)digest, 32);
+    return 1;
+}
+
 /*
  * Shared implementation for GET / HEAD / POST.
  * method: 0 = GET, 1 = HEAD, 2 = POST
@@ -527,9 +630,16 @@ static int lua_http_read_cookie(lua_State *L) {
 
     char line[4096];
     while (fgets(line, sizeof(line), f)) {
-        /* Skip comment lines and empty lines */
-        if (line[0] == '#' || line[0] == '\n' || line[0] == '\r')
-            continue;
+        /* Skip comment lines and empty lines.
+         * Exception: libcurl encodes HttpOnly cookies as lines starting with
+         * "#HttpOnly_" followed by the domain — strip that prefix and parse. */
+        if (line[0] == '#') {
+            if (strncmp(line, "#HttpOnly_", 10) == 0)
+                memmove(line, line + 10, strlen(line + 10) + 1);
+            else
+                continue;
+        }
+        if (line[0] == '\n' || line[0] == '\r') continue;
 
         /* Parse: domain \t flag \t path \t secure \t expiry \t name \t value */
         char *fields[7];
@@ -582,6 +692,7 @@ static const luaL_Reg http_funcs[] = {
     { "parse_url",    lua_http_parse_url   },
     { "base64_encode", http_base64_encode  },
     { "base64_decode", http_base64_decode  },
+    { "sha256",        http_sha256         },
     { "read_cookie",  lua_http_read_cookie },
     { NULL,           NULL                 }
 };

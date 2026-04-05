@@ -24,6 +24,23 @@ static int lua_ludo_new_download(lua_State *L) {
     const char *hint_filename = luaL_optstring(L, 4, NULL);
     DownloadAddResult result;
 
+    /* Collect optional 5th argument: headers table {"Name": "Value", ...} */
+    char headers_buf[4096] = {0};
+    const char *extra_headers = NULL;
+    if (lua_istable(L, 5)) {
+        int pos = 0;
+        lua_pushnil(L);
+        while (lua_next(L, 5) != 0) {
+            const char *key = lua_tostring(L, -2);
+            const char *val = lua_tostring(L, -1);
+            if (key && val && pos < (int)sizeof(headers_buf) - 128)
+                pos += snprintf(headers_buf + pos, sizeof(headers_buf) - pos,
+                                "%s: %s\n", key, val);
+            lua_pop(L, 1);
+        }
+        if (pos > 0) extra_headers = headers_buf;
+    }
+
     /* Use default output dir if none provided */
     if (!output_dir || output_dir[0] == '\0')
         output_dir = download_manager_get_output_dir();
@@ -33,7 +50,7 @@ static int lua_ludo_new_download(lua_State *L) {
     original_url = lua_tostring(L, -1);
     memset(&result, 0, sizeof(result));
     int id = download_manager_add(url, output_dir, (DownloadMode)mode, original_url,
-                                  hint_filename, &result);
+                                  hint_filename, extra_headers, &result);
     lua_pop(L, 1);
     if (id < 0) result.id = id;
     lua_pushinteger(L, (lua_Integer)result.id);

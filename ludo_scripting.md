@@ -812,6 +812,11 @@ configured and requests have populated the cookie jar.
 .instagram.com	TRUE	/	TRUE	0	sessionid	789xyz...
 ```
 
+**HttpOnly cookies:** libcurl writes `HttpOnly` cookies with a `#HttpOnly_`
+prefix on the domain field (e.g. `#HttpOnly_.tiktok.com`). `http.read_cookie`
+recognises and strips this prefix automatically, so `tt_chain_token` and other
+`HttpOnly` cookies are returned correctly.
+
 ```lua
 -- Read csrftoken from the session cookie jar
 local csrf = http.read_cookie("instagram_session.txt", "csrftoken")
@@ -856,6 +861,34 @@ local raw = http.base64_decode("aGVsbG8gd29ybGQ=")
 print(raw)  --> hello world
 ```
 
+### 3.15 `http.sha256(str)` → string
+
+Compute the SHA-256 digest of a string. Returns the raw 32-byte binary digest
+(NOT hex-encoded). Use `http.base64_encode` to convert to base64, or iterate
+bytes with `string.byte` to work with the raw digest.
+
+**Parameters:**
+- `str` (string) — Any string or binary data to hash.
+
+**Returns:**
+- `digest` (string) — Raw 32-byte binary SHA-256 digest.
+
+```lua
+-- Verify a known SHA-256 hash
+local digest = http.sha256("hello")
+local hex = digest:gsub(".", function(c) return ("%02x"):format(c:byte()) end)
+-- hex == "2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b9824"
+
+-- Binary comparison (used in TikTok WAF challenge)
+local expected = http.base64_decode(v_c)  -- 32 bytes
+if http.sha256(prefix .. tostring(i)) == expected then ...
+
+-- Get base64 of digest
+local b64_digest = http.base64_encode(http.sha256(data))
+```
+
+**Implementation note:** Standalone FIPS 180-4 SHA-256; no external dependency.
+
 ---
 
 #### Note on Compression Support
@@ -870,7 +903,7 @@ Ludo's HTTP engine supports transparent decompression for responses with
 The `ludo` module provides download management and application logging. It is
 registered as a global table.
 
-### 4.1 `ludo.newDownload(url [, output_dir [, mode [, filename]]])` -> id, status, output_path
+### 4.1 `ludo.newDownload(url [, output_dir [, mode [, filename [, headers]]]])` -> id, status, output_path
 
 Enqueue a new download.
 
@@ -883,6 +916,10 @@ status from the preflight HEAD request, and the resolved output path.
     application's configured output directory.
 - `mode` (number, optional) — Download mode constant. Defaults to `ludo.DOWNLOAD_NOW`.
 - `filename` (string, optional) — Suggested output filename (basename). When provided, Ludo will use this as the filename during preflight and resolution; the final path may be adjusted to avoid collisions.
+- `headers` (table, optional) — Extra HTTP headers sent with the actual CDN GET
+    request (but **not** the preflight HEAD). Useful for sending `Referer`,
+    `Cookie`, or other headers required by a CDN. Format: `{["Name"]="Value", ...}`.
+    Multiple headers are supported.
 
 **Returns:**
 - `id` (number) - The assigned download ID for tracking.
@@ -892,6 +929,10 @@ status from the preflight HEAD request, and the resolved output path.
 **Constants:**
 - `ludo.DOWNLOAD_NOW` - Start downloading immediately.
 - `ludo.DOWNLOAD_QUEUE` - Add to queue, start when a slot is free.
+
+**Note on 403 from preflight HEAD:** Some CDNs (e.g. TikTok) block unauthenticated
+HEAD probes but serve the content on authenticated GET. When the URL was freshly
+extracted from an authenticated page fetch, it is safe to queue on 403.
 
 ```lua
 -- Download immediately to default directory
@@ -907,6 +948,21 @@ local id = ludo.newDownload("https://example.com/file.zip", nil, ludo.DOWNLOAD_Q
 -- Suggest an output filename (basename)
 local id, status, output_path = ludo.newDownload("https://example.com/stream", nil, ludo.DOWNLOAD_NOW, "my_show_episode1.mp4")
 print(output_path)  -- e.g. C:\\Downloads\\my_show_episode1.mp4
+
+-- Pass extra headers required by CDN (e.g. TikTok requires Referer + tt_chain_token)
+local tt_chain = http.read_cookie(cookie_path, "tt_chain_token")
+local _, dl_status, output = ludo.newDownload(
+    play_url, outdir, ludo.DOWNLOAD_NOW, "video.mp4", {
+        ["Referer"]  = "https://www.tiktok.com/",
+        ["Cookie"]   = "tt_chain_token=" .. (tt_chain or ""),
+    })
+if dl_status == 200 or dl_status == 206 or dl_status == 0 then
+    ludo.logSuccess("queued → " .. output)
+elseif dl_status == 403 then
+    ludo.logSuccess("queued (CDN probe blocked) → " .. output)
+else
+    ludo.logError("preflight HTTP " .. dl_status)
+end
 ```
 
 ### 4.2 `ludo.pauseDownload(id)`
@@ -1897,15 +1953,16 @@ return plugin
 | `http.url_encode` | `(str)` | `encoded` |
 | `http.url_decode` | `(str)` | `decoded` |
 | `http.parse_url` | `(url)` | `{scheme, host, port, path, query}` |
-| `http.read_cookie` | `(filepath, name)` | `value` or `nil` |
+| `http.read_cookie` | `(filepath, name)` | `value` or `nil` (HttpOnly cookies supported) |
 | `http.base64_encode` | `(str)` | `encoded` |
 | `http.base64_decode` | `(str)` | `decoded` |
+| `http.sha256` | `(str)` | `32-byte raw binary digest` |
 
 ### Ludo Functions
 
 | Function | Signature | Returns |
 |----------|-----------|---------|
-| `ludo.newDownload` | `(url [, dir [, mode [, filename]]])` | `id, status, output_path` |
+| `ludo.newDownload` | `(url [, dir [, mode [, filename [, headers]]]])` | `id, status, output_path` |
 | `ludo.pauseDownload` | `(id)` | — |
 | `ludo.removeDownload` | `(id)` | — |
 | `ludo.logError` | `(msg)` | — |
@@ -1985,6 +2042,8 @@ but is written in Lua.  This section provides a systematic translation guide.
 | `urllib.parse.urlparse(url)` | `http.parse_url(url)` | Returns table with `.scheme`, `.host`, etc. |
 | `base64.b64encode(s)` | `http.base64_encode(s)` | |
 | `base64.b64decode(s)` | `http.base64_decode(s)` | |
+| `hashlib.sha256(s).digest()` | `http.sha256(s)` | Returns raw 32-byte binary, not hex |
+| `hashlib.sha256(a).copy().update(b).digest()` | `http.sha256(a .. b)` | Concatenate inputs |
 | `re.search(r'...', text)` | `text:match("...")` | See pattern cheat sheet |
 | `re.findall(r'...', text)` | Loop with `text:gmatch("...")` | |
 | `re.sub(r'...', repl, text)` | `text:gsub("...", repl)` | |

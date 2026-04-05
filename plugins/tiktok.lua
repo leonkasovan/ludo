@@ -9,6 +9,13 @@
 --   For restricted/following-only content, export your TikTok cookies in
 --   Netscape format and save as: <OutputDirectory>/tiktok_cookies.txt
 --
+-- WAF CHALLENGE BYPASS
+--   TikTok serves a "Please wait..." bot-check page when it detects a
+--   non-browser TLS fingerprint (X-TT-System-Error: 3, ~650 bytes).
+--   The plugin detects this and solves the embedded SHA-256 proof-of-work
+--   challenge (technique from yt-dlp tiktok.py _solve_challenge_and_set_cookies).
+--   See: plugins/tiktok.lua solve_waf_challenge()
+--
 -- NOTE: TikTok's play URLs carry short-lived signed tokens. The download is
 -- started immediately after extracting the URL to avoid token expiry.
 --
@@ -142,6 +149,88 @@ local function item_from_universal(udata, video_id)
     return nil
 end
 
+-- ─── WAF Challenge Bypass ─────────────────────────────────────────────────────
+--
+-- TikTok challenge page structure (id= attributes on <p> elements):
+--   id="cs"  class="BASE64_JSON"   — challenge params after base64+JSON decode
+--   id="wci" class="COOKIE_NAME"   — name of the WCI challenge cookie
+--   id="rci" class="RCI_NAME"      — optional: rci cookie name
+--   id="rs"  class="RCI_VALUE"     — optional: rci cookie value (raw, not base64)
+--
+-- challenge JSON: { "v":{"a":"<b64>","b":<ts>,"c":"<b64>"},"s":"<b64>" }
+-- Algorithm: find i in [0,1000000] s.t. SHA256(b64decode(v.a)+tostring(i)) == b64decode(v.c)
+-- Solution:  challenge.d = base64_encode(tostring(i))
+-- Cookie:    wci_name = base64_encode(json_encode(challenge))
+
+local function element_class(html, id)
+    -- Try id= then class= attribute order
+    local v = html:match('<[%a]+[^>]+id="' .. id .. '"[^>]+class="([^"]*)"')
+    if v then return v end
+    -- Try class= then id= attribute order
+    v = html:match('<[%a]+[^>]+class="([^"]*)"[^>]+id="' .. id .. '"')
+    return v
+end
+
+local function solve_waf_challenge(body)
+    local cs_raw = element_class(body, "cs")
+    if not cs_raw or cs_raw == "" then
+        ludo.logError("TikTok WAF: <*  id=\"cs\"> class not found in page")
+        return nil
+    end
+
+    -- Restore any stripped base64 padding
+    local padded = cs_raw
+    local rem = #padded % 4
+    if rem > 0 then padded = padded .. string.rep("=", 4 - rem) end
+
+    local cs_bytes = http.base64_decode(padded)
+    local ok, challenge = pcall(json.decode, cs_bytes)
+    if not ok or type(challenge) ~= "table" then
+        ludo.logError("TikTok WAF: challenge JSON decode failed: " .. tostring(challenge))
+        return nil
+    end
+
+    local v = challenge.v
+    if type(v) ~= "table" or not v.a or not v.c then
+        ludo.logError("TikTok WAF: unexpected challenge structure (v.a/v.c missing)")
+        return nil
+    end
+
+    -- Proof-of-work: find i where SHA256(b64decode(v.a) .. tostring(i)) == b64decode(v.c)
+    local prefix   = http.base64_decode(v.a)
+    local expected = http.base64_decode(v.c)
+
+    ludo.logInfo("TikTok WAF: solving SHA-256 PoW (max 1 000 000 iterations) ...")
+    local d_value = nil
+    for i = 0, 1000000 do
+        if http.sha256(prefix .. tostring(i)) == expected then
+            d_value = http.base64_encode(tostring(i))
+            ludo.logInfo("TikTok WAF: solution found at i=" .. i)
+            break
+        end
+    end
+
+    if not d_value then
+        ludo.logError("TikTok WAF: no solution in [0,1000000]")
+        return nil
+    end
+
+    -- Build WCI cookie value: base64(json({...challenge...}))
+    challenge.d = d_value
+    local ok2, cookie_json = pcall(json.encode, challenge)
+    if not ok2 then
+        ludo.logError("TikTok WAF: json.encode failed: " .. tostring(cookie_json))
+        return nil
+    end
+    local wci_value = http.base64_encode(cookie_json)
+    local wci_name  = element_class(body, "wci") or "_wafchallengeid"
+    local rci_name  = element_class(body, "rci")
+    local rci_value = element_class(body, "rs")
+
+    ludo.logInfo("TikTok WAF: wci_name=" .. wci_name)
+    return wci_name, wci_value, rci_name, rci_value
+end
+
 -- ─── Validate ────────────────────────────────────────────────────────────────
 
 function plugin.validate(url)
@@ -170,12 +259,13 @@ function plugin.process(url)
 
     local outdir = ludo.getOutputDirectory()
 
-    -- Cookie jar support
+    -- Cookie jar: always set the path so server-set cookies (e.g. tt_chain_token)
+    -- are persisted back to the file after each http.get call.
     local cookie_path = outdir .. "/tiktok_cookies.txt"
+    http.set_cookie(cookie_path)
     local ck = io.open(cookie_path, "r")
     if ck then
         ck:close()
-        http.set_cookie(cookie_path)
         ludo.logInfo("TikTok: using cookie file: " .. cookie_path)
     end
 
@@ -195,6 +285,48 @@ function plugin.process(url)
     if status ~= 200 then
         ludo.logError(("TikTok: HTTP %d fetching page"):format(status))
         return
+    end
+
+    -- ── WAF challenge detection & bypass ─────────────────────────────────────
+    -- WAF challenge page is ~650 bytes and contains <p id="cs" class="BASE64">
+    if #body < 3000 and body:find('id="cs"') then
+        ludo.logInfo(("TikTok: WAF challenge detected (%d bytes), solving ..."):format(#body))
+
+        -- Save debug copy for analysis
+        local dbg = io.open(outdir .. "/tiktok_debug_" .. video_id .. "_waf.html", "w")
+        if dbg then dbg:write(body); dbg:close() end
+
+        local wci_name, wci_value, rci_name, rci_value = solve_waf_challenge(body)
+        if not wci_name then
+            ludo.logError("TikTok: WAF bypass failed — try refreshing " .. cookie_path)
+            return
+        end
+
+        -- Build Cookie header string with WAF solution
+        local cookie_parts = { wci_name .. "=" .. wci_value }
+        if rci_name and rci_value and rci_name ~= "" and rci_value ~= "" then
+            cookie_parts[#cookie_parts + 1] = rci_name .. "=" .. rci_value
+        end
+        local cookie_header = table.concat(cookie_parts, "; ")
+
+        body, status = http.get(canon_url, {
+            user_agent = DESKTOP_UA,
+            timeout    = REQUEST_TIMEOUT,
+            headers    = {
+                ["Accept"]          = "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+                ["Accept-Language"] = "en-US,en;q=0.9",
+                ["Referer"]         = TIKTOK_HOME .. "/",
+                ["Sec-Fetch-Dest"]  = "document",
+                ["Sec-Fetch-Mode"]  = "navigate",
+                ["Cookie"]          = cookie_header,
+            },
+        })
+
+        if status ~= 200 then
+            ludo.logError(("TikTok: HTTP %d after WAF retry"):format(status))
+            return
+        end
+        ludo.logInfo(("TikTok: WAF bypass succeeded (body=%d bytes)"):format(#body))
     end
 
     local play_url = nil
@@ -231,7 +363,6 @@ function plugin.process(url)
 
     -- Strategy 3: Regex fallback — search raw HTML for playAddr
     if not play_url then
-        -- playAddr appears as a JSON string value; may have escaped slashes
         local raw = body:match('"playAddr"%s*:%s*"(https?[^"]+)"')
             or body:match('"play_addr"%s*:%s*{[^}]*"url_list"%s*:%s*%["(https?[^"]+)"')
         if raw then
@@ -242,20 +373,46 @@ function plugin.process(url)
 
     if not play_url then
         ludo.logError("TikTok: failed to extract play URL for video_id=" .. video_id)
+        -- Save debug page for analysis
+        local dbg2 = io.open(outdir .. "/tiktok_debug_" .. video_id .. ".html", "w")
+        if dbg2 then
+            dbg2:write(body)
+            dbg2:close()
+            ludo.logInfo("TikTok: page saved for debug: tiktok_debug_" .. video_id .. ".html")
+        end
         return
     end
 
-    play_url = unescape_url(play_url)
-
-    -- Build filename from description (title) or video_id
-    local base = (title and #title > 2) and safe_name(title) or ("tiktok_" .. video_id)
-    local filename = base .. "_" .. video_id .. ".mp4"
-
+    -- Build a clean filename and queue the download.
+    -- The tt_chain_token cookie (set by the server during the page fetch and
+    -- persisted back to cookie_path via CURLOPT_COOKIEJAR) must be sent with
+    -- the CDN GET request; the URL's tk=tt_chain_token parameter binds to it.
+    local filename = safe_name(title or ("tiktok_" .. video_id)) .. "_" .. video_id .. ".mp4"
+    local dl_headers = {
+        ["Referer"]         = TIKTOK_HOME .. "/",
+        ["Accept"]          = "*/*",
+        ["Accept-Language"] = "en-US,en;q=0.9",
+    }
+    local tt_chain  = http.read_cookie(cookie_path, "tt_chain_token")
+    local sessionid = http.read_cookie(cookie_path, "sessionid")
+    local cookie_parts = {}
+    if tt_chain  and tt_chain  ~= "" then cookie_parts[#cookie_parts + 1] = "tt_chain_token=" .. tt_chain  end
+    if sessionid and sessionid ~= "" then cookie_parts[#cookie_parts + 1] = "sessionid="      .. sessionid end
+    if #cookie_parts > 0 then
+        dl_headers["Cookie"] = table.concat(cookie_parts, "; ")
+        ludo.logInfo("TikTok: attaching cookies to download request: " .. dl_headers["Cookie"]:sub(1, 60) .. "...")
+    else
+        ludo.logInfo("TikTok: no session cookies found — download may fail")
+    end
     local _, dl_status, output = ludo.newDownload(
-        play_url, outdir, ludo.DOWNLOAD_NOW, filename)
+        play_url, outdir, ludo.DOWNLOAD_NOW, filename, dl_headers)
 
     if dl_status == 200 or dl_status == 206 or dl_status == 0 then
         ludo.logSuccess("TikTok: queued → " .. (output or filename))
+    elseif dl_status == 403 then
+        -- TikTok CDN blocks HEAD probes without session cookies; the signed
+        -- play URL should still be accessible via GET, so queue it anyway.
+        ludo.logSuccess("TikTok: queued (CDN blocked HEAD probe) → " .. (output or filename))
     else
         ludo.logError(("TikTok: preflight HTTP %d for %s"):format(dl_status, filename))
     end

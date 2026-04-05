@@ -429,6 +429,7 @@ static void *url_worker_thread(void *arg) {
                                  DOWNLOAD_NOW,
                                  NULL,
                                  NULL,
+                                 NULL,  /* extra_headers */
                                  NULL);
         }
     }

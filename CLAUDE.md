@@ -67,11 +67,17 @@ function plugin.process(url)
     local video_url = ...  -- extract from body
 
     local outdir = ludo.getOutputDirectory()
+    -- Optional: pass extra HTTP headers sent with the CDN GET request.
+    -- Useful when the server requires Referer or a session cookie (e.g. TikTok).
     local _, dl_status, output = ludo.newDownload(
-        video_url, outdir, ludo.DOWNLOAD_NOW, "filename.mp4")
+        video_url, outdir, ludo.DOWNLOAD_NOW, "filename.mp4",
+        { ["Referer"] = "https://site.com/" })
 
     if dl_status == 200 or dl_status == 206 or dl_status == 0 then
         ludo.logSuccess("Queued → " .. (output or "filename.mp4"))
+    elseif dl_status == 403 then
+        -- CDN may block HEAD probes; queue anyway if URL was just extracted.
+        ludo.logSuccess("Queued (CDN blocked HEAD probe) → " .. (output or "filename.mp4"))
     else
         ludo.logError("Preflight HTTP " .. dl_status)
     end
@@ -89,9 +95,13 @@ local body, status, headers = http.post(url, body_str, { ... })
 http.set_cookie("path/to/cookies.txt")   -- Netscape format
 http.clear_cookies()
 local csrf = http.read_cookie("cookies.txt", "csrftoken")
+local b64   = http.base64_encode(str)        -- binary-safe
+local raw   = http.base64_decode(b64)        -- binary-safe
+local digest = http.sha256(str)              -- 32-byte raw binary digest
 
 -- Ludo
-local id, status, path = ludo.newDownload(url [, dir [, mode [, filename]]])
+local id, status, path = ludo.newDownload(url [, dir [, mode [, filename [, headers]]]])
+-- headers is an optional table: { ["Name"] = "Value", ... } (e.g. Referer, Cookie)
 ludo.DOWNLOAD_NOW     -- constant
 ludo.DOWNLOAD_QUEUE   -- constant
 ludo.getOutputDirectory()  -- returns the configured output folder
@@ -170,7 +180,7 @@ if ck then ck:close(); http.set_cookie(cookie_path) end
 | `youtube.lua` | InnerTube API (android_vr/ios client) | No (public) |
 | `instagram.lua` | REST API → GraphQL → embed scrape | `sessionid` cookie for most content |
 | `facebook.lua` | Relay `playable_url` → `browser_native` → VideoConfig → `<video>` | Cookie for most content |
-| `tiktok.lua` | SIGI_STATE JSON → __UNIVERSAL_DATA__ JSON → regex | Cookies for private content; TikTok may serve challenge pages to bot UA |
+| `tiktok.lua` | SIGI_STATE → __UNIVERSAL_DATA__ → regex; **WAF bypass via SHA-256 PoW** (yt-dlp technique) | Cookies for private content |
 | `mediafire.lua` | HTML scrape `a.popsok` href | No |
 | `dropbox.lua` | Redirect `?dl=0` → `?dl=1` | No |
 | `gdrive.lua` | Google Drive direct download URL | No (public) |

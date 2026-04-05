@@ -887,7 +887,26 @@ static void perform_download(Download *d) {
             curl_easy_setopt(curl, CURLOPT_RANGE, "0-");
         }
 
+        /* Apply any plugin-supplied extra headers */
+        struct curl_slist *extra_hdrs = NULL;
+        if (d->extra_headers[0] != '\0') {
+            char hbuf[sizeof(d->extra_headers)];
+            strncpy(hbuf, d->extra_headers, sizeof(hbuf) - 1);
+            hbuf[sizeof(hbuf) - 1] = '\0';
+            char *line = strtok(hbuf, "\n");
+            while (line) {
+                size_t len = strlen(line);
+                if (len > 0 && line[len - 1] == '\r') line[--len] = '\0';
+                if (len > 0)
+                    extra_hdrs = curl_slist_append(extra_hdrs, line);
+                line = strtok(NULL, "\n");
+            }
+            if (extra_hdrs)
+                curl_easy_setopt(curl, CURLOPT_HTTPHEADER, extra_hdrs);
+        }
+
         res = curl_easy_perform(curl);
+        if (extra_hdrs) { curl_slist_free_all(extra_hdrs); extra_hdrs = NULL; }
         curl_easy_getinfo(curl, CURLINFO_RESPONSE_CODE, &http_code);
 
         fclose(fp);
@@ -1441,6 +1460,7 @@ void download_manager_shutdown(void) {
 
 int download_manager_add(const char *url, const char *output_dir, DownloadMode mode,
                          const char *original_url, const char *hint_filename,
+                         const char *extra_headers,
                          DownloadAddResult *result)
 {
     (void)mode; /* DOWNLOAD_NOW vs DOWNLOAD_QUEUE handled via queue order */
@@ -1483,6 +1503,8 @@ int download_manager_add(const char *url, const char *output_dir, DownloadMode m
     } else
         filename_from_url(url, d->status.filename, sizeof(d->status.filename));
     d->status.filename[sizeof(d->status.filename) - 1] = '\0';
+    if (extra_headers && extra_headers[0] != '\0')
+        strncpy(d->extra_headers, extra_headers, sizeof(d->extra_headers) - 1);
     d->status.state = DOWNLOAD_STATE_QUEUED;
     d->status.start_time = time(NULL);
     d->next = g_mgr.list;

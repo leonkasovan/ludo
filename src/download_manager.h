@@ -57,6 +57,7 @@ struct Download {
     size_t           bytes_since_last_flush;
     volatile int     stop_requested;
     int              marked_for_removal;
+    char             extra_headers[4096]; /* optional "Name: Value\n" pairs appended to GET request */
     Download        *next;
 };
 
@@ -100,6 +101,7 @@ void download_manager_shutdown(void);
    When result is non-NULL, fills it with preflight status/output-path data. */
 int  download_manager_add(const char *url, const char *output_dir, DownloadMode mode,
                           const char *original_url, const char *hint_filename,
+                          const char *extra_headers,
                           DownloadAddResult *result);
 
 /* Pause / resume / remove — may be called from the GUI thread */
