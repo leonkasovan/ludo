@@ -213,6 +213,10 @@ void lua_engine_load_plugins(const char *plugin_dir) {
         free(plugin_dir_w);
         return;
     }
+    ludo_mutex_lock(&g_engine.mutex);
+    g_engine.count = 0;
+    memset(g_engine.plugins, 0, sizeof(g_engine.plugins));
+    ludo_mutex_unlock(&g_engine.mutex);
     do {
         wchar_t full_path[512];
         char utf8_path[512];

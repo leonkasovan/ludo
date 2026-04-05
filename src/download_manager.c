@@ -543,7 +543,7 @@ static int dm_rename_utf8(const char *old_path, const char *new_path) {
         free(wnew);
         return -1;
     }
-    rv = _wrename(wold, wnew);
+    rv = MoveFileExW(wold, wnew, MOVEFILE_REPLACE_EXISTING);
     free(wold);
     free(wnew);
     return rv;
@@ -647,18 +647,14 @@ static int xfer_info_cb(void *clientp, curl_off_t dltotal, curl_off_t dlnow,
             d->status.speed_bps = 0.0;
         }
     }
+    ProgressUpdate upd = {0};
+    if (d) {
+        upd.status = d->status;  // copy under lock
+    }
+    int has_update = (d != NULL);
     ludo_mutex_unlock(&g_mgr.list_mutex);
 
-    if (d) {
-        ProgressUpdate upd = {0};
-        upd.status.id            = ctx->download_id;
-        upd.status.state         = DOWNLOAD_STATE_RUNNING;
-        upd.status.progress      = d->status.progress;
-        upd.status.downloaded_bytes = d->status.downloaded_bytes;
-        upd.status.total_bytes   = d->status.total_bytes;
-        upd.status.speed_bps     = d->status.speed_bps;
-        upd.status.start_time    = d->status.start_time;
-        fflush(ctx->fp); /* ensure progress is saved to disk in case of crash */
+    if (has_update) {
         gui_dispatch_update(&upd);
     }
 
@@ -1129,8 +1125,14 @@ static void db_save_and_archive(void) {
     if (f_gz) gzclose(f_gz);
 
     /* Atomic replace: ensures data isn't corrupted if power is lost during save */
-    dm_remove_utf8(DB_PATH);
-    dm_rename_utf8(DB_PATH ".tmp", DB_PATH);
+#ifdef _WIN32
+    wchar_t *tmp_w = dm_utf8_to_wide_dup(DB_PATH ".tmp");
+    wchar_t *db_w  = dm_utf8_to_wide_dup(DB_PATH);
+    if (tmp_w && db_w) MoveFileExW(tmp_w, db_w, MOVEFILE_REPLACE_EXISTING);
+    free(tmp_w); free(db_w);
+#else
+    rename(DB_PATH ".tmp", DB_PATH);
+#endif
 }
 
 static void db_load(const char *path) {
@@ -1243,20 +1245,20 @@ static void db_load(const char *path) {
             
             /* TASK 2: Sync size with file on disk if it exists */
             if (d->status.filename[0] != '\0') {
-                char path[2048];
+                char local_path[2048];
                 const char *sep = "";
                 size_t dlen = strlen(d->output_dir);
                 if (dlen > 0) {
                     char last = d->output_dir[dlen - 1];
                     if (last != '/' && last != '\\') sep = "/";
                 }
-                snprintf(path, sizeof(path), "%s%s%s", d->output_dir, sep, d->status.filename);
+                snprintf(local_path, sizeof(local_path), "%s%s%s", d->output_dir, sep, d->status.filename);
 #ifdef _WIN32
                 struct _stat64 st;
 #else
                 struct stat st;
 #endif
-                if (dm_stat_utf8(path, &st) == 0) {
+                if (dm_stat_utf8(local_path, &st) == 0) {
                     d->status.downloaded_bytes = (int64_t)st.st_size;
                     if (d->status.total_bytes > 0) {
                         d->status.progress = (100.0 * (double)st.st_size) / (double)d->status.total_bytes;
@@ -1309,7 +1311,7 @@ static void *worker_thread(void *arg) {
 
 void download_manager_init(int num_workers, const char *output_dir) {
     const LudoConfig *cfg = ludo_config_get();
-    // dm_log_init();
+    dm_log_init();
     dm_log("[init] num_workers=%d  output_dir=%s",
            num_workers, output_dir ? output_dir : "(null -> ./downloads/)");
 
@@ -1434,7 +1436,7 @@ void download_manager_shutdown(void) {
     g_mgr.shutdown_complete = 1;
     g_mgr.initialized = 0;
     dm_log("[shutdown] complete");
-    // dm_log_close();
+    dm_log_close();
 }
 
 int download_manager_add(const char *url, const char *output_dir, DownloadMode mode,
@@ -1474,9 +1476,11 @@ int download_manager_add(const char *url, const char *output_dir, DownloadMode m
         strncpy(d->output_dir, output_dir, sizeof(d->output_dir) - 1);
     else
         strncpy(d->output_dir, g_mgr.output_dir, sizeof(d->output_dir) - 1);
-    if (hint_filename && hint_filename[0] != '\0')
-        strncpy(d->status.filename, hint_filename, sizeof(d->status.filename) - 1);
-    else
+    if (hint_filename && hint_filename[0] != '\0') {
+        char safe[sizeof(d->status.filename)];
+        decode_filename_component(hint_filename, safe, sizeof(safe));
+        strncpy(d->status.filename, safe, sizeof(d->status.filename) - 1);
+    } else
         filename_from_url(url, d->status.filename, sizeof(d->status.filename));
     d->status.filename[sizeof(d->status.filename) - 1] = '\0';
     d->status.state = DOWNLOAD_STATE_QUEUED;
@@ -1492,12 +1496,34 @@ int download_manager_add(const char *url, const char *output_dir, DownloadMode m
     strncpy(upd.status.filename, d->status.filename, sizeof(upd.status.filename) - 1);
     gui_dispatch_update(&upd);
 
-    /* Fill result immediately with provisional data.  The worker thread will
-       run probe_download_head() as part of perform_download() and dispatch any
-       filename update via the progress callback — no blocking network call here. */
+    /* When the caller wants preflight data (result != NULL), perform a
+       synchronous HEAD request so we can return the real server HTTP status
+       code.  Plugins rely on checking status == 200 to determine whether the
+       server accepted the URL.  The result is cached on the Download so the
+       worker thread skips a redundant HEAD request when it later calls
+       perform_download(). */
     if (result) {
-        result->id = d->status.id;
-        result->status_code = 200; /* successfully queued */
+        HeaderCtx hctx;
+        memset(&hctx, 0, sizeof(hctx));
+        hctx.download_id = d->status.id;
+        probe_download_head(url, &hctx);
+
+        ludo_mutex_lock(&g_mgr.list_mutex);
+        d->has_preflight            = 1;
+        d->preflight_status_code    = hctx.response_code;
+        d->preflight_content_length = hctx.content_length;
+        if (hctx.has_filename) {
+            strncpy(d->preflight_filename, hctx.filename,
+                    sizeof(d->preflight_filename) - 1);
+            d->preflight_filename[sizeof(d->preflight_filename) - 1] = '\0';
+            strncpy(d->status.filename, hctx.filename,
+                    sizeof(d->status.filename) - 1);
+            d->status.filename[sizeof(d->status.filename) - 1] = '\0';
+        }
+        ludo_mutex_unlock(&g_mgr.list_mutex);
+
+        result->id          = d->status.id;
+        result->status_code = hctx.response_code;
         build_download_path(d, result->output_path, sizeof(result->output_path));
     }
 
@@ -1629,11 +1655,11 @@ void download_manager_set_output_dir(const char *output_dir) {
     ludo_mutex_unlock(&g_mgr.list_mutex);
 }
 
-Download *download_manager_find(int id) {
+int download_manager_find_status(int id, DownloadStatus *out) {
+    int found = 0;
     ludo_mutex_lock(&g_mgr.list_mutex);
-    Download *found = NULL;
     for (Download *d = g_mgr.list; d; d = d->next) {
-        if (d->status.id == id) { found = d; break; }
+        if (d->status.id == id) { *out = d->status; found = 1; break; }
     }
     ludo_mutex_unlock(&g_mgr.list_mutex);
     return found;

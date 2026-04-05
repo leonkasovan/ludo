@@ -1,4 +1,5 @@
 #include "http_module.h"
+#include "dm_log.h"
 
 #include <stdlib.h>
 #include <string.h>
@@ -7,6 +8,36 @@
 #include <lua.h>
 #include <lauxlib.h>
 #include <curl/curl.h>
+
+#ifdef DEBUG
+static int http_curl_debug_cb(CURL *handle, curl_infotype type,
+                              char *data, size_t size, void *userp)
+{
+    (void)handle; (void)userp;
+    if (type == CURLINFO_HEADER_OUT || type == CURLINFO_HEADER_IN) {
+        /* Log each line of the header block */
+        size_t start = 0;
+        const char *tag = (type == CURLINFO_HEADER_OUT) ? "http >" : "http <";
+        while (start < size) {
+            size_t end = start;
+            while (end < size && data[end] != '\r' && data[end] != '\n') end++;
+            if (end > start)
+                dm_log("[%s] %.*s", tag, (int)(end - start), data + start);
+            while (end < size && (data[end] == '\r' || data[end] == '\n')) end++;
+            start = end;
+        }
+        return 0;
+    }
+    if (type != CURLINFO_TEXT) return 0;
+    char buf[256];
+    size_t n = size < sizeof(buf) - 1 ? size : sizeof(buf) - 1;
+    memcpy(buf, data, n);
+    while (n > 0 && (buf[n-1] == '\n' || buf[n-1] == '\r')) n--;
+    buf[n] = '\0';
+    if (n > 0) dm_log("[http] %s", buf);
+    return 0;
+}
+#endif
 
 /* ------------------------------------------------------------------ */
 /* Per-Lua-state session data (stored as a light userdata in registry) */
@@ -291,6 +322,12 @@ static int http_request(lua_State *L, int method) {
                      "Mozilla/5.0 LUDO/1.0");
     /* Always enable cookie engine */
     curl_easy_setopt(curl, CURLOPT_COOKIEFILE, ""); /* activate in-memory jar */
+#ifdef DEBUG
+    curl_easy_setopt(curl, CURLOPT_VERBOSE, 1L);
+    curl_easy_setopt(curl, CURLOPT_DEBUGFUNCTION, http_curl_debug_cb);
+    curl_easy_setopt(curl, CURLOPT_DEBUGDATA, NULL);
+    dm_log("[http_request] %s", url);
+#endif
 
     /* Apply session cookiejar if set */
     if (session && session->cookie_file[0]) {
@@ -466,6 +503,69 @@ static int lua_http_parse_url(lua_State *L) {
     return 1;
 }
 
+/* http.read_cookie(filepath, name) -> value or nil
+ *
+ * Read a Netscape-format cookie file and return the value of a named
+ * cookie.  Returns nil if the file cannot be opened or the cookie is
+ * not found.  This is a pure file-parsing helper — it works on both
+ * the session cookie file (set via http.set_cookie) and user-exported
+ * cookie files.
+ *
+ * Netscape format (one cookie per line, TAB-separated):
+ *   domain \t flag \t path \t secure \t expiry \t name \t value
+ * Lines starting with '#' are comments and are skipped.
+ */
+static int lua_http_read_cookie(lua_State *L) {
+    const char *filepath = luaL_checkstring(L, 1);
+    const char *name     = luaL_checkstring(L, 2);
+
+    FILE *f = fopen(filepath, "r");
+    if (!f) {
+        lua_pushnil(L);
+        return 1;
+    }
+
+    char line[4096];
+    while (fgets(line, sizeof(line), f)) {
+        /* Skip comment lines and empty lines */
+        if (line[0] == '#' || line[0] == '\n' || line[0] == '\r')
+            continue;
+
+        /* Parse: domain \t flag \t path \t secure \t expiry \t name \t value */
+        char *fields[7];
+        int n = 0;
+        char *tok = line;
+        while (n < 7) {
+            fields[n] = tok;
+            char *tab = strchr(tok, '\t');
+            if (tab) {
+                *tab = '\0';
+                tok = tab + 1;
+                n++;
+            } else {
+                n++;
+                break;
+            }
+        }
+        if (n < 7) continue;
+
+        /* Strip trailing \r\n from the value field */
+        size_t vlen = strlen(fields[6]);
+        while (vlen > 0 && (fields[6][vlen-1] == '\r' || fields[6][vlen-1] == '\n'))
+            fields[6][--vlen] = '\0';
+
+        if (strcmp(fields[5], name) == 0) {
+            lua_pushlstring(L, fields[6], vlen);
+            fclose(f);
+            return 1;
+        }
+    }
+
+    fclose(f);
+    lua_pushnil(L);
+    return 1;
+}
+
 /* ------------------------------------------------------------------ */
 /* Module registration                                                  */
 /* ------------------------------------------------------------------ */
@@ -482,6 +582,7 @@ static const luaL_Reg http_funcs[] = {
     { "parse_url",    lua_http_parse_url   },
     { "base64_encode", http_base64_encode  },
     { "base64_decode", http_base64_decode  },
+    { "read_cookie",  lua_http_read_cookie },
     { NULL,           NULL                 }
 };
 

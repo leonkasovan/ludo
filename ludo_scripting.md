@@ -24,6 +24,8 @@ that returns a table with two functions: `validate(url)` and `process(url)`.
 4. [Ludo Library (`ludo`)](#4-ludo-library)
 5. [UI Library (`ui`)](#5-ui-library)
 6. [Plugin System](#6-plugin-system)
+7. [Converting yt-dlp Extractors to Ludo Plugins](#7-converting-yt-dlp-extractors-to-ludo-plugins)
+8. [Testing and Debugging Plugins](#8-testing-and-debugging-plugins)
 
 ---
 
@@ -175,6 +177,144 @@ end
 local result = string.gsub(s, "World", "Lua")
 print(result)  --> Hello, Lua!
 ```
+
+### 1.5.1 Lua Pattern Reference
+
+Lua does **not** use PCRE/POSIX regular expressions. It has its own lightweight
+pattern language used by `string.match`, `string.gmatch`, `string.gsub`, and
+`string.find`.
+
+#### Character Classes
+
+| Class | Meaning |
+|-------|---------|
+| `.`   | Any character |
+| `%a`  | Any letter (A-Z, a-z) |
+| `%d`  | Any digit (0-9) |
+| `%l`  | Any lowercase letter |
+| `%u`  | Any uppercase letter |
+| `%w`  | Any alphanumeric character (letter or digit) |
+| `%s`  | Any whitespace (space, tab, newline, etc.) |
+| `%p`  | Any punctuation character |
+| `%c`  | Any control character |
+| `%x`  | Any hexadecimal digit (0-9, a-f, A-F) |
+| `%A`  | Complement of `%a` (any non-letter) |
+| `%D`  | Complement of `%d` (any non-digit) |
+
+Uppercase versions of a class represent the complement (opposite) of the
+lowercase version.
+
+#### Quantifiers
+
+| Quantifier | Meaning |
+|------------|---------|
+| `+`  | 1 or more (greedy) |
+| `*`  | 0 or more (greedy) |
+| `-`  | 0 or more (lazy / non-greedy) |
+| `?`  | 0 or 1 |
+
+#### Anchors & Special
+
+| Symbol | Meaning |
+|--------|---------|
+| `^`    | Start of string (only at the beginning of a pattern) |
+| `$`    | End of string (only at the end of a pattern) |
+| `%b()` | Balanced match between two characters, e.g. `%b()` matches balanced parentheses |
+| `%%`   | Literal `%` |
+| `%.`   | Literal `.` (escape any magic character with `%`) |
+
+**Magic characters** that must be escaped with `%` to match literally:
+`( ) . % + - * ? [ ^ $`
+
+#### Character Sets `[ ]`
+
+```lua
+"[aeiou]"        -- matches any vowel
+"[0-9]"          -- matches any digit (same as %d)
+"[%w_]"          -- matches alphanumeric or underscore
+"[^%s]"          -- matches any non-whitespace character
+"[%w%-_]"        -- matches alphanumeric, hyphen, or underscore
+```
+
+#### Captures `( )`
+
+Parentheses create **captures** — the matched substrings are returned by
+`string.match` or passed to replacement functions in `string.gsub`.
+
+```lua
+-- Single capture
+local year = string.match("Date: 2026-04-05", "(%d%d%d%d)")
+print(year)  --> 2026
+
+-- Multiple captures
+local y, m, d = string.match("2026-04-05", "(%d+)-(%d+)-(%d+)")
+print(y, m, d)  --> 2026  04  05
+
+-- Non-capturing: use the full match (no parentheses)
+local full = string.match("hello world", "%a+")
+print(full)  --> hello
+```
+
+#### Practical Examples for Plugin Development
+
+```lua
+-- Match a URL host
+local host = url:match("^https?://([^/?#]+)")
+-- "https://www.instagram.com/p/abc" -> "www.instagram.com"
+
+-- Match a path segment
+local shortcode = url:match("/p/([%w%-_]+)")
+-- "https://www.instagram.com/p/aye83DjauH/" -> "aye83DjauH"
+
+-- Optional path segments (reel or reels)
+local id = url:match("/reels?/([%w%-_]+)")
+-- matches both /reel/xxx and /reels/xxx
+
+-- Extract JSON value from HTML
+local video_id = html:match('"video_id"%s*:%s*"([^"]+)"')
+
+-- Extract an attribute from an HTML tag
+local src = html:match('<video[^>]+src="([^"]+)"')
+
+-- Extract query parameter
+local v = query:match("[?&]v=([^&]+)")
+
+-- Iterate over all matches (gmatch)
+for link in body:gmatch('href="(/[^"]+/download/[^"]+)"') do
+    print(link)
+end
+
+-- Greedy vs lazy
+local s = "<div>hello</div><div>world</div>"
+print(s:match("<div>(.-)</div>"))  --> hello   (lazy -)
+print(s:match("<div>(.+)</div>"))  --> hello</div><div>world  (greedy +)
+
+-- Escape literal dots in domain patterns
+url:match("instagram%.com")   -- correct: matches "instagram.com"
+url:match("instagram.com")    -- WRONG: '.' matches any character
+
+-- Match colon-separated key-value in text
+local key, val = line:match('^([^:]+):%s*(.*)')
+
+-- tab-separated fields (cookie files)
+local name, value = line:match("\t([^\t]+)\t([^\t]*)$")
+```
+
+#### Key Differences from Python `re` / PCRE
+
+| Python `re`     | Lua pattern      | Notes |
+|-----------------|-------------------|-------|
+| `\d`            | `%d`              | `%` instead of `\` for classes |
+| `\w`            | `%w`              | Lua `%w` does not include `_` |
+| `[\w_]` or `\w` | `[%w_]`           | Add `_` explicitly in Lua |
+| `\s`            | `%s`              | |
+| `\b`            | (not available)   | No word-boundary anchor |
+| `.*?`           | `.-`              | Lazy quantifier uses `-` |
+| `.+?`           | `.+` with `-`     | Use `(.-)` for lazy |
+| `(?:...)`       | (not available)   | All `()` are captures |
+| `re.IGNORECASE` | (not available)   | Use `[Aa]` or `string.lower()` first |
+| `|` (alternation) | (not available) | Use multiple `match()` calls |
+| `{3,5}`         | (not available)   | Manually expand or use loops |
 
 ### 1.6 Error Handling
 
@@ -649,7 +789,44 @@ end
 return plugin
 ```
 
-### 3.12 `http.base64_encode(str)` → string
+### 3.12 `http.read_cookie(filepath, name)` → string|nil
+
+Read a named cookie value from a Netscape-format cookie file.
+
+This is useful for checking session state — for example reading
+a `csrftoken` or `sessionid` cookie after `http.set_cookie()` has been
+configured and requests have populated the cookie jar.
+
+**Parameters:**
+- `filepath` (string) — Path to the Netscape cookie-jar file.
+- `name` (string) — The cookie name to search for.
+
+**Returns:**
+- `value` (string) — The cookie value, or `nil` if the file cannot be
+  opened or the cookie is not found.
+
+**Cookie file format** (one cookie per line, TAB-separated fields):
+```
+# Netscape HTTP Cookie File
+.instagram.com	TRUE	/	TRUE	0	csrftoken	abc123def456
+.instagram.com	TRUE	/	TRUE	0	sessionid	789xyz...
+```
+
+```lua
+-- Read csrftoken from the session cookie jar
+local csrf = http.read_cookie("instagram_session.txt", "csrftoken")
+if csrf then
+    ludo.logInfo("CSRF token found")
+end
+
+-- Check if user is authenticated
+local sid = http.read_cookie("instagram_cookies.txt", "sessionid")
+if sid then
+    ludo.logInfo("User session is available")
+end
+```
+
+### 3.13 `http.base64_encode(str)` → string
 
 Base64-encode a string (binary-safe).
 
@@ -664,7 +841,7 @@ local b64 = http.base64_encode("hello world")
 print(b64)  --> aGVsbG8gd29ybGQ=
 ```
 
-### 3.13 `http.base64_decode(str)` → string
+### 3.14 `http.base64_decode(str)` → string
 
 Decode a base64-encoded string (binary-safe).
 
@@ -1720,6 +1897,9 @@ return plugin
 | `http.url_encode` | `(str)` | `encoded` |
 | `http.url_decode` | `(str)` | `decoded` |
 | `http.parse_url` | `(url)` | `{scheme, host, port, path, query}` |
+| `http.read_cookie` | `(filepath, name)` | `value` or `nil` |
+| `http.base64_encode` | `(str)` | `encoded` |
+| `http.base64_decode` | `(str)` | `decoded` |
 
 ### Ludo Functions
 
@@ -1769,3 +1949,544 @@ return plugin
 | `ui.NewDatePicker` | `()` | `DateTimePicker` |
 | `ui.NewTimePicker` | `()` | `DateTimePicker` |
 | `ui.NewArea` | `()` | `Area` |
+
+---
+
+## 7. Converting yt-dlp Extractors to Ludo Plugins
+
+[yt-dlp](https://github.com/yt-dlp/yt-dlp) is a Python video downloader whose
+*extractors* (one per site) are the de-facto reference for scraping media from
+social-media and video-hosting sites.  A Ludo plugin serves the same purpose
+but is written in Lua.  This section provides a systematic translation guide.
+
+### 7.1 Architecture Mapping
+
+| yt-dlp concept | Ludo equivalent | Notes |
+|----------------|-----------------|-------|
+| `InfoExtractor` class | `plugin` table returned by the `.lua` file | One class → one file |
+| `_VALID_URL` (regex) | `plugin.validate(url)` (Lua patterns) | See [Python→Lua pattern table](#715-regex-to-lua-pattern-cheat-sheet) |
+| `_real_extract(self, url)` | `plugin.process(url)` | Must call `ludo.newDownload()` |
+| `self._download_webpage(url, ...)` | `http.get(url, opts)` | Returns `body, status, headers` |
+| `self._download_json(url, ...)` | `http.get()` + `json.decode()` | Combine two calls |
+| `self._search_regex(pattern, ...)` | `string.match(text, pattern)` | Translate regex to Lua pattern |
+| `self._search_json(pattern, ...)` | `extract_json_object(text, pattern)` | Write a JSON brace-matcher (see §7.6) |
+| `traverse_obj(data, ...)` | Nested table indexing with nil-checks | `data and data.key1 and data.key1.key2` |
+| `self.report_warning(msg)` | `ludo.logError(msg)` or `ludo.logInfo(msg)` | |
+| `self.raise_login_required(msg)` | `ludo.logError(msg); return nil` | |
+| `self._get_cookies(url)` | `http.read_cookie(filepath, name)` | Reads Netscape cookie jar |
+| `url_or_none(val)` | `if val and val ~= "" then ... end` | |
+| `int_or_none(val)` | `tonumber(val)` | Returns `nil` on failure |
+| `float_or_none(val)` | `tonumber(val)` | Same function in Lua |
+| `str_or_none(val)` | `if type(val) == "string" then ... end` | |
+| `json.dumps(obj)` | `json.encode(obj)` | Lua CJSON |
+| `json.loads(text)` | `json.decode(text)` | Wrap in `pcall()` |
+| `urllib.parse.quote(s)` | `http.url_encode(s)` | |
+| `urllib.parse.unquote(s)` | `http.url_decode(s)` | |
+| `urllib.parse.urlparse(url)` | `http.parse_url(url)` | Returns table with `.scheme`, `.host`, etc. |
+| `base64.b64encode(s)` | `http.base64_encode(s)` | |
+| `base64.b64decode(s)` | `http.base64_decode(s)` | |
+| `re.search(r'...', text)` | `text:match("...")` | See pattern cheat sheet |
+| `re.findall(r'...', text)` | Loop with `text:gmatch("...")` | |
+| `re.sub(r'...', repl, text)` | `text:gsub("...", repl)` | |
+| `hashlib.md5(s).hexdigest()` | (not built-in) | See §7.7 |
+| `itertools.count(1)` | `for page = 1, math.huge do ... end` | |
+
+### 7.2 Step-by-Step Conversion Process
+
+1. **Study `_VALID_URL`** — note the URL patterns the extractor handles.
+   Convert the Python regex to one or more `string.match()` / `string.find()`
+   calls in `plugin.validate(url)`.
+
+2. **Study `_real_extract()`** — identify the extraction strategies in order
+   (API calls, GraphQL, HTML scraping, embed page fallbacks).
+
+3. **Map HTTP requests** — every `self._download_webpage` / `_download_json`
+   maps to `http.get()` or `http.post()`.  Set headers, user agent, cookies
+   via the `options` table.
+
+4. **Map JSON parsing** — replace `self._search_json(pattern, webpage, ...)`
+   with a combination of `string.match()` to find the JSON region and
+   `json.decode()` to parse it.
+
+5. **Map regex searches** — translate Python regex in `_search_regex(...)` to
+   Lua patterns.  When Lua patterns are insufficient (alternation, look-ahead),
+   use multiple `match()` calls with `or`.
+
+6. **Handle output** — instead of returning an info dict, call
+   `ludo.newDownload(video_url, dir, mode, filename)` for each media URL
+   found.
+
+7. **Handle authentication** — if the extractor checks for `sessionid` or
+   other cookies, use `http.set_cookie(filepath)` + `http.read_cookie()`.
+
+### 7.3 Common Python → Lua Translations
+
+#### Downloading and parsing a web page
+
+```python
+# yt-dlp (Python)
+webpage = self._download_webpage(url, video_id)
+```
+```lua
+-- Ludo (Lua)
+local body, status = http.get(url, {
+    user_agent = "Mozilla/5.0 ...",
+    timeout    = 20,
+})
+if status ~= 200 then
+    ludo.logError("HTTP " .. status)
+    return nil
+end
+```
+
+#### Downloading and parsing JSON
+
+```python
+# yt-dlp (Python)
+data = self._download_json(api_url, video_id, headers=headers)
+```
+```lua
+-- Ludo (Lua)
+local body, status = http.get(api_url, {
+    user_agent = UA,
+    timeout    = 20,
+    headers    = {
+        ["X-Custom-Header"] = "value",
+    },
+})
+if status ~= 200 then return nil end
+local ok, data = pcall(json.decode, body)
+if not ok then
+    ludo.logError("JSON parse error: " .. tostring(data))
+    return nil
+end
+```
+
+#### POSTing JSON to an API
+
+```python
+# yt-dlp (Python)
+data = self._download_json(
+    api_url, video_id,
+    data=json.dumps(payload).encode(),
+    headers={'Content-Type': 'application/json'})
+```
+```lua
+-- Ludo (Lua)
+local payload = json.encode({
+    videoId = video_id,
+    context = { client = { hl = "en" } },
+})
+local body, status = http.post(api_url, payload, {
+    headers = { ["Content-Type"] = "application/json" },
+})
+local ok, data = pcall(json.decode, body)
+```
+
+#### Extracting a value from HTML with regex
+
+```python
+# yt-dlp
+video_url = self._search_regex(
+    r'"video_url"\s*:\s*"([^"]+)"', webpage, 'video url', default=None)
+```
+```lua
+-- Ludo
+local video_url = body:match('"video_url"%s*:%s*"([^"]+)"')
+```
+
+#### `traverse_obj` → nested table access
+
+```python
+# yt-dlp
+username = traverse_obj(media, ('owner', 'username'))
+edges = traverse_obj(media, ('edge_sidecar_to_children', 'edges', ..., 'node'))
+```
+```lua
+-- Ludo: safe nested access
+local username = media and media.owner and media.owner.username
+
+-- For arrays: iterate edges
+local edges = media
+    and media.edge_sidecar_to_children
+    and media.edge_sidecar_to_children.edges
+if edges then
+    for _, edge in ipairs(edges) do
+        local node = edge.node
+        -- process node
+    end
+end
+```
+
+#### Cookie / session management
+
+```python
+# yt-dlp
+if self._get_cookies(url).get('sessionid'):
+    # authenticated path
+```
+```lua
+-- Ludo
+http.set_cookie("session.txt")
+local sid = http.read_cookie("cookies.txt", "sessionid")
+if sid then
+    -- authenticated path
+end
+```
+
+### 7.4 Plugin Template (Site Extractor)
+
+Use this as a starting point when converting any yt-dlp extractor:
+
+```lua
+-- plugins/sitename.lua
+local plugin = {
+    name    = "SiteName",
+    version = "20260405",
+    creator = "Your Name",
+}
+
+local json = json or require("json")
+
+local SITE_HOME   = "https://www.example.com"
+local API_BASE    = "https://api.example.com/v1"
+local DESKTOP_UA  = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+    .. "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/136.0.0.0 Safari/537.36"
+local TIMEOUT     = 20
+
+-- ── helpers ──────────────────────────────────────────────────────────
+
+local function extract_id(url)
+    -- Translate _VALID_URL regex to Lua pattern(s)
+    return url:match("/video/(%d+)")
+        or url:match("/v/([%w%-_]+)")
+end
+
+local function safe_filename(s)
+    if not s then return "video" end
+    return s:gsub("[^%w%-_]", "_"):sub(1, 80)
+end
+
+-- ── validate ─────────────────────────────────────────────────────────
+
+function plugin.validate(url)
+    if not url:match("^https?://") then return false end
+    local host = (url:match("^https?://([^/?#]+)") or ""):lower()
+    if host ~= "www.example.com" and host ~= "example.com" then
+        return false
+    end
+    return extract_id(url) ~= nil
+end
+
+-- ── process ──────────────────────────────────────────────────────────
+
+function plugin.process(url)
+    local video_id = extract_id(url)
+    if not video_id then
+        ludo.logError("SiteName: could not extract video ID from " .. url)
+        return nil
+    end
+
+    ludo.logInfo("SiteName: processing video " .. video_id)
+
+    -- Strategy 1: API
+    local api_url = API_BASE .. "/media/" .. video_id .. "/info/"
+    local body, status = http.get(api_url, {
+        user_agent = DESKTOP_UA,
+        timeout    = TIMEOUT,
+        headers    = { ["Accept"] = "application/json" },
+    })
+
+    if status == 200 then
+        local ok, data = pcall(json.decode, body)
+        if ok and data then
+            local video_url = data.video_url
+                or (data.formats and data.formats[1] and data.formats[1].url)
+            if video_url then
+                local title = data.title or ("video_" .. video_id)
+                local filename = safe_filename(title) .. ".mp4"
+                ludo.newDownload(video_url, ludo.getOutputDirectory(),
+                                ludo.DOWNLOAD_NOW, filename)
+                ludo.logSuccess("SiteName: queued → " .. filename)
+                return
+            end
+        end
+    end
+
+    -- Strategy 2: HTML scraping fallback
+    local page, pstatus = http.get(url, {
+        user_agent = DESKTOP_UA,
+        timeout    = TIMEOUT,
+    })
+    if pstatus == 200 then
+        local video_url = page:match('"video_url"%s*:%s*"([^"]+)"')
+            or page:match('<video[^>]+src="([^"]+)"')
+        if video_url then
+            ludo.newDownload(video_url, ludo.getOutputDirectory(),
+                            ludo.DOWNLOAD_NOW, "video_" .. video_id .. ".mp4")
+            ludo.logSuccess("SiteName: queued (HTML fallback)")
+            return
+        end
+    end
+
+    ludo.logError("SiteName: all strategies failed for " .. url)
+end
+
+return plugin
+```
+
+### 7.5 Regex to Lua Pattern Cheat Sheet
+
+| Python regex | Lua pattern | Notes |
+|--------------|-------------|-------|
+| `\d+` | `%d+` | |
+| `\w+` | `[%w_]+` | Lua `%w` excludes `_` |
+| `\s+` | `%s+` | |
+| `[^"]+` | `[^"]+` | Same syntax |
+| `[^/]+` | `[^/]+` | Same syntax |
+| `\.` | `%.` | Escape with `%` not `\` |
+| `\-` | `%-` | Dash is a quantifier in Lua |
+| `.*?` | `.-` | Lazy match |
+| `.+?` | `.+` → use `.-` instead | |
+| `(group)` | `(group)` | Same syntax; all groups capture |
+| `(?:group)` | (not available) | All `()` capture in Lua |
+| `a\|b` | (not available) | Use two `match()` calls with `or` |
+| `^https?://` | `^https?://` | `?` works the same |
+| `[\w-]+` | `[%w%-]+` | Escape `-` with `%` |
+| `(?P<name>...)` | `(...)` | Named groups not available |
+| `re.IGNORECASE` | (not available) | Pre-lowercase the string |
+| `re.search(pat, text)` | `text:match(pat)` | |
+| `re.findall(pat, text)` | `for m in text:gmatch(pat)` | |
+| `re.sub(pat, repl, text)` | `text:gsub(pat, repl)` | |
+
+### 7.6 Extracting JSON from HTML
+
+Many yt-dlp extractors use `_search_json()` to find a JSON blob embedded in
+JavaScript.  In Lua, write a brace-matching helper:
+
+```lua
+-- Find the first '{' after a pattern match, then walk the string tracking
+-- brace depth and string escaping to locate the matching '}'.
+-- Returns the parsed Lua table, or nil.
+local function extract_json_object(text, pattern)
+    local _, pe = text:find(pattern)
+    if not pe then return nil end
+    local start = text:find("{", pe + 1)
+    if not start then return nil end
+
+    local depth, in_str, escaped = 0, false, false
+    for i = start, #text do
+        local c = text:sub(i, i)
+        if escaped then
+            escaped = false
+        elseif c == "\\" and in_str then
+            escaped = true
+        elseif c == '"' then
+            in_str = not in_str
+        elseif not in_str then
+            if c == "{" then depth = depth + 1
+            elseif c == "}" then
+                depth = depth - 1
+                if depth == 0 then
+                    local ok, val = pcall(json.decode, text:sub(start, i))
+                    if ok then return val end
+                    return nil
+                end
+            end
+        end
+    end
+    return nil
+end
+
+-- Usage (matches yt-dlp's _search_json):
+-- Python: self._search_json(r'window\._sharedData\s*=', webpage, 'shared data', video_id)
+-- Lua:
+local shared = extract_json_object(body, "window%._sharedData%s*=")
+```
+
+### 7.7 Things yt-dlp Has That Ludo Does Not
+
+| yt-dlp feature | Workaround in Ludo |
+|----------------|-------------------|
+| Regex alternation `a\|b` | Multiple `match()` calls: `url:match(pat1) or url:match(pat2)` |
+| Named capture groups | Use positional captures |
+| `hashlib.md5/sha1` | Implement in Lua with `bit32`, or skip if not essential |
+| MPD/DASH manifest parsing | Not built-in; extract the best video URL from JSON instead |
+| Signature deciphering | Not supported; target unauthenticated/API routes |
+| Subtitle extraction | Not applicable — Ludo downloads files, not metadata |
+| Proxy / SOCKS support | Not exposed in `http` module yet |
+| `--cookies-from-browser` | Export cookies with a browser extension and place in output dir |
+
+### 7.8 Real-World Example: Instagram
+
+The `plugins/instagram.lua` file is a complete example of converting yt-dlp's
+`instagram.py` extractor into a Ludo plugin.  Key techniques used:
+
+1. **`_VALID_URL`** → `validate()` with four `url:match()` calls joined by `or`.
+2. **base-64 shortcode→PK** conversion → big-integer arithmetic with
+   `bigint_muladd()` (Lua 5.2 doubles lose precision for 18-digit IDs).
+3. **Three extraction strategies** tried in order:
+   - REST API (`/media/{pk}/info/`) — requires `sessionid` cookie.
+   - GraphQL query (`doc_id=8845758582119845`) — works for public posts.
+   - Embed page scraping (`/p/{id}/embed/`) — unauthenticated fallback.
+4. **Cookie management** — `http.set_cookie()` + `http.read_cookie()` to
+   check `csrftoken` and seed session from a user-exported cookie file.
+5. **Carousel support** — iterates `edge_sidecar_to_children.edges` or
+   `carousel_media` to queue multiple video downloads from one post.
+
+---
+
+## 8. Testing and Debugging Plugins
+
+### 8.1 Prerequisites
+
+Build Ludo in Debug configuration to get `ludo-debug.exe`:
+
+```bash
+cd build
+cmake --build . --config Debug
+```
+
+The debug build writes verbose curl logs and Lua output to `ludo.log` in the
+current working directory.
+
+### 8.2 Running a Plugin Script
+
+Use the `-s` (or `--script`) flag to execute a standalone Lua script:
+
+```bash
+cd build
+./ludo-debug.exe -s test_myplugin.lua
+```
+
+The `-s` flag runs the script inside the full Ludo Lua environment — all
+built-in modules (`http`, `ludo`, `json`, `ui`) are available.
+
+### 8.3 Writing a Test Script
+
+A test script loads a plugin with `dofile()`, tests `validate()` with known
+URLs, and then calls `process()` on a live URL.
+
+```lua
+-- build/test_myplugin.lua
+ludo.logInfo("=== MyPlugin test ===")
+
+-- 1. Load the plugin
+local ok, plugin = pcall(dofile, "plugins/myplugin.lua")
+if not ok then
+    ludo.logError("Failed to load plugin: " .. tostring(plugin))
+    return
+end
+ludo.logInfo("Loaded: " .. (plugin.name or "?"))
+
+-- 2. Test validate()
+local cases = {
+    { url = "https://www.example.com/video/12345",  expect = true  },
+    { url = "https://www.example.com/user/profile",  expect = false },
+    { url = "https://www.youtube.com/watch?v=abc",   expect = false },
+}
+
+local pass, fail = 0, 0
+for _, c in ipairs(cases) do
+    local result = plugin.validate(c.url)
+    if (result and true or false) == c.expect then
+        pass = pass + 1
+        ludo.logInfo("  PASS validate(" .. c.url .. ")")
+    else
+        fail = fail + 1
+        ludo.logError("  FAIL validate(" .. c.url .. "): got "
+            .. tostring(result) .. ", want " .. tostring(c.expect))
+    end
+end
+ludo.logInfo("validate: " .. pass .. " passed, " .. fail .. " failed")
+
+-- 3. Live test process()
+local test_url = "https://www.example.com/video/12345"
+ludo.logInfo("--- process(" .. test_url .. ")")
+local ok2, err2 = pcall(plugin.process, test_url)
+if not ok2 then
+    ludo.logError("process() error: " .. tostring(err2))
+else
+    ludo.logInfo("process() completed")
+end
+
+ludo.logInfo("=== test done ===")
+```
+
+### 8.4 Checking the Log
+
+After running the script, inspect `ludo.log` in the build directory:
+
+```bash
+# Show only your plugin's log lines
+grep "MyPlugin\|PASS\|FAIL\|error\|ERROR\|SUCCESS" build/ludo.log
+
+# Show the most recent test run (last N lines)
+tail -40 build/ludo.log
+
+# Show curl request/response details (debug build only)
+grep "\[curl\]" build/ludo.log | tail -20
+```
+
+### 8.5 Log Message Format
+
+```
+[HH:MM:SS] [LEVEL] message
+```
+
+Log levels:
+- `[INFO]` — from `ludo.logInfo()` — general progress messages.
+- `[SUCCESS]` — from `ludo.logSuccess()` — download queued successfully.
+- `[ERROR]` — from `ludo.logError()` — failures and warnings.
+- `[curl ...]` — debug-build only curl trace: request headers, response
+  headers, DNS resolution, TLS handshake, connection reuse.
+- `[add]` — download manager adding a new URL.
+- `[perform_download]` — download starting with resolved filename.
+
+### 8.6 Typical Workflow
+
+```
+1.  Write/edit plugins/myplugin.lua  (in the project root plugins/ dir)
+2.  Copy to build:   cp plugins/myplugin.lua build/plugins/
+3.  Write a test:     build/test_myplugin.lua
+4.  Run:              cd build && ./ludo-debug.exe -s test_myplugin.lua
+5.  Check output:     grep "MyPlugin\|PASS\|FAIL" ludo.log
+6.  Iterate:          fix plugin → copy → re-run → check log
+```
+
+> **Tip:** Plugins in `build/plugins/` are copies.  Always edit the canonical
+> source in the project root `plugins/` directory and copy to `build/plugins/`
+> before testing.  The CMake build copies plugins during the configure step,
+> but manual copies are faster during development.
+
+### 8.7 Debugging Tips
+
+- **Lua errors** are caught by `pcall()` in the test script and logged.
+  If the script itself has a syntax error, `ludo-debug.exe` will print the
+  Lua error to `ludo.log` and exit silently (exit code 0).
+
+- **HTTP failures** — check `ludo.log` for `[curl]` lines showing the exact
+  request URL, response status, and headers.  Common issues:
+  - `403 Forbidden` — site requires cookies or specific headers.
+  - `429 Too Many Requests` — rate-limited; wait before retrying.
+  - `301/302` — check `http.get_last_url()` for the final redirect target.
+
+- **JSON parse errors** — always wrap `json.decode()` in `pcall()`.
+  Log the raw body (or a prefix of it) to see what the server actually returned:
+  ```lua
+  if not ok then
+      ludo.logError("JSON error: " .. tostring(data))
+      ludo.logError("Body prefix: " .. body:sub(1, 200))
+  end
+  ```
+
+- **Cookie issues** — check that `http.set_cookie()` is called before any
+  HTTP requests, and verify the cookie file exists and has the expected format
+  using `http.read_cookie()`.
+
+- **Pattern mismatches** — test patterns interactively:
+  ```lua
+  local test = "https://www.instagram.com/reel/ABC123/"
+  local id = test:match("/reels?/([%w%-_]+)")
+  ludo.logInfo("Matched: " .. tostring(id))  -- should print "ABC123"
+  ```

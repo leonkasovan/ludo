@@ -72,10 +72,10 @@ typedef struct {
 
 typedef struct {
     int  id;
-    long status_code;  /* 200 = successfully queued; negative = error.
-                          The actual server HTTP status is delivered later
-                          via the progress callback once the worker probes
-                          the URL asynchronously. */
+    long status_code;  /* Real HTTP status from a synchronous HEAD preflight
+                          (e.g. 200, 206, 403, 404).  0 if the probe could not
+                          connect at all.  Only populated when result != NULL is
+                          passed to download_manager_add(). */
     char output_path[2048]; /* provisional path based on URL-derived filename;
                                may be updated via progress callback when the
                                worker resolves the real Content-Disposition name */
@@ -120,7 +120,7 @@ const char *download_manager_get_output_dir(void);
 void download_manager_set_output_dir(const char *output_dir);
 
 /* Lookup a single download by id (thread-safe read) */
-Download *download_manager_find(int id);
+int download_manager_find_status(int id, DownloadStatus *out);
 
 /* Re-dispatch the current status of all downloads to the GUI */
 void download_manager_sync_ui(void);

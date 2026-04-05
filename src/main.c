@@ -3,7 +3,6 @@
 #include "download_manager.h"
 #include "config.h"
 #include "thread_queue.h"
-#include "dm_log.h"
 #include "ui.h"
 
 #include <stdio.h>
@@ -40,7 +39,7 @@ int main(int argc, char *argv[])
         fprintf(stderr, "Failed to load config.ini\n");
     }
     const LudoConfig *cfg = ludo_config_get();
-    dm_log_init();
+    // dm_log_init();
 
     /* -------------------------------------------------------------- */
     /* Early-Check: Headless script mode                              */
@@ -102,7 +101,6 @@ int main(int argc, char *argv[])
         lua_engine_load_plugins(cfg ? cfg->plugin_dir : "plugins");
 
         lua_engine_run_script(script_path);
-        dm_log("Script %s execution completed", script_path);
 
         /* Shutdown in a consistent order with the GUI mode teardown. */
         task_queue_shutdown(&g_url_queue);
@@ -200,6 +198,6 @@ int main(int argc, char *argv[])
     task_queue_destroy(&g_url_queue);
     ludo_config_shutdown();
     uiUninit();
-    dm_log_close();
+    // dm_log_close();
     return 0;
 }

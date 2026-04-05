@@ -269,8 +269,8 @@ else()
     set(CURL_USE_SCHANNEL OFF CACHE BOOL "Disable Schannel on non-Windows" FORCE)
 endif()
 
- # ExternalProject_Add(curl_ext) removed — build curl in-tree via add_subdirectory.
- # Curl's important CMake options (BROTLI/ZSTD/SSL/etc.) are preserved below for in-tree build.
+# ExternalProject_Add(curl_ext) removed — build curl in-tree via add_subdirectory.
+# Curl's important CMake options (BROTLI/ZSTD/SSL/etc.) are preserved below for in-tree build.
 
 # Build libcurl from bundled source instead of ExternalProject
 # Configure curl build options for in-tree build
@@ -315,7 +315,11 @@ set(CURL_DISABLE_LIBCURL_OPTION ON CACHE BOOL "Disable --libcurl option from cur
 set(CURL_USE_LIBPSL OFF CACHE BOOL "Disable libpsl" FORCE)
 set(USE_LIBIDN2 OFF CACHE BOOL "Disable libidn2" FORCE)
 set(USE_NGHTTP2 OFF CACHE BOOL "Disable HTTP/2 support" FORCE)
-
+# Disable curl documentation and examples to prevent missing directory errors
+set(BUILD_LIBCURL_DOCS OFF CACHE BOOL "Disable libcurl man pages" FORCE)
+set(BUILD_MISC_DOCS OFF CACHE BOOL "Disable misc man pages" FORCE)
+set(ENABLE_CURL_MANUAL OFF CACHE BOOL "Disable curl manual" FORCE)
+set(BUILD_EXAMPLES OFF CACHE BOOL "Disable libcurl examples" FORCE)
 add_subdirectory(${CMAKE_SOURCE_DIR}/third_party/curl-8.19.0 ${CURL_BUILD_DIR})
 
 # Ensure the produced libcurl target (libcurl_static) builds after external libs

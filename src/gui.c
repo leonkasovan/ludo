@@ -157,15 +157,14 @@ static void play_sound(const char *filepath) {
         fclose(f);
     }
 
-    char cmd[2048];
     /* aplay is standard for ALSA. paplay can be used for PulseAudio.
        Running it with '&' ensures it doesn't block the GUI thread. */
-    snprintf(cmd, sizeof(cmd), "aplay -q \"%s\" >/dev/null 2>&1 &", filepath);
-    int rc = system(cmd);
-    if (rc == -1) {
+    char *args[] = { "aplay", "-q", (char *)filepath, NULL };
+    pid_t pid;
+    if (posix_spawnp(&pid, "aplay", NULL, NULL, args, environ) != 0) {
         gui_log(LOG_ERROR, "play_sound: failed to execute aplay/paplay for %s", filepath);
     } else {
-        gui_log(LOG_INFO, "play_sound: executed: %s (rc=%d)", filepath, rc);
+        // gui_log(LOG_INFO, "play_sound: executed aplay/paplay for %s (pid=%d)", filepath, (int)pid);
     }
 }
 #endif
@@ -1336,7 +1335,11 @@ static void toolbar_icons_shutdown(void) {
 #endif
 
 static DownloadRow *add_row(int id, const char *filename) {
-    if (g_gui.row_count >= MAX_DOWNLOAD_ROWS) return NULL;
+    if (g_gui.row_count >= MAX_DOWNLOAD_ROWS) {
+        static int warned = 0;
+        if (!warned) { gui_log(LOG_WARNING, "MAX_DOWNLOAD_ROWS reached; further downloads will not appear in the table."); warned = 1; }
+        return NULL;
+    }
 
     DownloadRow *r = &g_gui.rows[g_gui.row_count];
     memset(r, 0, sizeof(*r));

@@ -1,5 +1,5 @@
 #include "config.h"
-
+#include "platform_utils.h"
 #include <ctype.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -177,7 +177,16 @@ static int config_save(const LudoConfig *cfg, const char *path) {
 
     if (!cfg || !path || path[0] == '\0') return 0;
 
+#ifdef _WIN32
+    // use _wfopen via the same pattern as dm_fopen_utf8 or fopen_utf8
+    wchar_t *wpath = utf8_to_wide_dup(path);
+    const wchar_t *wmode = L"w";
+    if (!wpath) return 0;
+    fp = _wfopen(wpath, wmode);
+    free(wpath);
+#else
     fp = fopen(path, "w");
+#endif
     if (!fp) return 0;
 
     fprintf(fp, "[ludo]\n");
@@ -287,7 +296,15 @@ int ludo_config_init(const char *path) {
     g_config.path[sizeof(g_config.path) - 1] = '\0';
     g_config.dirty = 0;
 
+#ifdef _WIN32
+    wchar_t *wpath = utf8_to_wide_dup(g_config.path);
+    const wchar_t *wmode = L"r";
+    if (!wpath) return 0;
+    fp = _wfopen(wpath, wmode);
+    free(wpath);
+#else
     fp = fopen(g_config.path, "r");
+#endif
     if (!fp) {
         g_config.initialized = 1;
         g_config.dirty = 1;
