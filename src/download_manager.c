@@ -61,7 +61,7 @@ void dm_log_init(void) {
 
     if (!g_log_enabled) return;
 
-    g_log_fp = dm_fopen_utf8("ludo.log", "a");
+    g_log_fp = dm_fopen_utf8("ludo.log", "w");
     if (!g_log_fp) { g_log_enabled = 0; return; }
     /* Header line so runs are separated */
     fprintf(g_log_fp, "\n===== dm session start =====\n");
