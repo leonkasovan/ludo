@@ -312,3 +312,8 @@ See `ludo_scripting.md` §7 for the full guide. Summary:
 - After editing a plugin, just rebuild (`cmake --build build --config Debug`);
   CMake's custom command copies all `plugins/*.lua` to `build/plugins/`
   automatically.
+  
+## 9. Plugin Reference from yt-dlp
+
+We can use yt-dlp extractor source code (C:\Projects\yt-dlp-2026.03.17\yt_dlp\extractor\facebook.py) and yt-dlp.log as reference for making ludo plugin.
+Run `yt-dlp.exe --cookies downloads\facebook_cookies.txt  --print-traffic -v https://www.facebook.com/reel/1520832029440197 >yt-dlp.log 2>&1` and check yt-dlp.log
