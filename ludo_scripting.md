@@ -9,6 +9,7 @@ by Ludo:
 | HTTP   | `http`      | HTTP client powered by libcurl |
 | Ludo   | `ludo`      | Download manager & application control |
 | UI     | `ui`        | Native GUI widgets (libui) |
+| Zip    | `zip`       | ZIP archive creation (zlib deflate) |
 
 Scripts are loaded from the `plugins/` directory. Each plugin is a `.lua` file
 that returns a table with two functions: `validate(url)` and `process(url)`.
@@ -23,6 +24,7 @@ that returns a table with two functions: `validate(url)` and `process(url)`.
 3. [HTTP Library (`http`)](#3-http-library)
 4. [Ludo Library (`ludo`)](#4-ludo-library)
 5. [UI Library (`ui`)](#5-ui-library)
+5. [Zip Library (`zip`)](#5-zip-library)
 6. [Plugin System](#6-plugin-system)
 7. [Converting yt-dlp Extractors to Ludo Plugins](#7-converting-yt-dlp-extractors-to-ludo-plugins)
 8. [Testing and Debugging Plugins](#8-testing-and-debugging-plugins)
@@ -2549,3 +2551,86 @@ Log levels:
   local id = test:match("/reels?/([%w%-_]+)")
   ludo.logInfo("Matched: " .. tostring(id))  -- should print "ABC123"
   ```
+
+---
+
+## 5. Zip Library (`zip`)
+
+The `zip` global provides a single function for creating standard ZIP archives
+(PKZIP 2.0 / Info-ZIP compatible) using **zlib DEFLATE** compression.  No
+external dependency beyond the vendored `zlib-1.2.8` is required.
+
+### 5.1 `zip.create`
+
+```lua
+-- Pack an explicit list of files (entries use the basename only):
+local status, errmsg = zip.create(output_path, { file1, file2, ... })
+
+-- Pack an entire directory tree (recursive):
+local status, errmsg = zip.create(output_path, directory)
+
+-- Pack a directory tree, including only files matching a glob pattern:
+local status, errmsg = zip.create(output_path, directory, glob_filter)
+```
+
+**Parameters**
+
+| Parameter     | Type   | Description |
+|---------------|--------|-------------|
+| `output_path` | string | Destination `.zip` file path. Created or overwritten. |
+| `{ files }`   | table  | Array of source file paths. Each file is stored using its **basename** only (no subdirectory). |
+| `directory`   | string | Root directory to pack.  All files are included recursively; entry names preserve the relative path under `directory`. |
+| `glob_filter` | string | Optional case-insensitive glob pattern (`*` = any sequence, `?` = any single char) applied to **basenames**.  Example: `"*.mp4"`. Omit or pass `nil`/`""` to include every file. |
+
+**Return values**
+
+| Value    | Type    | Meaning |
+|----------|---------|---------|
+| `status` | integer | `0` on success; `-1` on any failure. |
+| `errmsg` | string  | Error description — present **only** when `status == -1`. |
+
+### 5.2 Examples
+
+```lua
+-- 1. Pack two downloaded files into a single archive
+local out = ludo.getOutputDirectory() .. "/bundle.zip"
+local status, err = zip.create(out, {
+    ludo.getOutputDirectory() .. "/video.mp4",
+    ludo.getOutputDirectory() .. "/cover.jpg",
+})
+if status ~= 0 then
+    ludo.logError("zip failed: " .. (err or "unknown error"))
+else
+    ludo.logSuccess("Created " .. out)
+end
+
+-- 2. Archive the entire downloads folder
+local status, err = zip.create(
+    ludo.getOutputDirectory() .. "/all.zip",
+    ludo.getOutputDirectory()
+)
+
+-- 3. Archive only MP4 files from the downloads folder
+local status, err = zip.create(
+    ludo.getOutputDirectory() .. "/videos.zip",
+    ludo.getOutputDirectory(),
+    "*.mp4"
+)
+if status ~= 0 then
+    ludo.logError("zip failed: " .. (err or "unknown"))
+end
+```
+
+### 5.3 Notes
+
+- Archives are written in **PKZIP 2.0** format; compatible with Windows
+  Explorer, 7-Zip, unzip, and all standard ZIP tools.
+- All files are compressed with **DEFLATE** (`Z_DEFAULT_COMPRESSION`).
+  The original file is not modified.
+- On **Windows** all paths are handled as **UTF-8** and converted to UTF-16
+  internally for Win32 API calls — filenames with non-ASCII characters work
+  correctly.
+- Maximum entries per archive: **4096**.
+- Maximum in-archive path length: **511 bytes**.
+- ZIP64 (archives > 4 GB or containing files > 4 GB) is **not** supported.
+

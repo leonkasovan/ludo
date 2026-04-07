@@ -109,6 +109,11 @@ ludo.logInfo("msg")
 ludo.logSuccess("msg")
 ludo.logError("msg")
 
+-- Zip
+local status [, errmsg] = zip.create(output_path, { file1, file2, ... })
+local status [, errmsg] = zip.create(output_path, directory [, glob_filter])
+-- status: 0 = success, -1 = failure; glob_filter e.g. "*.mp4" (case-insensitive, * and ? wildcards)
+
 -- JSON (global)
 local ok, data = pcall(json.decode, body)
 local s = json.encode(table)

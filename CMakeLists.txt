@@ -415,6 +415,7 @@ set(LUDO_SOURCES
     src/lua_engine.c
     src/http_module.c
     src/ludo_module.c
+    src/zip_module.c
     src/download_manager.c
     src/thread_queue.c
     third_party/libuilua/libuilua.c

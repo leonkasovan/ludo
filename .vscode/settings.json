@@ -1,11 +1,11 @@
 {
   "terminal.integrated.profiles.windows": {
     "w64devkit": {
-      "path": "C:/w64devkit/bin/sh.exe",
+      "path": "D:\\w64devkit\\bin\\sh.exe",
       "cwd": "${workspaceFolder}"
     },
     "MSYS2": {
-      "path": "C:\\msys64\\usr\\bin\\bash.exe",
+      "path": "D:\\msys64\\usr\\bin\\bash.exe",
       "args": ["--login", "-i"],
       "env": {
         "MSYSTEM": "MINGW64",
