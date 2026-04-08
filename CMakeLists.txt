@@ -53,11 +53,24 @@ find_package(Threads REQUIRED)
 # Build options
 # ------------------------------------------------------------
 
+set(LUDO_LIB_OUTPUT_DIR ${CMAKE_BINARY_DIR}/libs)
+
+function(set_static_archive_output target)
+    set_target_properties(${target} PROPERTIES
+        ARCHIVE_OUTPUT_DIRECTORY ${LUDO_LIB_OUTPUT_DIR}
+    )
+    if(CMAKE_CONFIGURATION_TYPES)
+        set_target_properties(${target} PROPERTIES
+            ARCHIVE_OUTPUT_DIRECTORY_DEBUG ${LUDO_LIB_OUTPUT_DIR}
+            ARCHIVE_OUTPUT_DIRECTORY_RELEASE ${LUDO_LIB_OUTPUT_DIR}
+        )
+    endif()
+endfunction()
+
 # ------------------------------------------------------------
-# zlib 1.2.8 (built from vendored source, static)
+# 1) zlib 1.2.8 (built from vendored source, static)
 # ------------------------------------------------------------
 set(ZLIB_SRC_DIR ${CMAKE_SOURCE_DIR}/third_party/zlib-1.2.8)
-set(ZLIB_OUTPUT_DIR ${CMAKE_BINARY_DIR}/zlib/lib)
 
 set(ZLIB_SOURCES
     ${ZLIB_SRC_DIR}/adler32.c
@@ -79,25 +92,19 @@ set(ZLIB_SOURCES
 
 add_library(zlib_static STATIC ${ZLIB_SOURCES})
 target_include_directories(zlib_static PUBLIC ${ZLIB_SRC_DIR})
+set_static_archive_output(zlib_static)
 set_target_properties(zlib_static PROPERTIES
     OUTPUT_NAME zlibstatic
-    ARCHIVE_OUTPUT_DIRECTORY ${ZLIB_OUTPUT_DIR}
 )
-if(CMAKE_CONFIGURATION_TYPES)
-    set_target_properties(zlib_static PROPERTIES
-        ARCHIVE_OUTPUT_DIRECTORY_DEBUG ${ZLIB_OUTPUT_DIR}
-        ARCHIVE_OUTPUT_DIRECTORY_RELEASE ${ZLIB_OUTPUT_DIR}
-    )
-endif()
 
 if(MSVC)
-    set(ZLIB_STATIC_LIBRARY ${ZLIB_OUTPUT_DIR}/zlibstatic.lib)
+    set(ZLIB_STATIC_LIBRARY ${LUDO_LIB_OUTPUT_DIR}/zlibstatic.lib)
 else()
-    set(ZLIB_STATIC_LIBRARY ${ZLIB_OUTPUT_DIR}/libzlibstatic.a)
+    set(ZLIB_STATIC_LIBRARY ${LUDO_LIB_OUTPUT_DIR}/libzlibstatic.a)
 endif()
 
 # ------------------------------------------------------------
-# Lua 5.2.4 (built from source)
+# lua-5.2.4 (source list)
 # ------------------------------------------------------------
 set(LUA_SRC_DIR ${CMAKE_SOURCE_DIR}/third_party/lua-5.2.4/src)
 
@@ -115,215 +122,120 @@ set(LUA_SOURCES
     ${LUA_SRC_DIR}/lvm.c ${LUA_SRC_DIR}/lzio.c
 )
 
-add_library(lua STATIC ${LUA_SOURCES})
-target_include_directories(lua PUBLIC ${LUA_SRC_DIR})
+# ------------------------------------------------------------
+# 2) brotli (built from source, static)
+# ------------------------------------------------------------
+# ------------------------------------------------------------
+set(BROTLI_SRC_DIR ${CMAKE_SOURCE_DIR}/third_party/brotli)
+file(GLOB BROTLI_COMMON_SOURCES "${BROTLI_SRC_DIR}/c/common/*.c")
+file(GLOB BROTLI_DEC_SOURCES "${BROTLI_SRC_DIR}/c/dec/*.c")
+file(GLOB BROTLI_ENC_SOURCES "${BROTLI_SRC_DIR}/c/enc/*.c")
 
-if(WIN32)
-    target_compile_definitions(lua PRIVATE LUA_USE_WINDOWS)
-elseif(UNIX AND NOT APPLE)
-    target_compile_definitions(lua PRIVATE LUA_USE_LINUX)
-    target_link_libraries(lua PUBLIC m dl)
-elseif(APPLE)
-    target_compile_definitions(lua PRIVATE LUA_USE_MACOSX)
-    target_link_libraries(lua PUBLIC m dl)
-endif()
+add_library(brotlicommon_static STATIC ${BROTLI_COMMON_SOURCES})
+add_library(brotlidec_static STATIC ${BROTLI_DEC_SOURCES})
+add_library(brotlienc_static STATIC ${BROTLI_ENC_SOURCES})
+
+target_include_directories(brotlicommon_static PUBLIC ${BROTLI_SRC_DIR}/c/include)
+target_include_directories(brotlidec_static PUBLIC ${BROTLI_SRC_DIR}/c/include)
+target_include_directories(brotlienc_static PUBLIC ${BROTLI_SRC_DIR}/c/include)
+target_link_libraries(brotlidec_static PUBLIC brotlicommon_static)
+target_link_libraries(brotlienc_static PUBLIC brotlicommon_static)
+
+set_static_archive_output(brotlicommon_static)
+set_static_archive_output(brotlidec_static)
+set_static_archive_output(brotlienc_static)
 
 # ------------------------------------------------------------
-# libcurl (built from source)
+# 3) zstd-dev (built from source, static)
 # ------------------------------------------------------------
-include(ExternalProject)
-set(BROTLI_BUILD_DIR ${CMAKE_BINARY_DIR}/brotli_build)
-set(BROTLI_INSTALL_DIR ${CMAKE_BINARY_DIR}/brotli_install)
+set(ZSTD_SRC_DIR ${CMAKE_SOURCE_DIR}/third_party/zstd-dev)
+file(GLOB ZSTD_COMMON_SOURCES "${ZSTD_SRC_DIR}/lib/common/*.c")
+file(GLOB ZSTD_COMPRESS_SOURCES "${ZSTD_SRC_DIR}/lib/compress/*.c")
+file(GLOB ZSTD_DECOMPRESS_SOURCES "${ZSTD_SRC_DIR}/lib/decompress/*.c")
+file(GLOB ZSTD_DICT_SOURCES "${ZSTD_SRC_DIR}/lib/dictBuilder/*.c")
+file(GLOB ZSTD_DEPRECATED_SOURCES "${ZSTD_SRC_DIR}/lib/deprecated/*.c")
+file(GLOB ZSTD_LEGACY_SOURCES "${ZSTD_SRC_DIR}/lib/legacy/*.c")
 
-if(MSVC)
-    set(BROTLI_LIB_NAME brotlidec-static.lib)
-    set(BROTLI_ENC_NAME brotlienc-static.lib)
-    set(BROTLI_COM_NAME brotlicommon-static.lib)
-else()
-    set(BROTLI_LIB_NAME libbrotlidec-static.a)
-    set(BROTLI_ENC_NAME libbrotlienc-static.a)
-    set(BROTLI_COM_NAME libbrotlicommon-static.a)
-endif()
+add_library(zstd_static STATIC
+    ${ZSTD_COMMON_SOURCES}
+    ${ZSTD_COMPRESS_SOURCES}
+    ${ZSTD_DECOMPRESS_SOURCES}
+    ${ZSTD_DICT_SOURCES}
+    ${ZSTD_DEPRECATED_SOURCES}
+    ${ZSTD_LEGACY_SOURCES}
+)
+target_include_directories(zstd_static PUBLIC ${ZSTD_SRC_DIR}/lib ${ZSTD_SRC_DIR}/lib/common)
+target_compile_definitions(zstd_static PRIVATE ZSTD_DISABLE_ASM)
+set_static_archive_output(zstd_static)
+set_target_properties(zstd_static PROPERTIES OUTPUT_NAME zstd)
 
-if(CMAKE_BUILD_TYPE)
-    set(BROTLI_BUILD_CONFIG_ARG --config ${CMAKE_BUILD_TYPE})
-else()
-    set(BROTLI_BUILD_CONFIG_ARG "")
-endif()
+# ------------------------------------------------------------
+# 4) curl-8.19.0 (built from source, static)
+# ------------------------------------------------------------
+set(CURL_SRC_DIR ${CMAKE_SOURCE_DIR}/third_party/curl-8.19.0)
+file(GLOB_RECURSE CURL_SOURCES "${CURL_SRC_DIR}/lib/*.c")
 
-## Build brotli in-tree instead of via ExternalProject
-# Force static-only, disable CLI/tools and tests to match previous ExternalProject settings.
-set(BROTLI_BUILD_TOOLS OFF CACHE BOOL "Build/install CLI tools" FORCE)
-set(BROTLI_BUILD_TESTS OFF CACHE BOOL "Build test suite" FORCE)
-set(BROTLI_DISABLE_TESTS ON CACHE BOOL "Disable tests" FORCE)
+add_library(libcurl_static STATIC ${CURL_SOURCES})
+target_include_directories(libcurl_static
+    PUBLIC
+        ${CURL_SRC_DIR}/include
+    PRIVATE
+        ${CURL_SRC_DIR}/lib
+        ${BROTLI_SRC_DIR}/c/include
+        ${ZSTD_SRC_DIR}/lib
+        ${ZLIB_SRC_DIR}
+)
 
-# Ensure we build static libraries for bundled brotli (global BUILD_SHARED_LIBS
-# is already forced off for our in-tree builds elsewhere; set again to be explicit).
-set(BUILD_SHARED_LIBS OFF CACHE BOOL "Build shared libraries" FORCE)
+target_compile_definitions(libcurl_static PRIVATE
+    BUILDING_LIBCURL
+    CURL_STATICLIB
+    HAVE_LIBZ
+    HAVE_BROTLI
+    HAVE_ZSTD
+    CURL_DISABLE_ALTSVC
+    CURL_DISABLE_DICT
+    CURL_DISABLE_FILE
+    CURL_DISABLE_FTP
+    CURL_DISABLE_GOPHER
+    CURL_DISABLE_IMAP
+    CURL_DISABLE_IPFS
+    CURL_DISABLE_LDAP
+    CURL_DISABLE_LDAPS
+    CURL_DISABLE_MQTT
+    CURL_DISABLE_NEGOTIATE_AUTH
+    CURL_DISABLE_POP3
+    CURL_DISABLE_RTSP
+    CURL_DISABLE_SMB
+    CURL_DISABLE_SMTP
+    CURL_DISABLE_TELNET
+    CURL_DISABLE_TFTP
+)
 
-add_subdirectory(${CMAKE_SOURCE_DIR}/third_party/brotli ${BROTLI_BUILD_DIR})
-
-# Provide compatibility targets used elsewhere in this CMakeLists.
-# brotli's CMake defines targets named either brotlidec/brotlienc/brotlicommon
-# (their type follows BUILD_SHARED_LIBS). Create *_static alias targets so
-# existing references (brotlidec_static, brotlienc_static, brotlicommon_static)
-# keep working. If brotli isn't available, fall back to the previous imported
-# target behavior pointing at the install directory.
-if(TARGET brotlidec OR TARGET brotlidec-static OR TARGET brotlienc OR TARGET brotlienc-static OR TARGET brotlicommon OR TARGET brotlicommon-static)
-    if(TARGET brotlidec)
-        add_library(brotlidec_static ALIAS brotlidec)
-    elseif(TARGET brotlidec-static)
-        add_library(brotlidec_static ALIAS brotlidec-static)
-    endif()
-
-    if(TARGET brotlienc)
-        add_library(brotlienc_static ALIAS brotlienc)
-    elseif(TARGET brotlienc-static)
-        add_library(brotlienc_static ALIAS brotlienc-static)
-    endif()
-
-    if(TARGET brotlicommon)
-        add_library(brotlicommon_static ALIAS brotlicommon)
-    elseif(TARGET brotlicommon-static)
-        add_library(brotlicommon_static ALIAS brotlicommon-static)
-    endif()
-
-    # Expose include/library paths so Find modules (e.g. curl) can locate brotli.
-    set(BROTLI_INCLUDE_DIR ${CMAKE_SOURCE_DIR}/third_party/brotli/c/include CACHE PATH "Brotli include dir" FORCE)
-    if(DEFINED brotlicommon_BINARY_DIR)
-        set(BROTLI_LIBRARY ${brotlicommon_BINARY_DIR}/${BROTLI_COM_NAME} CACHE FILEPATH "Brotli library" FORCE)
-    else()
-        set(BROTLI_LIBRARY ${BROTLI_BUILD_DIR}/lib/${BROTLI_COM_NAME} CACHE FILEPATH "Brotli library" FORCE)
-    endif()
-else()
-    add_library(brotlidec_static STATIC IMPORTED GLOBAL)
-    add_library(brotlienc_static STATIC IMPORTED GLOBAL)
-    add_library(brotlicommon_static STATIC IMPORTED GLOBAL)
-    set_target_properties(brotlidec_static PROPERTIES IMPORTED_LOCATION ${BROTLI_INSTALL_DIR}/lib/${BROTLI_LIB_NAME})
-    set_target_properties(brotlienc_static PROPERTIES IMPORTED_LOCATION ${BROTLI_INSTALL_DIR}/lib/${BROTLI_ENC_NAME})
-    set_target_properties(brotlicommon_static PROPERTIES IMPORTED_LOCATION ${BROTLI_INSTALL_DIR}/lib/${BROTLI_COM_NAME})
-endif()
-
-set(ZSTD_BUILD_DIR ${CMAKE_BINARY_DIR}/zstd_build)
-set(ZSTD_INSTALL_DIR ${CMAKE_BINARY_DIR}/zstd_install)
-
-if(MSVC)
-    set(ZSTD_LIB_NAME zstd_static.lib)
-else()
-    set(ZSTD_LIB_NAME libzstd.a)
-endif()
-
-# Build zstd in-tree (was ExternalProject_Add)
-# Force static-only, no programs/tests to match previous ExternalProject settings.
-set(ZSTD_BUILD_PROGRAMS OFF CACHE BOOL "Build command-line programs" FORCE)
-set(ZSTD_BUILD_TESTS OFF CACHE BOOL "Build test suite" FORCE)
-set(ZSTD_BUILD_SHARED OFF CACHE BOOL "Build shared libraries" FORCE)
-set(ZSTD_BUILD_STATIC ON  CACHE BOOL "Build static libraries" FORCE)
-
-add_subdirectory(${CMAKE_SOURCE_DIR}/third_party/zstd-dev ${ZSTD_BUILD_DIR})
-
-# Provide compatibility targets used elsewhere in this CMakeLists
-if(TARGET libzstd_static)
-    add_library(zstd_static ALIAS libzstd_static)
-    set(ZSTD_INCLUDE_DIR ${CMAKE_SOURCE_DIR}/third_party/zstd-dev/lib CACHE PATH "Zstd include dir" FORCE)
-    if(DEFINED libzstd_BINARY_DIR)
-        set(ZSTD_LIBRARY ${libzstd_BINARY_DIR}/${ZSTD_LIB_NAME} CACHE FILEPATH "Zstd library" FORCE)
-    else()
-        set(ZSTD_LIBRARY ${ZSTD_BUILD_DIR}/lib/${ZSTD_LIB_NAME} CACHE FILEPATH "Zstd library" FORCE)
-    endif()
-    set(ZSTD_USE_STATIC_LIBS ON CACHE BOOL "Configure for static zstd libraries" FORCE)
-else()
-    # Fallback to imported target pointing to install location (if used)
-    add_library(zstd_static STATIC IMPORTED GLOBAL)
-    set_target_properties(zstd_static PROPERTIES IMPORTED_LOCATION ${ZSTD_INSTALL_DIR}/lib/${ZSTD_LIB_NAME})
-endif()
-
-set(CURL_BUILD_DIR ${CMAKE_BINARY_DIR}/curl_build)
-set(CURL_INSTALL_DIR ${CMAKE_BINARY_DIR}/curl_install)
-
-if(MSVC)
-    set(CURL_LIB_NAME libcurl.lib)
-else()
-    # MinGW builds of curl append a -d suffix for Debug builds (libcurl-d.a).
-    if(CMAKE_BUILD_TYPE STREQUAL "Debug")
-        set(CURL_LIB_NAME libcurl-d.a)
-    else()
-        set(CURL_LIB_NAME libcurl.a)
-    endif()
-endif()
-
-# Configure curl SSL backend selection for in-tree build
-# When building libcurl in-tree (`add_subdirectory`), set the curl
-# SSL backend cache variables directly so the curl CMake picks the
-# correct backend (Schannel on Windows, OpenSSL on Unix-like).
 if(WIN32)
-    set(CURL_USE_SCHANNEL ON CACHE BOOL "Enable Windows native SSL/TLS (Schannel)" FORCE)
-    set(CURL_USE_OPENSSL OFF CACHE BOOL "Disable OpenSSL for SSL/TLS on Windows" FORCE)
-elseif(APPLE)
-    # Prefer OpenSSL on macOS if available; curl can still enable Apple SecTrust
-    # for certificate verification (USE_APPLE_SECTRUST) if configured later.
-    set(CURL_USE_OPENSSL ON CACHE BOOL "Enable OpenSSL for SSL/TLS on macOS" FORCE)
-    set(CURL_USE_SCHANNEL OFF CACHE BOOL "Disable Schannel on non-Windows" FORCE)
+    target_compile_definitions(libcurl_static PRIVATE
+        USE_THREADS_WIN32
+        USE_SCHANNEL
+        USE_WINDOWS_SSPI
+    )
 else()
-    set(CURL_USE_OPENSSL ON CACHE BOOL "Enable OpenSSL for SSL/TLS on Unix-like systems" FORCE)
-    set(CURL_USE_SCHANNEL OFF CACHE BOOL "Disable Schannel on non-Windows" FORCE)
+    target_compile_definitions(libcurl_static PRIVATE USE_OPENSSL)
 endif()
 
-# ExternalProject_Add(curl_ext) removed — build curl in-tree via add_subdirectory.
-# Curl's important CMake options (BROTLI/ZSTD/SSL/etc.) are preserved below for in-tree build.
+target_link_libraries(libcurl_static PUBLIC
+    zlib_static
+    brotlidec_static
+    brotlienc_static
+    brotlicommon_static
+    zstd_static
+)
 
-# Build libcurl from bundled source instead of ExternalProject
-# Configure curl build options for in-tree build
-set(BUILD_SHARED_LIBS OFF CACHE BOOL "Build shared libraries" FORCE)
-set(BUILD_STATIC_LIBS ON CACHE BOOL "Build static libraries" FORCE)
-set(BUILD_CURL_EXE OFF CACHE BOOL "Build curl executable" FORCE)
-set(BUILD_TESTING OFF CACHE BOOL "Disable testing for curl" FORCE)
-set(CURL_USE_PKGCONFIG OFF CACHE BOOL "Disable pkg-config for curl" FORCE)
-set(CURL_ENABLE_SSL ON CACHE BOOL "Enable SSL support in curl" FORCE)
-set(ENABLE_THREADED_RESOLVER ON CACHE BOOL "Enable threaded resolver" FORCE)
-set(CURL_BROTLI ON CACHE BOOL "Enable Brotli in curl" FORCE)
-set(CURL_ZSTD ON CACHE BOOL "Enable Zstd in curl" FORCE)
-set(CURL_ZLIB ON CACHE BOOL "Enable zlib in curl" FORCE)
-set(CURL_DROP_UNUSED ON CACHE BOOL "Drop unused code/data from curl" FORCE)
+if(UNIX AND NOT APPLE)
+    find_package(OpenSSL REQUIRED)
+    target_link_libraries(libcurl_static PUBLIC OpenSSL::SSL OpenSSL::Crypto)
+endif()
 
-# Disable authentication and policy features not needed for a simple
-# download manager to reduce footprint and avoid pulling GSSAPI/SSPI.
-set(CURL_DISABLE_NEGOTIATE_AUTH ON CACHE BOOL "Disable Negotiate (SPNEGO) authentication" FORCE)
-set(CURL_DISABLE_KERBEROS_AUTH ON CACHE BOOL "Disable Kerberos authentication" FORCE)
-set(CURL_DISABLE_HSTS ON CACHE BOOL "Disable HSTS support" FORCE)
-# Disable SCP/SFTP and SSH backends to keep libcurl HTTP/HTTPS-only for the
-# download manager. These MUST be set before add_subdirectory(curl-8.19.0).
-set(CURL_DISABLE_SCP ON CACHE BOOL "Disable SCP protocol" FORCE)
-set(CURL_DISABLE_SFTP ON CACHE BOOL "Disable SFTP protocol" FORCE)
-# Force libssh/libssh2 off so curl won't find or link SSH backends.
-set(CURL_USE_LIBSSH2 OFF CACHE BOOL "Disable libssh2 support" FORCE)
-set(CURL_USE_LIBSSH OFF CACHE BOOL "Disable libssh support" FORCE)
-# Provide zlib include/library locations (use vendored zlib)
-set(ZLIB_INCLUDE_DIR ${ZLIB_SRC_DIR} CACHE PATH "Zlib include dir" FORCE)
-set(ZLIB_LIBRARY ${ZLIB_STATIC_LIBRARY} CACHE FILEPATH "Zlib library" FORCE)
-
-# Help curl find our built brotli/zstd outputs
-set(CMAKE_INCLUDE_PATH "${CMAKE_SOURCE_DIR}/third_party/zstd-dev/lib;${CMAKE_SOURCE_DIR}/third_party/brotli/c/include;${ZLIB_SRC_DIR}" CACHE STRING "Additional include paths for curl" FORCE)
-set(CMAKE_LIBRARY_PATH "${ZSTD_BUILD_DIR}/lib;${BROTLI_BUILD_DIR}/lib;${ZLIB_OUTPUT_DIR}" CACHE STRING "Additional library paths for curl" FORCE)
-
-# Add curl as a subdirectory so it is built as part of the main build
-# Limit protocols/features to only what's needed by a download manager
-# Prefer HTTP/HTTPS only. This overrides individual CURL_DISABLE_* options.
-set(HTTP_ONLY ON CACHE BOOL "Disable all protocols except HTTP (This overrides all CURL_DISABLE_* options)" FORCE)
-set(CURL_DISABLE_ALTSVC ON CACHE BOOL "Disable alt-svc support" FORCE)
-set(CURL_DISABLE_LIBCURL_OPTION ON CACHE BOOL "Disable --libcurl option from curl tool" FORCE)
-set(CURL_USE_LIBPSL OFF CACHE BOOL "Disable libpsl" FORCE)
-set(USE_LIBIDN2 OFF CACHE BOOL "Disable libidn2" FORCE)
-set(USE_NGHTTP2 OFF CACHE BOOL "Disable HTTP/2 support" FORCE)
-# Disable curl documentation and examples to prevent missing directory errors
-set(BUILD_LIBCURL_DOCS OFF CACHE BOOL "Disable libcurl man pages" FORCE)
-set(BUILD_MISC_DOCS OFF CACHE BOOL "Disable misc man pages" FORCE)
-set(ENABLE_CURL_MANUAL OFF CACHE BOOL "Disable curl manual" FORCE)
-set(BUILD_EXAMPLES OFF CACHE BOOL "Disable libcurl examples" FORCE)
-add_subdirectory(${CMAKE_SOURCE_DIR}/third_party/curl-8.19.0 ${CURL_BUILD_DIR})
-
-# Ensure the produced libcurl target (libcurl_static) builds after external libs
-add_dependencies(libcurl_static libzstd_static brotlidec_static brotlienc_static brotlicommon_static zlib_static)
+set_static_archive_output(libcurl_static)
+set_target_properties(libcurl_static PROPERTIES OUTPUT_NAME curl)
 
 # Tune libcurl_static to reduce size: enable sectioning and garbage-collect unused
 if(TARGET libcurl_static)
@@ -346,7 +258,7 @@ function(enable_dead_code_stripping target)
 endfunction()
 
 # ------------------------------------------------------------
-# libui-ng (Native CMake Build - Fixed Linker Errors)
+# 5) libui-ng (built from source, static)
 # ------------------------------------------------------------
 set(LIBUI_SRC_DIR ${CMAKE_SOURCE_DIR}/third_party/libui-ng)
 
@@ -376,6 +288,8 @@ endif()
 # 2. Create the Static Target
 add_library(libui_static STATIC ${LIBUI_COMMON_SOURCES} ${LIBUI_OS_SOURCES})
 target_include_directories(libui_static PUBLIC ${LIBUI_SRC_DIR})
+set_static_archive_output(libui_static)
+set_target_properties(libui_static PROPERTIES OUTPUT_NAME libui)
 
 # 3. Apply settings from libui's original meson.build
 target_compile_definitions(libui_static PRIVATE libui_EXPORTS _UI_STATIC)
@@ -404,6 +318,36 @@ else()
 endif()
 
 # ------------------------------------------------------------
+# 6) libuilua (built from source, static)
+# ------------------------------------------------------------
+set(LIBUILUA_SRC_DIR ${CMAKE_SOURCE_DIR}/third_party/libuilua)
+add_library(libuilua_static STATIC ${LIBUILUA_SRC_DIR}/libuilua.c)
+target_include_directories(libuilua_static PUBLIC ${LIBUILUA_SRC_DIR} ${LUA_SRC_DIR} ${LIBUI_SRC_DIR})
+target_link_libraries(libuilua_static PUBLIC libui_static)
+set_static_archive_output(libuilua_static)
+set_target_properties(libuilua_static PROPERTIES OUTPUT_NAME libuilua)
+
+# ------------------------------------------------------------
+# 7) lua-5.2.4 (built from source, static)
+# ------------------------------------------------------------
+add_library(lua_static STATIC ${LUA_SOURCES})
+target_include_directories(lua_static PUBLIC ${LUA_SRC_DIR})
+set_static_archive_output(lua_static)
+set_target_properties(lua_static PROPERTIES OUTPUT_NAME lua)
+
+if(WIN32)
+    target_compile_definitions(lua_static PRIVATE LUA_USE_WINDOWS)
+elseif(UNIX AND NOT APPLE)
+    target_compile_definitions(lua_static PRIVATE LUA_USE_LINUX)
+    target_link_libraries(lua_static PUBLIC m dl)
+elseif(APPLE)
+    target_compile_definitions(lua_static PRIVATE LUA_USE_MACOSX)
+    target_link_libraries(lua_static PUBLIC m dl)
+endif()
+
+target_link_libraries(libuilua_static PUBLIC lua_static)
+
+# ------------------------------------------------------------
 # LUDO application sources
 # ------------------------------------------------------------
 set(LUDO_SOURCES
@@ -418,7 +362,6 @@ set(LUDO_SOURCES
     src/zip_module.c
     src/download_manager.c
     src/thread_queue.c
-    third_party/libuilua/libuilua.c
 )
 
 configure_file(${CMAKE_SOURCE_DIR}/src/version.h.in ${CMAKE_BINARY_DIR}/generated/version.h @ONLY)
@@ -445,13 +388,16 @@ endif()
     if(TARGET zlib_static)
         enable_dead_code_stripping(zlib_static)
     endif()
-    if(TARGET lua)
-        enable_dead_code_stripping(lua)
+    if(TARGET lua_static)
+        enable_dead_code_stripping(lua_static)
     endif()
     if(TARGET libui_static)
         enable_dead_code_stripping(libui_static)
     endif()
-set(LUDO_EXTERNAL_DEPENDENCIES libzstd_static brotlidec_static brotlienc_static brotlicommon_static zlib_static)
+    if(TARGET libuilua_static)
+        enable_dead_code_stripping(libuilua_static)
+    endif()
+set(LUDO_EXTERNAL_DEPENDENCIES zstd_static brotlidec_static brotlienc_static brotlicommon_static zlib_static libcurl_static libui_static libuilua_static lua_static)
 add_dependencies(ludo ${LUDO_EXTERNAL_DEPENDENCIES})
 
 target_include_directories(ludo PRIVATE
@@ -468,7 +414,8 @@ target_link_libraries(ludo PRIVATE
     brotlienc_static
     brotlicommon_static
     zlib_static
-    lua
+    libuilua_static
+    lua_static
     Threads::Threads 
 )
 

@@ -1598,11 +1598,11 @@ static void on_http_clicked(uiButton *sender, void *data) {
     uiBoxSetPadded(vbox, 1);
 
     uiEntry *url_entry = uiNewEntry();
-    uiEntrySetText(url_entry, "https://www.andersonkenya1.net/files/file/93-spongebob-squarepants/");
+    uiEntrySetText(url_entry, "");
     uiBoxAppend(vbox, uiControl(url_entry), 0);
 
     uiMultilineEntry *header_entry = uiNewMultilineEntry();
-    uiMultilineEntrySetText(header_entry, "upgrade-insecure-requests: 1");
+    uiMultilineEntrySetText(header_entry, "");
     uiBoxAppend(vbox, uiControl(header_entry), 0);
 
     uiButton *send_btn = uiNewButton("Send HTTP Request");
