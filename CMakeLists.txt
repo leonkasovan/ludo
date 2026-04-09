@@ -35,6 +35,13 @@ set(LUDO_DESCRIPTION "Lua powered and streamlined download manager")
 # ------------------------------------------------------------
 get_property(LUDO_IS_MULTI_CONFIG GLOBAL PROPERTY GENERATOR_IS_MULTI_CONFIG)
 
+if(CMAKE_GENERATOR STREQUAL "Ninja" AND NOT LUDO_IS_MULTI_CONFIG)
+    message(WARNING
+        "Generator '${CMAKE_GENERATOR}' is single-config. '--config <Debug|Release>' is ignored. "
+        "Use '-G \"Ninja Multi-Config\"' to build Debug and Release from one build directory."
+    )
+endif()
+
 if(LUDO_IS_MULTI_CONFIG)
     set(CMAKE_CONFIGURATION_TYPES "Debug;Release" CACHE STRING "Available build configurations" FORCE)
 else()
@@ -56,13 +63,14 @@ find_package(Threads REQUIRED)
 set(LUDO_LIB_OUTPUT_DIR ${CMAKE_BINARY_DIR}/libs)
 
 function(set_static_archive_output target)
-    set_target_properties(${target} PROPERTIES
-        ARCHIVE_OUTPUT_DIRECTORY ${LUDO_LIB_OUTPUT_DIR}
-    )
     if(CMAKE_CONFIGURATION_TYPES)
+        # Keep config-specific static libraries separate when using multi-config generators.
         set_target_properties(${target} PROPERTIES
-            ARCHIVE_OUTPUT_DIRECTORY_DEBUG ${LUDO_LIB_OUTPUT_DIR}
-            ARCHIVE_OUTPUT_DIRECTORY_RELEASE ${LUDO_LIB_OUTPUT_DIR}
+            ARCHIVE_OUTPUT_DIRECTORY "${LUDO_LIB_OUTPUT_DIR}/$<CONFIG>"
+        )
+    else()
+        set_target_properties(${target} PROPERTIES
+            ARCHIVE_OUTPUT_DIRECTORY ${LUDO_LIB_OUTPUT_DIR}
         )
     endif()
 endfunction()
