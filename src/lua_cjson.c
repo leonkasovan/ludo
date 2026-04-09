@@ -44,6 +44,7 @@
 #include <stdarg.h>
 #include <math.h>
 #include <limits.h>
+#include <stdint.h>
 #include <lua.h>
 #include <lauxlib.h>
 #include <lualib.h>

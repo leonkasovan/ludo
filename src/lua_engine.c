@@ -160,8 +160,8 @@ static int plugin_check_contract(lua_State *L, const char *path) {
     if (status != LUA_OK || lua_pcall(L, 0, 1, 0) != LUA_OK) {
         const char *err = lua_tostring(L, -1);
         char msg[1024];
-        snprintf(msg, sizeof(msg), "[lua_engine] failed to load %s: %s",
-                 path, err ? err : "(unknown error)");
+        snprintf(msg, sizeof(msg), "[lua_engine] failed to load %.380s: %.580s",
+             path, err ? err : "(unknown error)");
         gui_log(LOG_ERROR, msg);
         lua_pop(L, 1);
         return 0;
@@ -313,7 +313,7 @@ int lua_engine_process_url(const char *url) {
         if (lua_loadfile_utf8(L, plugins[i].path) != LUA_OK) {
             const char *e = lua_tostring(L, -1);
             char msg[512];
-            snprintf(msg, sizeof(msg), "[lua_engine] load error %s: %s",
+            snprintf(msg, sizeof(msg), "[lua_engine] load error %.190s: %.280s",
                      plugins[i].path, e ? e : "?");
             gui_log(LOG_ERROR, "%s", msg);
             lua_pop(L, 1);
@@ -322,7 +322,7 @@ int lua_engine_process_url(const char *url) {
         if (lua_pcall(L, 0, 1, 0) != LUA_OK) {
             const char *e = lua_tostring(L, -1);
             char msg[512];
-            snprintf(msg, sizeof(msg), "[lua_engine] exec error %s: %s",
+            snprintf(msg, sizeof(msg), "[lua_engine] exec error %.190s: %.280s",
                      plugins[i].path, e ? e : "?");
             gui_log(LOG_ERROR, "%s", msg);
             lua_pop(L, 1);
@@ -344,7 +344,7 @@ int lua_engine_process_url(const char *url) {
             const char *e = lua_tostring(L, -1);
             char msg[512];
             snprintf(msg, sizeof(msg),
-                     "[lua_engine] validate error in %s: %s",
+                     "[lua_engine] validate error in %.180s: %.270s",
                      plugins[i].path, e ? e : "?");
             gui_log(LOG_ERROR, "%s", msg);
             lua_pop(L, 2); /* pop error + plugin table */
@@ -369,7 +369,7 @@ int lua_engine_process_url(const char *url) {
             const char *e = lua_tostring(L, -1);
             char msg[512];
             snprintf(msg, sizeof(msg),
-                     "[lua_engine] process error in %s: %s",
+                     "[lua_engine] process error in %.180s: %.270s",
                      plugins[i].path, e ? e : "?");
             gui_log(LOG_ERROR, "%s", msg);
             lua_pop(L, 2);

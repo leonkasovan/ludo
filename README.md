@@ -84,10 +84,13 @@ cmake --build build --parallel
 Multi-config examples:
 
 ```bash
-cmake -B build .
-cmake --build build --config Debug --parallel
-cmake --build build --config Release --parallel
+cmake -G "Ninja Multi-Config" -B build-multi .
+cmake --build build-multi --config Debug --parallel
+cmake --build build-multi --config Release --parallel
 ```
+
+Note: If `build/` was previously configured with single-config `Ninja`, keep using it for single-config builds,
+or remove it before switching generators. Using a separate directory like `build-multi/` avoids generator conflicts.
 
 ## Run
 
