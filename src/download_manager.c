@@ -827,7 +827,7 @@ static void perform_download(Download *d) {
             ProgressUpdate upd = {0};
             upd.status.id = d->status.id;
             upd.status.state = DOWNLOAD_STATE_FAILED;
-            snprintf(upd.error_msg, sizeof(upd.error_msg), "Cannot open output file: %s", path);
+            snprintf(upd.error_msg, sizeof(upd.error_msg), "Cannot open output file: %.220s", path);
             ludo_mutex_lock(&g_mgr.list_mutex);
             d->status.state = DOWNLOAD_STATE_FAILED;
             ludo_mutex_unlock(&g_mgr.list_mutex);

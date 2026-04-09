@@ -421,7 +421,7 @@ static void *url_worker_thread(void *arg) {
             /* No plugin matched: attempt a direct download */
             char msg[512];
             snprintf(msg, sizeof(msg),
-                     "[ludo] No plugin for URL — starting direct download: %s",
+                     "[ludo] No plugin for URL — starting direct download: %.440s",
                      task.url);
             gui_log(LOG_INFO, "%s", msg);
             download_manager_add(task.url,
@@ -1464,7 +1464,7 @@ static void on_add_clicked(uiButton *sender, void *data) {
     task_queue_push(&g_url_queue, url);
     uiEntrySetText(g_gui.url_entry, "");
     char msg[512];
-    snprintf(msg, sizeof(msg), "Queued: %s", url);
+    snprintf(msg, sizeof(msg), "Queued: %.500s", url);
     gui_log(LOG_INFO, "%s", msg);
 }
 

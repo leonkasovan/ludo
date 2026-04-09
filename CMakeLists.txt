@@ -1,10 +1,17 @@
 cmake_minimum_required(VERSION 3.16)
-project(ludo C CXX RC)
+
+if(WIN32)
+    project(ludo C CXX RC)
+else()
+    project(ludo C)
+endif()
 
 set(CMAKE_C_STANDARD 11)
 set(CMAKE_C_STANDARD_REQUIRED ON)
-set(CMAKE_CXX_STANDARD 11) 
-set(CMAKE_CXX_STANDARD_REQUIRED ON)
+if(WIN32)
+    set(CMAKE_CXX_STANDARD 11)
+    set(CMAKE_CXX_STANDARD_REQUIRED ON)
+endif()
 
 # -------------------------
 # Versioning (auto-increment build)
@@ -55,6 +62,9 @@ endif()
 # System Dependencies
 # ------------------------------------------------------------
 find_package(Threads REQUIRED) 
+if(NOT WIN32)
+    find_package(ZLIB REQUIRED)
+endif()
 
 # ------------------------------------------------------------
 # Build options
@@ -75,40 +85,42 @@ function(set_static_archive_output target)
     endif()
 endfunction()
 
-# ------------------------------------------------------------
-# 1) zlib 1.2.8 (built from vendored source, static)
-# ------------------------------------------------------------
-set(ZLIB_SRC_DIR ${CMAKE_SOURCE_DIR}/third_party/zlib-1.2.8)
+if(WIN32)
+    # ------------------------------------------------------------
+    # 1) zlib 1.2.8 (built from vendored source, static)
+    # ------------------------------------------------------------
+    set(ZLIB_SRC_DIR ${CMAKE_SOURCE_DIR}/third_party/zlib-1.2.8)
 
-set(ZLIB_SOURCES
-    ${ZLIB_SRC_DIR}/adler32.c
-    ${ZLIB_SRC_DIR}/compress.c
-    ${ZLIB_SRC_DIR}/crc32.c
-    ${ZLIB_SRC_DIR}/deflate.c
-    ${ZLIB_SRC_DIR}/gzclose.c
-    ${ZLIB_SRC_DIR}/gzlib.c
-    ${ZLIB_SRC_DIR}/gzread.c
-    ${ZLIB_SRC_DIR}/gzwrite.c
-    ${ZLIB_SRC_DIR}/infback.c
-    ${ZLIB_SRC_DIR}/inffast.c
-    ${ZLIB_SRC_DIR}/inflate.c
-    ${ZLIB_SRC_DIR}/inftrees.c
-    ${ZLIB_SRC_DIR}/trees.c
-    ${ZLIB_SRC_DIR}/uncompr.c
-    ${ZLIB_SRC_DIR}/zutil.c
-)
+    set(ZLIB_SOURCES
+        ${ZLIB_SRC_DIR}/adler32.c
+        ${ZLIB_SRC_DIR}/compress.c
+        ${ZLIB_SRC_DIR}/crc32.c
+        ${ZLIB_SRC_DIR}/deflate.c
+        ${ZLIB_SRC_DIR}/gzclose.c
+        ${ZLIB_SRC_DIR}/gzlib.c
+        ${ZLIB_SRC_DIR}/gzread.c
+        ${ZLIB_SRC_DIR}/gzwrite.c
+        ${ZLIB_SRC_DIR}/infback.c
+        ${ZLIB_SRC_DIR}/inffast.c
+        ${ZLIB_SRC_DIR}/inflate.c
+        ${ZLIB_SRC_DIR}/inftrees.c
+        ${ZLIB_SRC_DIR}/trees.c
+        ${ZLIB_SRC_DIR}/uncompr.c
+        ${ZLIB_SRC_DIR}/zutil.c
+    )
 
-add_library(zlib_static STATIC ${ZLIB_SOURCES})
-target_include_directories(zlib_static PUBLIC ${ZLIB_SRC_DIR})
-set_static_archive_output(zlib_static)
-set_target_properties(zlib_static PROPERTIES
-    OUTPUT_NAME zlibstatic
-)
+    add_library(zlib_static STATIC ${ZLIB_SOURCES})
+    target_include_directories(zlib_static PUBLIC ${ZLIB_SRC_DIR})
+    set_static_archive_output(zlib_static)
+    set_target_properties(zlib_static PROPERTIES
+        OUTPUT_NAME zlibstatic
+    )
 
-if(MSVC)
-    set(ZLIB_STATIC_LIBRARY ${LUDO_LIB_OUTPUT_DIR}/zlibstatic.lib)
-else()
-    set(ZLIB_STATIC_LIBRARY ${LUDO_LIB_OUTPUT_DIR}/libzlibstatic.a)
+    if(MSVC)
+        set(ZLIB_STATIC_LIBRARY ${LUDO_LIB_OUTPUT_DIR}/zlibstatic.lib)
+    else()
+        set(ZLIB_STATIC_LIBRARY ${LUDO_LIB_OUTPUT_DIR}/libzlibstatic.a)
+    endif()
 endif()
 
 # ------------------------------------------------------------
@@ -130,52 +142,54 @@ set(LUA_SOURCES
     ${LUA_SRC_DIR}/lvm.c ${LUA_SRC_DIR}/lzio.c
 )
 
-# ------------------------------------------------------------
-# 2) brotli (built from source, static)
-# ------------------------------------------------------------
-# ------------------------------------------------------------
-set(BROTLI_SRC_DIR ${CMAKE_SOURCE_DIR}/third_party/brotli)
-file(GLOB BROTLI_COMMON_SOURCES "${BROTLI_SRC_DIR}/c/common/*.c")
-file(GLOB BROTLI_DEC_SOURCES "${BROTLI_SRC_DIR}/c/dec/*.c")
-file(GLOB BROTLI_ENC_SOURCES "${BROTLI_SRC_DIR}/c/enc/*.c")
+if(WIN32)
+    # ------------------------------------------------------------
+    # 2) brotli (built from source, static)
+    # ------------------------------------------------------------
+    # ------------------------------------------------------------
+    set(BROTLI_SRC_DIR ${CMAKE_SOURCE_DIR}/third_party/brotli)
+    file(GLOB BROTLI_COMMON_SOURCES "${BROTLI_SRC_DIR}/c/common/*.c")
+    file(GLOB BROTLI_DEC_SOURCES "${BROTLI_SRC_DIR}/c/dec/*.c")
+    file(GLOB BROTLI_ENC_SOURCES "${BROTLI_SRC_DIR}/c/enc/*.c")
 
-add_library(brotlicommon_static STATIC ${BROTLI_COMMON_SOURCES})
-add_library(brotlidec_static STATIC ${BROTLI_DEC_SOURCES})
-add_library(brotlienc_static STATIC ${BROTLI_ENC_SOURCES})
+    add_library(brotlicommon_static STATIC ${BROTLI_COMMON_SOURCES})
+    add_library(brotlidec_static STATIC ${BROTLI_DEC_SOURCES})
+    add_library(brotlienc_static STATIC ${BROTLI_ENC_SOURCES})
 
-target_include_directories(brotlicommon_static PUBLIC ${BROTLI_SRC_DIR}/c/include)
-target_include_directories(brotlidec_static PUBLIC ${BROTLI_SRC_DIR}/c/include)
-target_include_directories(brotlienc_static PUBLIC ${BROTLI_SRC_DIR}/c/include)
-target_link_libraries(brotlidec_static PUBLIC brotlicommon_static)
-target_link_libraries(brotlienc_static PUBLIC brotlicommon_static)
+    target_include_directories(brotlicommon_static PUBLIC ${BROTLI_SRC_DIR}/c/include)
+    target_include_directories(brotlidec_static PUBLIC ${BROTLI_SRC_DIR}/c/include)
+    target_include_directories(brotlienc_static PUBLIC ${BROTLI_SRC_DIR}/c/include)
+    target_link_libraries(brotlidec_static PUBLIC brotlicommon_static)
+    target_link_libraries(brotlienc_static PUBLIC brotlicommon_static)
 
-set_static_archive_output(brotlicommon_static)
-set_static_archive_output(brotlidec_static)
-set_static_archive_output(brotlienc_static)
+    set_static_archive_output(brotlicommon_static)
+    set_static_archive_output(brotlidec_static)
+    set_static_archive_output(brotlienc_static)
 
-# ------------------------------------------------------------
-# 3) zstd-dev (built from source, static)
-# ------------------------------------------------------------
-set(ZSTD_SRC_DIR ${CMAKE_SOURCE_DIR}/third_party/zstd-dev)
-file(GLOB ZSTD_COMMON_SOURCES "${ZSTD_SRC_DIR}/lib/common/*.c")
-file(GLOB ZSTD_COMPRESS_SOURCES "${ZSTD_SRC_DIR}/lib/compress/*.c")
-file(GLOB ZSTD_DECOMPRESS_SOURCES "${ZSTD_SRC_DIR}/lib/decompress/*.c")
-file(GLOB ZSTD_DICT_SOURCES "${ZSTD_SRC_DIR}/lib/dictBuilder/*.c")
-file(GLOB ZSTD_DEPRECATED_SOURCES "${ZSTD_SRC_DIR}/lib/deprecated/*.c")
-file(GLOB ZSTD_LEGACY_SOURCES "${ZSTD_SRC_DIR}/lib/legacy/*.c")
+    # ------------------------------------------------------------
+    # 3) zstd-dev (built from source, static)
+    # ------------------------------------------------------------
+    set(ZSTD_SRC_DIR ${CMAKE_SOURCE_DIR}/third_party/zstd-dev)
+    file(GLOB ZSTD_COMMON_SOURCES "${ZSTD_SRC_DIR}/lib/common/*.c")
+    file(GLOB ZSTD_COMPRESS_SOURCES "${ZSTD_SRC_DIR}/lib/compress/*.c")
+    file(GLOB ZSTD_DECOMPRESS_SOURCES "${ZSTD_SRC_DIR}/lib/decompress/*.c")
+    file(GLOB ZSTD_DICT_SOURCES "${ZSTD_SRC_DIR}/lib/dictBuilder/*.c")
+    file(GLOB ZSTD_DEPRECATED_SOURCES "${ZSTD_SRC_DIR}/lib/deprecated/*.c")
+    file(GLOB ZSTD_LEGACY_SOURCES "${ZSTD_SRC_DIR}/lib/legacy/*.c")
 
-add_library(zstd_static STATIC
-    ${ZSTD_COMMON_SOURCES}
-    ${ZSTD_COMPRESS_SOURCES}
-    ${ZSTD_DECOMPRESS_SOURCES}
-    ${ZSTD_DICT_SOURCES}
-    ${ZSTD_DEPRECATED_SOURCES}
-    ${ZSTD_LEGACY_SOURCES}
-)
-target_include_directories(zstd_static PUBLIC ${ZSTD_SRC_DIR}/lib ${ZSTD_SRC_DIR}/lib/common)
-target_compile_definitions(zstd_static PRIVATE ZSTD_DISABLE_ASM)
-set_static_archive_output(zstd_static)
-set_target_properties(zstd_static PROPERTIES OUTPUT_NAME zstd)
+    add_library(zstd_static STATIC
+        ${ZSTD_COMMON_SOURCES}
+        ${ZSTD_COMPRESS_SOURCES}
+        ${ZSTD_DECOMPRESS_SOURCES}
+        ${ZSTD_DICT_SOURCES}
+        ${ZSTD_DEPRECATED_SOURCES}
+        ${ZSTD_LEGACY_SOURCES}
+    )
+    target_include_directories(zstd_static PUBLIC ${ZSTD_SRC_DIR}/lib ${ZSTD_SRC_DIR}/lib/common)
+    target_compile_definitions(zstd_static PRIVATE ZSTD_DISABLE_ASM)
+    set_static_archive_output(zstd_static)
+    set_target_properties(zstd_static PROPERTIES OUTPUT_NAME zstd)
+endif()
 
 # ------------------------------------------------------------
 # 4) curl-8.19.0 (built from source, static)
@@ -183,77 +197,71 @@ set_target_properties(zstd_static PROPERTIES OUTPUT_NAME zstd)
 set(CURL_SRC_DIR ${CMAKE_SOURCE_DIR}/third_party/curl-8.19.0)
 file(GLOB_RECURSE CURL_SOURCES "${CURL_SRC_DIR}/lib/*.c")
 
-add_library(libcurl_static STATIC ${CURL_SOURCES})
-target_include_directories(libcurl_static
-    PUBLIC
-        ${CURL_SRC_DIR}/include
-    PRIVATE
-        ${CURL_SRC_DIR}/lib
-        ${BROTLI_SRC_DIR}/c/include
-        ${ZSTD_SRC_DIR}/lib
-        ${ZLIB_SRC_DIR}
-)
-
-target_compile_definitions(libcurl_static PRIVATE
-    BUILDING_LIBCURL
-    CURL_STATICLIB
-    HAVE_LIBZ
-    HAVE_BROTLI
-    HAVE_ZSTD
-    CURL_DISABLE_ALTSVC
-    CURL_DISABLE_DICT
-    CURL_DISABLE_FILE
-    CURL_DISABLE_FTP
-    CURL_DISABLE_GOPHER
-    CURL_DISABLE_IMAP
-    CURL_DISABLE_IPFS
-    CURL_DISABLE_LDAP
-    CURL_DISABLE_LDAPS
-    CURL_DISABLE_MQTT
-    CURL_DISABLE_NEGOTIATE_AUTH
-    CURL_DISABLE_POP3
-    CURL_DISABLE_RTSP
-    CURL_DISABLE_SMB
-    CURL_DISABLE_SMTP
-    CURL_DISABLE_TELNET
-    CURL_DISABLE_TFTP
-)
-
 if(WIN32)
+    add_library(libcurl_static STATIC ${CURL_SOURCES})
+    target_include_directories(libcurl_static
+        PUBLIC
+            ${CURL_SRC_DIR}/include
+        PRIVATE
+            ${CURL_SRC_DIR}/lib
+            ${BROTLI_SRC_DIR}/c/include
+            ${ZSTD_SRC_DIR}/lib
+            ${ZLIB_SRC_DIR}
+    )
+
     target_compile_definitions(libcurl_static PRIVATE
+        BUILDING_LIBCURL
+        CURL_STATICLIB
+        HAVE_LIBZ
+        HAVE_BROTLI
+        HAVE_ZSTD
+        CURL_DISABLE_ALTSVC
+        CURL_DISABLE_DICT
+        CURL_DISABLE_FILE
+        CURL_DISABLE_FTP
+        CURL_DISABLE_GOPHER
+        CURL_DISABLE_IMAP
+        CURL_DISABLE_IPFS
+        CURL_DISABLE_LDAP
+        CURL_DISABLE_LDAPS
+        CURL_DISABLE_MQTT
+        CURL_DISABLE_NEGOTIATE_AUTH
+        CURL_DISABLE_POP3
+        CURL_DISABLE_RTSP
+        CURL_DISABLE_SMB
+        CURL_DISABLE_SMTP
+        CURL_DISABLE_TELNET
+        CURL_DISABLE_TFTP
         USE_THREADS_WIN32
         USE_SCHANNEL
         USE_WINDOWS_SSPI
     )
-else()
-    target_compile_definitions(libcurl_static PRIVATE USE_OPENSSL)
-endif()
 
-target_link_libraries(libcurl_static PUBLIC
-    zlib_static
-    brotlidec_static
-    brotlienc_static
-    brotlicommon_static
-    zstd_static
-)
+    target_link_libraries(libcurl_static PUBLIC
+        zlib_static
+        brotlidec_static
+        brotlienc_static
+        brotlicommon_static
+        zstd_static
+    )
 
-if(UNIX AND NOT APPLE)
-    find_package(OpenSSL REQUIRED)
-    target_link_libraries(libcurl_static PUBLIC OpenSSL::SSL OpenSSL::Crypto)
-endif()
+    set_static_archive_output(libcurl_static)
+    set_target_properties(libcurl_static PROPERTIES OUTPUT_NAME curl)
 
-set_static_archive_output(libcurl_static)
-set_target_properties(libcurl_static PROPERTIES OUTPUT_NAME curl)
-
-# Tune libcurl_static to reduce size: enable sectioning and garbage-collect unused
-if(TARGET libcurl_static)
-    if(MSVC)
-        target_compile_options(libcurl_static PRIVATE $<$<CONFIG:Release>:/Gy>)
-        # final exe already uses /OPT:REF /OPT:ICF
-    else()
-        target_compile_options(libcurl_static PRIVATE $<$<CONFIG:Release>:-ffunction-sections> $<$<CONFIG:Release>:-fdata-sections> $<$<CONFIG:Release>:-O3>)
-        target_link_options(libcurl_static PRIVATE $<$<CONFIG:Release>:-Wl,--gc-sections> $<$<CONFIG:Release>:-s>)
+    # Tune libcurl_static to reduce size: enable sectioning and garbage-collect unused
+    if(TARGET libcurl_static)
+        if(MSVC)
+            target_compile_options(libcurl_static PRIVATE $<$<CONFIG:Release>:/Gy>)
+            # final exe already uses /OPT:REF /OPT:ICF
+        else()
+            target_compile_options(libcurl_static PRIVATE $<$<CONFIG:Release>:-ffunction-sections> $<$<CONFIG:Release>:-fdata-sections> $<$<CONFIG:Release>:-O3>)
+            target_link_options(libcurl_static PRIVATE $<$<CONFIG:Release>:-Wl,--gc-sections> $<$<CONFIG:Release>:-s>)
+        endif()
     endif()
+else()
+    find_package(CURL REQUIRED)
+    add_library(libcurl_static INTERFACE)
+    target_link_libraries(libcurl_static INTERFACE CURL::libcurl)
 endif()
 
 # Helper: enable sectioning/stripping for a target in Release builds
@@ -291,6 +299,7 @@ elseif(APPLE)
     file(GLOB LIBUI_OS_SOURCES "${LIBUI_SRC_DIR}/darwin/*.m")
 else()
     file(GLOB LIBUI_OS_SOURCES "${LIBUI_SRC_DIR}/unix/*.c")
+    list(REMOVE_ITEM LIBUI_OS_SOURCES "${LIBUI_SRC_DIR}/unix/OLD_table.c")
 endif()
 
 # 2. Create the Static Target
@@ -363,7 +372,6 @@ set(LUDO_SOURCES
     src/config.c
     src/platform_utils.c
     src/gui.c
-    src/win_toolbar_icons.cpp
     src/lua_engine.c
     src/http_module.c
     src/ludo_module.c
@@ -371,6 +379,10 @@ set(LUDO_SOURCES
     src/download_manager.c
     src/thread_queue.c
 )
+
+if(WIN32)
+    list(APPEND LUDO_SOURCES src/win_toolbar_icons.cpp)
+endif()
 
 configure_file(${CMAKE_SOURCE_DIR}/src/version.h.in ${CMAKE_BINARY_DIR}/generated/version.h @ONLY)
 
@@ -405,7 +417,10 @@ endif()
     if(TARGET libuilua_static)
         enable_dead_code_stripping(libuilua_static)
     endif()
-set(LUDO_EXTERNAL_DEPENDENCIES zstd_static brotlidec_static brotlienc_static brotlicommon_static zlib_static libcurl_static libui_static libuilua_static lua_static)
+set(LUDO_EXTERNAL_DEPENDENCIES libcurl_static libui_static libuilua_static lua_static)
+if(WIN32)
+    list(APPEND LUDO_EXTERNAL_DEPENDENCIES zstd_static brotlidec_static brotlienc_static brotlicommon_static zlib_static)
+endif()
 add_dependencies(ludo ${LUDO_EXTERNAL_DEPENDENCIES})
 
 target_include_directories(ludo PRIVATE
@@ -417,15 +432,24 @@ target_include_directories(ludo PRIVATE
 target_link_libraries(ludo PRIVATE
     libui_static
     libcurl_static
-    zstd_static
-    brotlidec_static
-    brotlienc_static
-    brotlicommon_static
-    zlib_static
     libuilua_static
     lua_static
     Threads::Threads 
 )
+
+if(NOT WIN32)
+    target_link_libraries(ludo PRIVATE ZLIB::ZLIB)
+endif()
+
+if(WIN32)
+    target_link_libraries(ludo PRIVATE
+        zstd_static
+        brotlidec_static
+        brotlienc_static
+        brotlicommon_static
+        zlib_static
+    )
+endif()
 
 if(MSVC)
     target_compile_options(ludo PRIVATE $<$<CONFIG:Release>:/O2>)
@@ -436,9 +460,12 @@ else()
 endif()
 
 target_compile_definitions(ludo PRIVATE
-    CURL_STATICLIB
     $<$<CONFIG:Debug>:DEBUG>
 )
+
+if(WIN32)
+    target_compile_definitions(ludo PRIVATE CURL_STATICLIB)
+endif()
 
 if(WIN32)
     target_link_libraries(ludo PRIVATE
