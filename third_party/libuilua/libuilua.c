@@ -36,20 +36,24 @@ struct wrap {
 };
 
 
-static void create_callback_data(lua_State *L, int n)
+static void create_callback_data(lua_State *L, int control_index, int fn_index, int data_index)
 {
 	/* Push registery key: userdata pointer to control */
 
-	lua_pushlightuserdata(L, CAST_ARG(1, Control));
+	lua_pushlightuserdata(L, CAST_ARG(control_index, Control));
 
 	/* Create table with callback data */
 
 	lua_newtable(L);
-	lua_pushvalue(L, 1);
+	lua_pushvalue(L, control_index);
 	lua_setfield(L, -2, "udata");
-	lua_pushvalue(L, 2);
+	lua_pushvalue(L, fn_index);
 	lua_setfield(L, -2, "fn");
-	lua_pushvalue(L, 3);
+	if(data_index > 0 && data_index <= lua_gettop(L)) {
+		lua_pushvalue(L, data_index);
+	} else {
+		lua_pushnil(L);
+	}
 	lua_setfield(L, -2, "data");
 
 	/* Store in registry */
@@ -58,29 +62,60 @@ static void create_callback_data(lua_State *L, int n)
 
 }
 
-static void callback(lua_State *L, void *control)
+static void clear_callback_data(lua_State *L, void *control)
+{
+	lua_pushlightuserdata(L, control);
+	lua_pushnil(L);
+	lua_settable(L, LUA_REGISTRYINDEX);
+}
+
+static int push_callback(lua_State *L, void *control)
 {
 	/* Find table with callback data in registry */
 
 	lua_pushlightuserdata(L, control);
 	lua_gettable(L, LUA_REGISTRYINDEX);
+	if(!lua_istable(L, -1)) {
+		lua_pop(L, 1);
+		return 0;
+	}
 
 	/* Get function, control userdata and callback data */
 
-	luaL_checktype(L, 1, LUA_TTABLE);
-	lua_getfield(L, 1, "fn");
+	lua_getfield(L, -1, "fn");
 	luaL_checktype(L, -1, LUA_TFUNCTION);
-	lua_getfield(L, 1, "udata");
+	lua_getfield(L, -2, "udata");
 	luaL_checktype(L, -1, LUA_TUSERDATA);
-	lua_getfield(L, 1, "data");
+	lua_getfield(L, -3, "data");
+	lua_remove(L, -4);
+
+	return 1;
+}
+
+static void callback(lua_State *L, void *control)
+{
+	if(!push_callback(L, control))
+		return;
 
 	/* Call function */
 
-	lua_call(L, 2, 0);
+	if(lua_pcall(L, 2, 0, 0) != LUA_OK) {
+		lua_pop(L, 1);
+	}
+}
 
-	/* Cleanup stack */
+static int callback_boolean(lua_State *L, void *control, int default_value)
+{
+	if(!push_callback(L, control))
+		return default_value;
 
+	if(lua_pcall(L, 2, 1, 0) != LUA_OK) {
+		lua_pop(L, 1);
+		return default_value;
+	}
+	default_value = lua_toboolean(L, -1);
 	lua_pop(L, 1);
+	return default_value;
 }
 
 
@@ -217,7 +252,7 @@ int l_ButtonSetText(lua_State *L)
 int l_ButtonOnClicked(lua_State *L)
 {
         uiButtonOnClicked(CAST_ARG(1, Button), on_button_clicked, L);
-        create_callback_data(L, 1);
+        create_callback_data(L, 1, 2, 3);
         RETURN_SELF;
 }
 
@@ -254,7 +289,7 @@ int l_CheckboxSetText(lua_State *L)
 int l_CheckboxOnToggled(lua_State *L)
 {
         uiCheckboxOnToggled(CAST_ARG(1, Checkbox), on_checkbox_toggled, L);
-        create_callback_data(L, 1);
+        create_callback_data(L, 1, 2, 3);
         RETURN_SELF;
 }
 
@@ -291,7 +326,7 @@ int l_ComboboxAppend(lua_State *L)
 	int n = lua_gettop(L);
 	int i;
 	for(i=2; i<=n; i++) {
-		const char *text = luaL_checkstring(L, n);
+		const char *text = luaL_checkstring(L, i);
 		uiComboboxAppend(CAST_ARG(1, Combobox), text);
 	}
 	RETURN_SELF;
@@ -300,7 +335,7 @@ int l_ComboboxAppend(lua_State *L)
 int l_ComboboxOnToggled(lua_State *L)
 {
         uiComboboxOnSelected(CAST_ARG(1, Combobox), on_combobox_selected, L);
-        create_callback_data(L, 1);
+        create_callback_data(L, 1, 2, 3);
         RETURN_SELF;
 }
 
@@ -324,7 +359,8 @@ int l_ControlShow(lua_State *L)
 
 int l_ControlDestroy(lua_State *L)
 {
-	printf("destroy not implemented, garbage collection needs to be implemented\n");
+	clear_callback_data(L, CAST_ARG(1, Control));
+	uiControlDestroy(CAST_ARG(1, Control));
 	return 0;
 }
 
@@ -553,7 +589,7 @@ static void on_slider_changed(uiSlider *b, void *data)
 int l_SliderOnChanged(lua_State *L)
 {
 	uiSliderOnChanged(CAST_ARG(1, Slider), on_slider_changed, L);
-	create_callback_data(L, 1);
+	create_callback_data(L, 1, 2, 3);
 	RETURN_SELF;
 }
 
@@ -599,7 +635,7 @@ static void on_spinbox_changed(uiSpinbox *b, void *data)
 int l_SpinboxOnChanged(lua_State *L)
 {
 	uiSpinboxOnChanged(CAST_ARG(1, Spinbox), on_spinbox_changed, L);
-	create_callback_data(L, 1);
+	create_callback_data(L, 1, 2, 3);
 	RETURN_SELF;
 }
 
@@ -639,22 +675,40 @@ static struct luaL_Reg meta_Tab[] = {
 	{ NULL }
 };
 
-
-
-
-
 /*
  * Window
  */
 
+static int on_window_closing_default(uiWindow *w, void *data)
+{
+	(void)data;
+	uiControlDestroy(uiControl(w));
+	return 0;
+}
+
+static int on_window_closing_lua(uiWindow *w, void *data)
+{
+	lua_State *L = data;
+	int should_close = callback_boolean(L, w, 1);
+
+	if(should_close) {
+		clear_callback_data(L, w);
+		uiControlDestroy(uiControl(w));
+	}
+
+	return 0;
+}
+
 int l_NewWindow(lua_State *L)
 {
-	CREATE_OBJECT(Window, uiNewWindow(
+	uiWindow *window = uiNewWindow(
 		luaL_checkstring(L, 1),
 		luaL_checknumber(L, 2),
 		luaL_checknumber(L, 3),
 		lua_toboolean(L, 4)
-	));
+	);
+	CREATE_OBJECT(Window, window);
+	uiWindowOnClosing(window, on_window_closing_default, NULL);
 	return 1;
 }
 
@@ -674,9 +728,24 @@ int l_WindowSetMargined(lua_State *L)
 	RETURN_SELF;
 }
 
+int l_WindowOnClosing(lua_State *L)
+{
+	if(lua_isnoneornil(L, 2)) {
+		clear_callback_data(L, CAST_ARG(1, Control));
+		uiWindowOnClosing(CAST_ARG(1, Window), on_window_closing_default, NULL);
+		RETURN_SELF;
+	}
+
+	luaL_checktype(L, 2, LUA_TFUNCTION);
+	uiWindowOnClosing(CAST_ARG(1, Window), on_window_closing_lua, L);
+	create_callback_data(L, 1, 2, 3);
+	RETURN_SELF;
+}
+
 static struct luaL_Reg meta_Window[] = {
 	{ "SetChild",            l_WindowSetChild },
 	{ "SetMargined",         l_WindowSetMargined },
+	{ "OnClosing",           l_WindowOnClosing },
 	{ "Show",                l_ControlShow },
 	{ "Destroy",             l_ControlDestroy },
 	{ NULL }

@@ -814,13 +814,15 @@ static int destroy_lua_test_window(uiWindow *w, void *data) {
 
     if (ctx) {
         persist_lua_test_window_state(ctx);
+    }
+    uiControlDestroy(uiControl(w));
+    if (ctx) {
         free(ctx->snippets);
         if (ctx->snippet_model) {
             uiFreeTableModel(ctx->snippet_model);
         }
         free(ctx);
     }
-    uiControlDestroy(uiControl(w));
     return 0;
 }
 
