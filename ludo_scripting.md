@@ -1049,61 +1049,45 @@ ludo.logInfo("Files will be saved to: " .. dir)
 
 ## 5. UI Library
 
-The `ui` module provides native GUI widget creation via libui. It is registered
+The `ui` module provides native GUI widget creation via libui-ng. It is registered
 as `require("ui")` or accessed via the global `ui` table. All widget
 constructors return an object with chainable methods.
 
 > **Note:** The Ludo main window uses its own UI. The `ui` library is intended
-> for plugins that need to show their own dialog windows or custom interfaces.
+> for tool scripts and plugins that need to show their own dialog windows.
+>
+> **Tool scripts** must NOT call `ui.Init()`, `ui.Main()`, or `ui.Uninit()`.
+> Use `ui.MainStep(true)` in a loop instead. See §9 for the correct pattern.
 
 ### 5.1 Application Lifecycle
 
 #### `ui.Init()` → string|nil
 
-Initialize the UI subsystem. Must be called before creating any widgets.
-
-**Returns:**
-- `nil` on success, or an error string on failure.
-
-```lua
-local err = ui.Init()
-if err then
-    print("UI init failed: " .. err)
-    return
-end
-```
+Initialize the UI subsystem. Returns `nil` on success or an error string.
+(Tool scripts can ignore the error — it is expected when Ludo is already running.)
 
 #### `ui.Uninit()`
 
-Shut down the UI subsystem and free resources.
-
-```lua
-ui.Uninit()
-```
+Shut down the UI subsystem (standalone scripts only).
 
 #### `ui.Main()`
 
-Enter the main event loop. This call blocks until `ui.Quit()` is called.
-
-```lua
-ui.Main()
-```
+Run the main event loop (standalone scripts only). Blocks until `ui.Quit()`.
 
 #### `ui.MainStep(wait)` → number
 
-Process a single iteration of the event loop.
+Process one iteration of the event loop.
 
-**Parameters:**
-- `wait` (boolean) — If `true`, block until an event occurs. If `false`,
-  return immediately.
-
-**Returns:**
-- `result` (number) — Non-zero if the loop should continue.
+- `wait` (boolean) — Block until an event occurs if `true`.
+- Returns non-zero to continue, `0` to stop.
 
 ```lua
--- Custom event loop
-while ui.MainStep(false) ~= 0 do
-    -- do other work between UI events
+-- Tool-script event loop (preferred pattern)
+local win_open = true
+win:OnClosing(function(w) win_open = false; return 1 end, nil)
+win:Show()
+while win_open do
+    if ui.MainStep(true) == 0 then break end
 end
 ```
 
@@ -1111,631 +1095,716 @@ end
 
 Request the event loop to exit.
 
-```lua
-ui.Quit()
-```
+---
 
-### 5.2 Window
+### 5.2 Control Base Methods
+
+These functions operate on **any** control, regardless of type:
+
+| Function | Description |
+|----------|-------------|
+| `ui.ControlShow(ctrl)` | Show the control |
+| `ui.ControlHide(ctrl)` | Hide the control |
+| `ui.ControlEnable(ctrl)` | Enable user interaction |
+| `ui.ControlDisable(ctrl)` | Disable user interaction |
+| `ui.ControlVisible(ctrl)` → bool | Whether the control is visible |
+| `ui.ControlEnabled(ctrl)` → bool | Whether the control is enabled |
+| `ui.ControlDestroy(ctrl)` | Destroy the control and free resources |
+
+Additionally, `Window` objects expose `Show`, `Hide`, `Enable`, `Disable`,
+`Visible`, `Enabled`, and `Destroy` as methods directly.
+
+---
+
+### 5.3 Window
 
 #### `ui.NewWindow(title, width, height, hasMenubar)` → Window
 
 Create a new top-level window.
 
-**Parameters:**
-- `title` (string) — Window title.
-- `width` (number) — Window width in pixels.
-- `height` (number) — Window height in pixels.
-- `hasMenubar` (boolean) — Whether the window has a menu bar.
-
-**Returns:**
-- `window` (Window) — The window object.
-
 ```lua
-local win = ui.NewWindow("My Window", 640, 480, false)
+local win = ui.NewWindow("My Tool", 640, 480, false)
 win:SetMargined(1)
 win:Show()
 ```
 
-#### `window:SetChild(control)`
+#### Methods
 
-Set the window's child (main content widget).
-
-**Parameters:**
-- `control` — Any UI control to place inside the window.
-
-**Returns:** self (chainable)
+| Method | Description |
+|--------|-------------|
+| `win:Title()` → string | Get the window title |
+| `win:SetTitle(s)` | Set the window title |
+| `win:Position()` → x, y | Get window position (pixels) |
+| `win:SetPosition(x, y)` | Move window |
+| `win:ContentSize()` → w, h | Get client area size (pixels) |
+| `win:SetContentSize(w, h)` | Resize client area |
+| `win:Fullscreen()` → bool | Whether window is fullscreen |
+| `win:SetFullscreen(bool)` | Set fullscreen state |
+| `win:Borderless()` → bool | Whether window has no border/titlebar |
+| `win:SetBorderless(bool)` | Toggle borderless mode |
+| `win:Resizeable()` → bool | Whether the window can be resized |
+| `win:SetResizeable(bool)` | Set resizeability |
+| `win:Focused()` → bool | Whether the window has keyboard focus |
+| `win:Margined()` → bool | Margin state |
+| `win:SetMargined(n)` | Enable/disable margins (1 or 0) |
+| `win:SetChild(ctrl)` | Set child control (content) |
+| `win:OnClosing(fn, data)` | Callback fired when user closes; return 1 to allow close |
+| `win:Show()` | Show the window |
+| `win:Hide()` | Hide the window |
+| `win:Enable()` / `win:Disable()` | Enable/disable |
+| `win:Visible()` / `win:Enabled()` | Query state |
+| `win:Destroy()` | Destroy the window |
 
 ```lua
-local box = ui.NewVerticalBox()
-win:SetChild(box)
+-- Close handler (important for tool scripts)
+win:OnClosing(function(w, data)
+    win_open = false
+    return 1  -- 1 = allow close; 0 = prevent close
+end, nil)
 ```
 
-#### `window:SetMargined(margined)`
+---
 
-Enable or disable margins inside the window.
-
-**Parameters:**
-- `margined` (number) — `1` for margins, `0` for no margins.
-
-**Returns:** self (chainable)
-
-#### `window:Show()`
-
-Make the window visible on screen.
-
-**Returns:** self (chainable)
-
-#### `window:Destroy()`
-
-Destroy the window.
-
-### 5.3 Box (Layout Container)
+### 5.4 Box (Layout Container)
 
 #### `ui.NewVerticalBox()` → Box
-
-Create a vertical layout box. Children are stacked top to bottom.
-
 #### `ui.NewHorizontalBox()` → Box
-
-Create a horizontal layout box. Children are placed left to right.
 
 ```lua
 local vbox = ui.NewVerticalBox()
 vbox:SetPadded(1)
-
-local hbox = ui.NewHorizontalBox()
-hbox:SetPadded(1)
 ```
 
-#### `box:Append(child1 [, child2, ...] [, stretchy])`
+#### Methods
 
-Append one or more child controls to the box.
-
-**Parameters:**
-- `child` — One or more UI controls to add.
-- `stretchy` (boolean/number, optional) — If `true`/`1`, the last child
-  stretches to fill available space.
-
-**Returns:** self (chainable)
+| Method | Description |
+|--------|-------------|
+| `box:Append(child [, ...] [, stretchy])` | Add children; optional stretchy bool |
+| `box:Delete(index)` | Remove child at 0-based index |
+| `box:NumChildren()` → number | Number of children |
+| `box:Padded()` → number | Get padding state |
+| `box:SetPadded(n)` | Enable/disable padding |
 
 ```lua
-local label  = ui.NewLabel("Name:")
-local button = ui.NewButton("OK")
-
--- Append multiple children
-vbox:Append(label, button)
-
--- Append with stretchy
-vbox:Append(label, false)
-vbox:Append(button, true)  -- button stretches
+vbox:Append(ui.NewLabel("Name:"), false)
+vbox:Append(entry, true)  -- entry stretches
 ```
 
-#### `box:Padded()` → number
+---
 
-Get the current padding state.
-
-**Returns:**
-- `padded` (number) — `1` if padded, `0` otherwise.
-
-#### `box:SetPadded(padded)`
-
-Enable or disable padding between children.
-
-**Parameters:**
-- `padded` (number) — `1` for padding, `0` for no padding.
-
-**Returns:** self (chainable)
-
-### 5.4 Button
+### 5.5 Button
 
 #### `ui.NewButton(text)` → Button
 
-Create a push button.
-
-**Parameters:**
-- `text` (string) — Button label.
-
 ```lua
-local btn = ui.NewButton("Click Me")
-```
-
-#### `button:SetText(text)`
-
-Change the button label.
-
-**Parameters:**
-- `text` (string) — New label text.
-
-**Returns:** self (chainable)
-
-```lua
-btn:SetText("Done")
-```
-
-#### `button:OnClicked(callback, data)`
-
-Register a click handler.
-
-**Parameters:**
-- `callback` (function) — Called as `callback(button, data)` on click.
-- `data` — Arbitrary data passed to the callback.
-
-**Returns:** self (chainable)
-
-```lua
+local btn = ui.NewButton("Download")
 btn:OnClicked(function(b, data)
-    print("Button clicked! Data: " .. tostring(data))
-end, "my_data")
+    ludo.logInfo("Clicked!")
+end, nil)
 ```
 
-### 5.5 Label
+#### Methods
+
+| Method | Description |
+|--------|-------------|
+| `btn:Text()` → string | Get button label |
+| `btn:SetText(s)` | Set button label |
+| `btn:OnClicked(fn, data)` | Click handler: `fn(button, data)` |
+
+---
+
+### 5.6 Label
 
 #### `ui.NewLabel(text)` → Label
 
-Create a static text label.
-
-**Parameters:**
-- `text` (string) — Label text.
-
 ```lua
-local lbl = ui.NewLabel("Hello, World!")
+local lbl = ui.NewLabel("Status: ready")
 ```
 
-#### `label:Text()` → string
+| Method | Description |
+|--------|-------------|
+| `lbl:Text()` → string | Get label text |
+| `lbl:SetText(s)` | Set label text |
 
-Get the current label text.
+---
 
-```lua
-print(lbl:Text())  --> Hello, World!
-```
-
-#### `label:SetText(text)`
-
-Set the label text.
-
-**Parameters:**
-- `text` (string) — New text.
-
-**Returns:** self (chainable)
-
-```lua
-lbl:SetText("Updated text")
-```
-
-### 5.6 Checkbox
+### 5.7 Checkbox
 
 #### `ui.NewCheckbox(text)` → Checkbox
 
-Create a checkbox with a label.
-
-**Parameters:**
-- `text` (string) — Checkbox label.
-
 ```lua
-local cb = ui.NewCheckbox("Enable notifications")
+local cb = ui.NewCheckbox("Enable logging")
 ```
 
-#### `checkbox:SetText(text)`
-
-Change the checkbox label.
-
-**Returns:** self (chainable)
-
-#### `checkbox:OnToggled(callback, data)`
-
-Register a toggle handler.
-
-**Parameters:**
-- `callback` (function) — Called as `callback(checkbox, data)` on toggle.
-- `data` — Arbitrary data passed to the callback.
-
-**Returns:** self (chainable)
+| Method | Description |
+|--------|-------------|
+| `cb:SetText(s)` | Set label |
+| `cb:Checked()` → number | `1` if checked, `0` otherwise |
+| `cb:SetChecked(n)` | Set checked state (1/0) |
+| `cb:OnToggled(fn, data)` | Toggle handler: `fn(checkbox, data)` |
 
 ```lua
-cb:OnToggled(function(c, data)
-    print("Toggled!")
-end, nil)
+if cb:Checked() == 1 then
+    ludo.logInfo("Logging enabled")
+end
 ```
 
-### 5.7 Entry (Text Input)
+---
 
-> **Note:** Entry widgets are not currently exposed in the Lua binding.
+### 5.8 Entry (Text Input)
 
-### 5.8 ProgressBar
+#### `ui.NewEntry()` → Entry
+#### `ui.NewPasswordEntry()` → Entry  *(text is masked)*
+#### `ui.NewSearchEntry()` → Entry    *(shows search decoration)*
+
+```lua
+local url_entry = ui.NewEntry()
+url_entry:SetText("https://example.com")
+```
+
+| Method | Description |
+|--------|-------------|
+| `entry:Text()` → string | Get text content |
+| `entry:SetText(s)` | Set text content |
+| `entry:ReadOnly()` → bool | Whether entry is read-only |
+| `entry:SetReadOnly(bool)` | Set read-only state |
+| `entry:OnChanged(fn, data)` | Change handler: `fn(entry, data)` |
+
+---
+
+### 5.9 MultilineEntry (Text Area)
+
+#### `ui.NewMultilineEntry()` → MultilineEntry         *(wrapping)*
+#### `ui.NewNonWrappingMultilineEntry()` → MultilineEntry *(no wrap)*
+
+```lua
+local log = ui.NewMultilineEntry()
+log:SetReadOnly(1)
+```
+
+| Method | Description |
+|--------|-------------|
+| `mle:Text()` → string | Get all text |
+| `mle:SetText(s)` | Replace all text |
+| `mle:Append(s)` | Append text at end |
+| `mle:ReadOnly()` → number | `1` if read-only |
+| `mle:SetReadOnly(n)` | Set read-only (1/0) |
+| `mle:OnChanged(fn, data)` | Change handler: `fn(mle, data)` |
+
+---
+
+### 5.10 ProgressBar
 
 #### `ui.NewProgressBar()` → ProgressBar
 
-Create a progress bar widget.
+| Method | Description |
+|--------|-------------|
+| `pb:Value()` → number | Get current value |
+| `pb:SetValue(n)` | Set value (0–100); `-1` = indeterminate |
 
 ```lua
-local pb = ui.NewProgressBar()
+pb:SetValue(-1)   -- pulsing
+pb:SetValue(75)
 ```
 
-#### `progressbar:SetValue(value)`
+---
 
-Set the progress bar value.
-
-**Parameters:**
-- `value` (number) — Progress value (0–100). Use `-1` for indeterminate.
-
-**Returns:** self (chainable)
-
-```lua
-pb:SetValue(50)   -- 50%
-pb:SetValue(-1)   -- indeterminate (pulsing)
-pb:SetValue(100)  -- complete
-```
-
-### 5.9 Slider
+### 5.11 Slider
 
 #### `ui.NewSlider(min, max)` → Slider
 
-Create a slider (trackbar) widget.
+| Method | Description |
+|--------|-------------|
+| `s:Value()` → number | Current value |
+| `s:SetValue(n)` | Set value |
+| `s:SetRange(min, max)` | Change range |
+| `s:HasToolTip()` → bool | Whether tooltip is shown |
+| `s:SetHasToolTip(bool)` | Show/hide tooltip |
+| `s:OnChanged(fn, data)` | Change handler (while dragging) |
+| `s:OnReleased(fn, data)` | Released handler (on mouse-up) |
 
-**Parameters:**
-- `min` (number) — Minimum value.
-- `max` (number) — Maximum value.
+---
 
-```lua
-local slider = ui.NewSlider(0, 100)
-```
-
-#### `slider:Value()` → number
-
-Get the current slider value.
-
-#### `slider:SetValue(value)`
-
-Set the slider value.
-
-**Returns:** self (chainable)
-
-#### `slider:OnChanged(callback, data)`
-
-Register a change handler.
-
-**Parameters:**
-- `callback` (function) — Called as `callback(slider, data)` when value changes.
-- `data` — Arbitrary data.
-
-**Returns:** self (chainable)
-
-```lua
-slider:OnChanged(function(s, data)
-    print("Slider value: " .. s:Value())
-end, nil)
-```
-
-### 5.10 Spinbox
+### 5.12 Spinbox
 
 #### `ui.NewSpinbox(min, max)` → Spinbox
 
-Create a numeric spinbox widget.
+| Method | Description |
+|--------|-------------|
+| `sp:Value()` → number | Current integer value |
+| `sp:SetValue(n)` | Set value |
+| `sp:OnChanged(fn, data)` | Change handler: `fn(spinbox, data)` |
 
-**Parameters:**
-- `min` (number) — Minimum value.
-- `max` (number) — Maximum value.
+---
 
-```lua
-local spin = ui.NewSpinbox(0, 100)
-spin:SetValue(42)
-```
+### 5.13 Combobox (Dropdown)
 
-#### `spinbox:Value()` → number
+#### `ui.NewCombobox()` → Combobox  *(read-only dropdown)*
 
-Get the current value.
-
-#### `spinbox:SetValue(value)`
-
-Set the spinbox value.
-
-**Returns:** self (chainable)
-
-#### `spinbox:OnChanged(callback, data)`
-
-Register a change handler.
-
-**Returns:** self (chainable)
-
-```lua
-spin:OnChanged(function(s, data)
-    print("New value: " .. s:Value())
-end, nil)
-```
-
-### 5.11 Combobox (Dropdown)
-
-#### `ui.NewCombobox()` → Combobox
-
-Create a dropdown combobox.
-
-#### `ui.NewEditableCombobox()` → Combobox
-
-Create an editable dropdown combobox.
+| Method | Description |
+|--------|-------------|
+| `cb:Append(s [, ...])` | Add items |
+| `cb:InsertAt(index, s)` | Insert item at 0-based index |
+| `cb:Delete(index)` | Remove item at 0-based index |
+| `cb:Clear()` | Remove all items |
+| `cb:NumItems()` → number | Item count |
+| `cb:Selected()` → number | 0-based selected index (−1 = none) |
+| `cb:SetSelected(n)` | Select by 0-based index |
+| `cb:OnToggled(fn, data)` | Selection change handler |
 
 ```lua
 local combo = ui.NewCombobox()
-```
-
-#### `combobox:Append(item1, item2, ...)`
-
-Add items to the combobox.
-
-**Parameters:**
-- `item` (string) — One or more item labels.
-
-**Returns:** self (chainable)
-
-```lua
 combo:Append("Option A", "Option B", "Option C")
-```
-
-#### `combobox:OnToggled(callback, data)`
-
-Register a selection change handler.
-
-**Returns:** self (chainable)
-
-```lua
-combo:OnToggled(function(c, data)
-    print("Selection changed")
+combo:SetSelected(0)
+combo:OnToggled(function(c, d)
+    print("Selected: " .. c:Selected())
 end, nil)
 ```
 
-### 5.12 RadioButtons
+---
+
+### 5.14 EditableCombobox
+
+#### `ui.NewEditableCombobox()` → EditableCombobox  *(dropdown + free text)*
+
+| Method | Description |
+|--------|-------------|
+| `ec:Append(s [, ...])` | Add preset items |
+| `ec:Text()` → string | Get current text (typed or selected) |
+| `ec:SetText(s)` | Set text |
+| `ec:OnChanged(fn, data)` | Change handler: `fn(ec, data)` |
+
+---
+
+### 5.15 RadioButtons
 
 #### `ui.NewRadioButtons()` → RadioButtons
 
-Create a radio button group.
+| Method | Description |
+|--------|-------------|
+| `rb:Append(s [, ...])` | Add items |
+| `rb:Selected()` → number | 0-based selected index (−1 = none) |
+| `rb:SetSelected(n)` | Select by 0-based index |
+| `rb:OnSelected(fn, data)` | Selection change handler |
 
 ```lua
-local radio = ui.NewRadioButtons()
-radio:Append("Small", "Medium", "Large")
+local rb = ui.NewRadioButtons()
+rb:Append("Small", "Medium", "Large")
+rb:SetSelected(1)  -- Medium
 ```
 
-#### `radiobuttons:Append(item1, item2, ...)`
+---
 
-Add items to the radio button group.
-
-**Returns:** self (chainable)
-
-### 5.13 Group
+### 5.16 Group
 
 #### `ui.NewGroup(title)` → Group
 
-Create a labeled group box (frame).
-
-**Parameters:**
-- `title` (string) — Group title.
+| Method | Description |
+|--------|-------------|
+| `g:Title()` → string | Get title |
+| `g:SetTitle(s)` | Set title |
+| `g:SetChild(ctrl)` | Set single child control |
+| `g:Margined()` → number | Get margin state |
+| `g:SetMargined(n)` | Enable/disable margins |
 
 ```lua
-local grp = ui.NewGroup("Settings")
+local grp = ui.NewGroup("Options")
 grp:SetMargined(1)
+grp:SetChild(ui.NewVerticalBox())
 ```
 
-#### `group:Title()` → string
+---
 
-Get the group title.
-
-#### `group:SetTitle(title)`
-
-Set the group title.
-
-**Returns:** self (chainable)
-
-#### `group:SetChild(control)`
-
-Set the group's child control.
-
-**Parameters:**
-- `control` — A UI control.
-
-**Returns:** self (chainable)
-
-```lua
-local box = ui.NewVerticalBox()
-grp:SetChild(box)
-```
-
-#### `group:Margined()` → number
-
-Get the margin state.
-
-#### `group:SetMargined(margined)`
-
-Enable or disable margins.
-
-**Returns:** self (chainable)
-
-### 5.14 Tab
+### 5.17 Tab
 
 #### `ui.NewTab()` → Tab
 
-Create a tabbed container.
+| Method | Description |
+|--------|-------------|
+| `t:Append(name, ctrl [, ...])` | Add tab(s) with label and content |
+| `t:InsertAt(name, index, ctrl)` | Insert tab at 0-based index |
+| `t:Delete(index)` | Remove tab at 0-based index |
+| `t:NumPages()` → number | Number of tabs |
+| `t:Selected()` → number | 0-based active tab index |
+| `t:SetSelected(n)` | Switch to tab by index |
+| `t:Margined(index)` → bool | Whether tab page has margins |
+| `t:SetMargined(index, bool)` | Set margin for tab page |
 
 ```lua
 local tab = ui.NewTab()
+tab:Append("General", genBox, "Advanced", advBox)
+tab:SetSelected(0)
 ```
 
-#### `tab:Append(name1, control1 [, name2, control2, ...])`
+---
 
-Add tabs with labels and content controls.
-
-**Parameters:**
-- `name` (string) — Tab label.
-- `control` — UI control for the tab content.
-
-**Returns:** self (chainable)
-
-```lua
-local page1 = ui.NewVerticalBox()
-local page2 = ui.NewVerticalBox()
-tab:Append("General", page1, "Advanced", page2)
-```
-
-### 5.15 Separator
+### 5.18 Separator
 
 #### `ui.NewHorizontalSeparator()` → Separator
-
-Create a horizontal line separator.
+#### `ui.NewVerticalSeparator()` → Separator
 
 ```lua
-local sep = ui.NewHorizontalSeparator()
-vbox:Append(sep)
+vbox:Append(ui.NewHorizontalSeparator())
+hbox:Append(ui.NewVerticalSeparator())
 ```
 
-### 5.16 Date/Time Pickers
+---
+
+### 5.19 Date/Time Pickers
 
 #### `ui.NewDateTimePicker()` → DateTimePicker
-
-Create a combined date+time picker.
-
 #### `ui.NewDatePicker()` → DateTimePicker
-
-Create a date-only picker.
-
 #### `ui.NewTimePicker()` → DateTimePicker
 
-Create a time-only picker.
+| Method | Description |
+|--------|-------------|
+| `dt:Time()` → table | Get time as `{year, month, day, hour, min, sec, wday}` |
+| `dt:SetTime(t)` | Set time from table with same fields |
+| `dt:OnChanged(fn, data)` | Change handler: `fn(dt, data)` |
+
+`month` is 1–12, `wday` is 0–6 (0 = Sunday).
 
 ```lua
-local dt = ui.NewDateTimePicker()
-local d  = ui.NewDatePicker()
-local t  = ui.NewTimePicker()
+local d = ui.NewDatePicker()
+local t = d:Time()
+print(t.year .. "-" .. t.month .. "-" .. t.day)
 ```
 
-### 5.17 Area (Custom Drawing)
+---
+
+### 5.20 ColorButton
+
+#### `ui.NewColorButton()` → ColorButton
+
+| Method | Description |
+|--------|-------------|
+| `cb:Color()` → r, g, b, a | Get color as four floats (0–1) |
+| `cb:SetColor(r, g, b, a)` | Set color (floats 0–1) |
+| `cb:OnChanged(fn, data)` | Change handler: `fn(colorbutton, data)` |
+
+```lua
+local cb = ui.NewColorButton()
+cb:SetColor(1.0, 0.0, 0.0, 1.0)  -- red
+local r, g, b, a = cb:Color()
+```
+
+---
+
+### 5.21 Form (Labeled Layout)
+
+#### `ui.NewForm()` → Form
+
+Form lays out `label: control` pairs vertically.
+
+| Method | Description |
+|--------|-------------|
+| `f:Append(label, ctrl, stretchy)` | Add a labeled control row |
+| `f:NumChildren()` → number | Number of rows |
+| `f:Delete(index)` | Remove row at 0-based index |
+| `f:Padded()` → bool | Get padding state |
+| `f:SetPadded(bool)` | Enable/disable padding |
+
+```lua
+local form = ui.NewForm()
+form:SetPadded(true)
+form:Append("URL:", ui.NewEntry(), false)
+form:Append("Output:", ui.NewEntry(), false)
+form:Append("Log:", ui.NewMultilineEntry(), true)
+```
+
+---
+
+### 5.22 Grid (2D Layout)
+
+#### `ui.NewGrid()` → Grid
+
+Grid lays out controls on a 2-D cell grid.
+
+| Method | Description |
+|--------|-------------|
+| `g:Append(ctrl, left, top [, xspan, yspan, hexpand, halign, vexpand, valign])` | Add a control |
+| `g:Padded()` → bool | Get padding state |
+| `g:SetPadded(bool)` | Enable/disable padding |
+
+**Align constants:** `ui.AlignFill` (0), `ui.AlignStart` (1), `ui.AlignCenter` (2), `ui.AlignEnd` (3)
+
+```lua
+local grid = ui.NewGrid()
+grid:SetPadded(true)
+-- left, top, xspan, yspan, hexpand, halign, vexpand, valign
+grid:Append(ui.NewLabel("Name:"), 0, 0, 1, 1, false, ui.AlignEnd, false, ui.AlignFill)
+grid:Append(ui.NewEntry(),        1, 0, 1, 1, true,  ui.AlignFill, false, ui.AlignFill)
+grid:Append(ui.NewLabel("URL:"),  0, 1, 1, 1, false, ui.AlignEnd, false, ui.AlignFill)
+grid:Append(ui.NewEntry(),        1, 1, 1, 1, true,  ui.AlignFill, false, ui.AlignFill)
+```
+
+---
+
+### 5.23 Area (Custom Drawing)
 
 #### `ui.NewArea()` → Area
 
-Create a custom drawing area.
+| Method | Description |
+|--------|-------------|
+| `area:SetSize(w, h)` | Set drawing area size |
 
-#### `area:SetSize(width, height)`
+---
 
-Set the area size.
+### 5.24 Table
 
-**Parameters:**
-- `width` (number) — Width in pixels.
-- `height` (number) — Height in pixels.
+Tables display data from a `TableModel` using a model-view pattern.
 
-**Returns:** self (chainable)
+#### Step 1 — Create a model handler table
 
 ```lua
-local area = ui.NewArea()
-area:SetSize(400, 300)
+local data = {
+    { "Alice", 25 },
+    { "Bob",   30 },
+}
+
+local handler = {
+    NumColumns = function(self, model) return 2 end,
+    ColumnType = function(self, model, col)
+        return col == 0 and ui.TableValueTypeString or ui.TableValueTypeInt
+    end,
+    NumRows    = function(self, model) return #data end,
+    CellValue  = function(self, model, row, col)
+        return col == 0 and data[row+1][1] or data[row+1][2]
+    end,
+    SetCellValue = function(self, model, row, col, val)
+        -- called when user edits a cell (if editable column)
+        data[row+1][col+1] = val
+    end,
+}
 ```
 
-### 5.18 Complete UI Example
+#### Step 2 — Create the TableModel
 
 ```lua
-local ui = require("ui")
+local model = ui.NewTableModel(handler)
+```
 
--- Initialize
-local err = ui.Init()
-if err then
-    print("Error: " .. err)
-    return
+#### Step 3 — Create the Table view
+
+```lua
+-- ui.NewTable(model [, rowBackgroundColorModelColumn])
+local tbl = ui.NewTable(model)
+```
+
+#### Step 4 — Append columns
+
+```lua
+-- AppendTextColumn(name, textModelCol, editableModelCol [, colorModelCol])
+tbl:AppendTextColumn("Name", 0, ui.TableModelColumnNeverEditable)
+-- AppendTextColumn with always-editable
+tbl:AppendTextColumn("Age",  1, ui.TableModelColumnAlwaysEditable)
+```
+
+#### Table methods
+
+| Method | Description |
+|--------|-------------|
+| `AppendTextColumn(name, textCol, editCol [, colorCol])` | Add text column |
+| `AppendCheckboxColumn(name, checkCol, editCol)` | Add checkbox column |
+| `AppendCheckboxTextColumn(name, checkCol, checkEditCol, textCol, textEditCol [, colorCol])` | Combined |
+| `AppendProgressBarColumn(name, progressCol)` | Add progress bar column |
+| `AppendButtonColumn(name, textCol, clickableCol)` | Add button column |
+| `HeaderVisible()` → bool | Header visibility |
+| `HeaderSetVisible(bool)` | Show/hide header |
+| `GetSelectionMode()` → number | Current selection mode |
+| `SetSelectionMode(mode)` | Set selection mode |
+| `GetSelection()` → table | Array of 0-based selected row indices |
+| `SetSelection(t)` | Set selected rows from index array |
+| `ColumnWidth(col)` → number | Column width in pixels |
+| `ColumnSetWidth(col, px)` | Set column width (−1 = auto) |
+| `OnRowClicked(fn)` | `fn(row)` on single click |
+| `OnRowDoubleClicked(fn)` | `fn(row)` on double click |
+| `OnSelectionChanged(fn)` | `fn()` when selection changes |
+
+**Selection mode constants:** `ui.TableSelectionModeNone`, `ui.TableSelectionModeZeroOrOne` (default),
+`ui.TableSelectionModeOne`, `ui.TableSelectionModeZeroOrMany`
+
+**TableValue type constants:** `ui.TableValueTypeString` (0), `ui.TableValueTypeInt` (2), `ui.TableValueTypeColor` (3)
+
+**Editability constants:** `ui.TableModelColumnNeverEditable` (−1), `ui.TableModelColumnAlwaysEditable` (−2)
+
+#### Notify the model of data changes
+
+```lua
+model:RowInserted(newIndex)   -- after inserting a row
+model:RowChanged(index)       -- after modifying a row
+model:RowDeleted(oldIndex)    -- after deleting a row
+```
+
+#### CellValue return types
+
+| Lua type | Becomes |
+|----------|---------|
+| string | `uiTableValueTypeString` |
+| integer | `uiTableValueTypeInt` |
+| boolean | `uiTableValueTypeInt` (true→1, false→0) |
+| `{r=, g=, b=, a=}` table | `uiTableValueTypeColor` |
+| nil | NULL (accepted by some column types) |
+
+#### Full Table example
+
+```lua
+local items = { "Apple", "Banana", "Cherry" }
+local checks = { false, true, false }
+
+local handler = {
+    NumColumns   = function(s, m) return 2 end,
+    ColumnType   = function(s, m, col)
+        return col == 0 and ui.TableValueTypeString or ui.TableValueTypeInt
+    end,
+    NumRows      = function(s, m) return #items end,
+    CellValue    = function(s, m, row, col)
+        if col == 0 then return items[row+1]
+        else return checks[row+1] and 1 or 0 end
+    end,
+    SetCellValue = function(s, m, row, col, val)
+        if col == 1 then checks[row+1] = (val == 1) end
+    end,
+}
+
+local model = ui.NewTableModel(handler)
+local tbl   = ui.NewTable(model)
+tbl:AppendTextColumn("Fruit", 0, ui.TableModelColumnNeverEditable)
+tbl:AppendCheckboxColumn("Pick", 1, ui.TableModelColumnAlwaysEditable)
+tbl:SetSelectionMode(ui.TableSelectionModeZeroOrMany)
+tbl:OnRowClicked(function(row)
+    ludo.logInfo("Clicked row " .. row)
+end)
+```
+
+---
+
+### 5.25 Dialogs
+
+These functions display native OS dialogs. All require a parent `Window`.
+
+| Function | Description |
+|----------|-------------|
+| `ui.OpenFile(win)` → string\|nil | Show "Open File" dialog; returns path or nil |
+| `ui.OpenFolder(win)` → string\|nil | Show "Browse Folder" dialog |
+| `ui.SaveFile(win)` → string\|nil | Show "Save File" dialog |
+| `ui.MsgBox(win, title, desc)` | Show information message box |
+| `ui.MsgBoxError(win, title, desc)` | Show error message box |
+
+```lua
+local path = ui.OpenFile(win)
+if path then
+    ludo.logInfo("Selected: " .. path)
 end
 
--- Create main window
-local win = ui.NewWindow("Ludo Plugin", 400, 300, false)
+local folder = ui.SaveFile(win)
+
+ui.MsgBox(win, "Done", "Download complete!")
+ui.MsgBoxError(win, "Error", "Failed to connect.")
+```
+
+---
+
+### 5.26 Complete Tool Script Example
+
+```lua
+-- Example tool script (tools/my_tool.lua)
+-- Does NOT call ui.Init()/ui.Main()/ui.Uninit()
+
+local win = ui.NewWindow("My Tool", 500, 350, false)
 win:SetMargined(1)
 
--- Create layout
 local vbox = ui.NewVerticalBox()
 vbox:SetPadded(1)
 
--- Add a label
-local label = ui.NewLabel("Enter a URL:")
-vbox:Append(label)
+-- Form layout
+local form = ui.NewForm()
+form:SetPadded(true)
+local url_entry = ui.NewEntry()
+form:Append("URL:", url_entry, false)
+vbox:Append(form, false)
 
--- Add a progress bar
-local progress = ui.NewProgressBar()
-vbox:Append(progress)
+vbox:Append(ui.NewHorizontalSeparator(), false)
 
--- Add buttons in a horizontal box
+-- Log area
+local log = ui.NewMultilineEntry()
+log:SetReadOnly(1)
+vbox:Append(log, true)
+
+-- Buttons
 local hbox = ui.NewHorizontalBox()
 hbox:SetPadded(1)
-
-local startBtn = ui.NewButton("Start")
-startBtn:OnClicked(function(b, data)
-    progress:SetValue(-1)  -- indeterminate
-    label:SetText("Downloading...")
+local go_btn = ui.NewButton("Download")
+go_btn:OnClicked(function(b, d)
+    local url = url_entry:Text()
+    if url == "" then
+        ui.MsgBoxError(win, "Error", "Please enter a URL.")
+        return
+    end
+    local id, status, path = ludo.newDownload(url, ludo.getOutputDirectory(), ludo.DOWNLOAD_NOW)
+    log:Append("Queued: " .. url .. " (" .. tostring(status) .. ")\n")
 end, nil)
+hbox:Append(go_btn, true)
+vbox:Append(hbox, false)
 
-local stopBtn = ui.NewButton("Stop")
-stopBtn:OnClicked(function(b, data)
-    progress:SetValue(0)
-    label:SetText("Stopped.")
-end, nil)
-
-hbox:Append(startBtn, stopBtn, true)
-vbox:Append(hbox)
-
--- Add a group with settings
-local grp = ui.NewGroup("Options")
-grp:SetMargined(1)
-local innerBox = ui.NewVerticalBox()
-innerBox:SetPadded(1)
-local cb = ui.NewCheckbox("Auto-start downloads")
-innerBox:Append(cb)
-local slider = ui.NewSlider(1, 10)
-innerBox:Append(slider)
-grp:SetChild(innerBox)
-vbox:Append(grp)
-
--- Set window content and show
 win:SetChild(vbox)
+
+-- Tool-script event loop
+local win_open = true
+win:OnClosing(function(w, data)
+    win_open = false
+    return 1
+end, nil)
 win:Show()
-
--- Run event loop
-ui.Main()
-
--- Cleanup
-ui.Uninit()
+while win_open do
+    if ui.MainStep(true) == 0 then break end
+end
 ```
 
-### 5.19 Dialog with Tabs Example
+---
+
+### 5.27 Table Tool Example
 
 ```lua
-local ui = require("ui")
-ui.Init()
+-- tools/download_list.lua
+-- Shows a Table of completed downloads
 
-local win = ui.NewWindow("Settings", 500, 400, false)
+local downloads = {}
+-- populate from ludo API if available...
+
+local handler = {
+    NumColumns = function(s, m) return 3 end,
+    ColumnType = function(s, m, col)
+        if col == 2 then return ui.TableValueTypeInt end
+        return ui.TableValueTypeString
+    end,
+    NumRows    = function(s, m) return #downloads end,
+    CellValue  = function(s, m, row, col)
+        local d = downloads[row+1]
+        if col == 0 then return d.name
+        elseif col == 1 then return d.url
+        else return d.progress end
+    end,
+    SetCellValue = function(s, m, row, col, val) end,
+}
+
+local model = ui.NewTableModel(handler)
+local tbl   = ui.NewTable(model)
+tbl:AppendTextColumn("Filename", 0, ui.TableModelColumnNeverEditable)
+tbl:AppendTextColumn("URL",      1, ui.TableModelColumnNeverEditable)
+tbl:AppendProgressBarColumn("Progress", 2)
+tbl:ColumnSetWidth(0, 200)
+
+local win = ui.NewWindow("Downloads", 700, 400, false)
 win:SetMargined(1)
+win:SetChild(tbl)
 
-local tab = ui.NewTab()
-
--- General tab
-local genBox = ui.NewVerticalBox()
-genBox:SetPadded(1)
-genBox:Append(ui.NewLabel("Download Directory:"))
-genBox:Append(ui.NewLabel(ludo.getOutputDirectory()))
-genBox:Append(ui.NewHorizontalSeparator())
-genBox:Append(ui.NewCheckbox("Start minimized"))
-genBox:Append(ui.NewCheckbox("Auto-update plugins"))
-
--- Network tab
-local netBox = ui.NewVerticalBox()
-netBox:SetPadded(1)
-netBox:Append(ui.NewLabel("Max connections:"))
-netBox:Append(ui.NewSpinbox(1, 16))
-netBox:Append(ui.NewLabel("Speed limit:"))
-netBox:Append(ui.NewSlider(0, 1000))
-
--- About tab
-local aboutBox = ui.NewVerticalBox()
-aboutBox:SetPadded(1)
-aboutBox:Append(ui.NewLabel("Ludo Download Manager"))
-aboutBox:Append(ui.NewLabel("Version 1.0"))
-aboutBox:Append(ui.NewProgressBar())
-
-tab:Append("General", genBox, "Network", netBox, "About", aboutBox)
-
-win:SetChild(tab)
+local win_open = true
+win:OnClosing(function(w, d) win_open = false; return 1 end, nil)
 win:Show()
-ui.Main()
-ui.Uninit()
+while win_open do
+    if ui.MainStep(true) == 0 then break end
+end
 ```
 
 ---
@@ -2554,13 +2623,13 @@ Log levels:
 
 ---
 
-## 5. Zip Library (`zip`)
+## 9. Zip Library (`zip`)
 
 The `zip` global provides a single function for creating standard ZIP archives
 (PKZIP 2.0 / Info-ZIP compatible) using **zlib DEFLATE** compression.  No
 external dependency beyond the vendored `zlib-1.2.8` is required.
 
-### 5.1 `zip.create`
+### 9.1 `zip.create`
 
 ```lua
 -- Pack an explicit list of files (entries use the basename only):
@@ -2589,7 +2658,7 @@ local status, errmsg = zip.create(output_path, directory, glob_filter)
 | `status` | integer | `0` on success; `-1` on any failure. |
 | `errmsg` | string  | Error description — present **only** when `status == -1`. |
 
-### 5.2 Examples
+### 9.2 Examples
 
 ```lua
 -- 1. Pack two downloaded files into a single archive
@@ -2621,7 +2690,7 @@ if status ~= 0 then
 end
 ```
 
-### 5.3 Notes
+### 9.3 Notes
 
 - Archives are written in **PKZIP 2.0** format; compatible with Windows
   Explorer, 7-Zip, unzip, and all standard ZIP tools.
@@ -2633,4 +2702,174 @@ end
 - Maximum entries per archive: **4096**.
 - Maximum in-archive path length: **511 bytes**.
 - ZIP64 (archives > 4 GB or containing files > 4 GB) is **not** supported.
+
+---
+
+## 10. Tools Menu
+
+The **Tools** menu automatically lists every `.lua` file found in the `tools/`
+directory (next to the executable). Clicking a tool entry runs that script in a
+fresh Lua state with the full Ludo API available (`http`, `ludo`, `ui`, `zip`,
+`json`).
+
+### 10.1 Tool Script Discovery
+
+On startup, Ludo scans the `tools/` directory and adds one menu item per
+`.lua` file. The menu label is the filename without the `.lua` extension.
+
+```
+tools/
+  PlayStation Games Downloader.lua   → Tools → PlayStation Games Downloader
+  my_tool.lua                        → Tools → my_tool
+```
+
+### 10.2 Tool Script Environment
+
+Tool scripts run inside the already-running Ludo process via `lua_engine_run_script`:
+
+- A **fresh Lua state** is created for each run — globals do not persist
+  between runs.
+- Both `tools/` and `lib/` directories are prepended to `package.path` so
+  `require("ftcsv")` finds `lib/ftcsv.lua` and `require("sibling")` finds
+  other files in `tools/`.
+- All Ludo APIs are available: `http`, `ludo`, `ui`, `zip`, `json`.
+- Unlike plugins, tool scripts do **not** need `validate`/`process` functions —
+  they are executed as top-level scripts.
+- **Do NOT call `ui.Init()`, `ui.Uninit()`, or `ui.Main()`** — Ludo's UI is
+  already initialised. Use a `ui.MainStep()` loop instead (see §10.3).
+
+### 10.3 Shared Lua Libraries (`lib/`)
+
+The `lib/` directory contains Lua modules available to **all** scripts (tool
+scripts and plugins) via `require()`. The directory is prepended to
+`package.path` when any Lua state is created.
+
+```
+lib/
+  ftcsv.lua    -- CSV/TSV parser (ftcsv 1.5.0)
+```
+
+**Usage:**
+```lua
+local ftcsv = require("ftcsv")
+
+-- Parse a TSV file with named-header columns
+local ok, data = pcall(ftcsv.parse, "path/to/file.tsv", "\t")
+if ok then
+    for _, row in ipairs(data) do
+        local name = row["Name"]      -- access by header name
+        local size = row["File Size"]
+        -- ...
+    end
+end
+```
+
+**`ftcsv` API summary:**
+
+| Function | Description |
+|----------|-------------|
+| `ftcsv.parse(file, delim [, opts])` | Parse entire file; returns `rows, headers` |
+| `ftcsv.parseLine(file, delim [, opts])` | Iterator; returns one row at a time |
+| `ftcsv.encode(table, delim [, opts])` | Encode table array to CSV string |
+
+Common options: `{ headers=true, loadFromString=false, rename={...}, fieldsToKeep={...} }`
+
+### 10.4 Tool Script Template
+
+```lua
+-- tools/my_tool.lua
+local ui = require("ui")
+
+-- Do NOT call ui.Init() — Ludo already called it.
+
+local win = ui.NewWindow("My Tool", 400, 300, false)
+win:SetMargined(1)
+
+local vbox = ui.NewVerticalBox()
+vbox:SetPadded(1)
+vbox:Append(ui.NewLabel("Hello from My Tool!"))
+
+local win_open = true
+local btn = ui.NewButton("Close")
+btn:OnClicked(function(b, data)
+    win_open = false
+end, nil)
+vbox:Append(btn)
+win:SetChild(vbox)
+
+win:OnClosing(function(w, data)
+    win_open = false
+    return 1
+end, nil)
+win:Show()
+
+-- Drive a nested event loop until the window is closed.
+-- Do NOT call ui.Main() or ui.Uninit().
+while win_open do
+    if ui.MainStep(true) == 0 then break end
+end
+```
+
+### 10.5 Table-Based Tool Example (PlayStation Games Downloader)
+
+The built-in **PlayStation Games Downloader** (`tools/PlayStation Games
+Downloader.lua`) demonstrates the model-view Table pattern in a tool script:
+
+```lua
+local ui    = require("ui")
+local ftcsv = require("ftcsv")  -- from lib/ftcsv.lua
+
+-- Build the table model backed by a Lua results array
+local search_results = {}
+
+local handler = {
+    NumColumns  = function(m) return 6 end,
+    ColumnType  = function(m, col) return ui.TableValueTypeString end,
+    NumRows     = function(m) return #search_results end,
+    CellValue   = function(m, row, col)
+        local r = search_results[row + 1]  -- 0-based → 1-based
+        if not r then return "" end
+        -- return fields by column index...
+        if col == 0 then return tostring(row + 1)  -- "#"
+        elseif col == 1 then return r.platform
+        elseif col == 2 then return r.id
+        -- ...
+        end
+        return ""
+    end,
+    SetCellValue = function(m, row, col, val) end,  -- read-only
+}
+local model = ui.NewTableModel(handler)
+
+-- Create and configure the Table widget
+local tbl = ui.NewTable(model)
+tbl:AppendTextColumn("#",        0, ui.TableModelColumnNeverEditable)
+tbl:AppendTextColumn("Platform", 1, ui.TableModelColumnNeverEditable)
+tbl:AppendTextColumn("Title ID", 2, ui.TableModelColumnNeverEditable)
+tbl:SetSelectionMode(ui.TableSelectionModeZeroOrOne)
+tbl:ColumnSetWidth(0, 40)
+
+-- React to row selection
+tbl:OnSelectionChanged(function()
+    local sel = tbl:GetSelection()   -- returns {0-based index, ...}
+    if sel and #sel > 0 then
+        local r = search_results[sel[1] + 1]
+        -- update detail labels from r ...
+    end
+end)
+
+-- After replacing search_results: notify the model
+-- Step 1 — delete old rows from last to first
+for i = old_count, 1, -1 do
+    table.remove(search_results, i)
+    model:RowDeleted(i - 1)
+end
+-- Step 2 — add new data and notify insertions
+for _, hit in ipairs(new_data) do
+    table.insert(search_results, hit)
+end
+for i = 1, #search_results do
+    model:RowInserted(i - 1)
+end
+```
 

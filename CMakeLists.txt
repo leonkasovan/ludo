@@ -20,7 +20,7 @@ set(LUDO_VERSION_MAJOR 0)
 set(LUDO_VERSION_MINOR 6)
 set(LUDO_VERSION_PATCH 0)
 
-set(LUDO_VERSION_FILE "${CMAKE_SOURCE_DIR}/build_version.txt")
+set(LUDO_VERSION_FILE "${CMAKE_BINARY_DIR}/build_version.txt")
 if(EXISTS "${LUDO_VERSION_FILE}")
     file(READ "${LUDO_VERSION_FILE}" _build_val)
     string(STRIP "${_build_val}" _build_val)
@@ -504,9 +504,11 @@ add_custom_command(TARGET ludo POST_BUILD
     COMMAND ${CMAKE_COMMAND} -E copy_directory ${CMAKE_SOURCE_DIR}/plugins $<TARGET_FILE_DIR:ludo>/plugins
     COMMAND ${CMAKE_COMMAND} -E copy_directory ${CMAKE_SOURCE_DIR}/snippets $<TARGET_FILE_DIR:ludo>/snippets
     COMMAND ${CMAKE_COMMAND} -E copy_directory ${CMAKE_SOURCE_DIR}/res $<TARGET_FILE_DIR:ludo>/res
+    COMMAND ${CMAKE_COMMAND} -E copy_directory ${CMAKE_SOURCE_DIR}/tools $<TARGET_FILE_DIR:ludo>/tools
+    COMMAND ${CMAKE_COMMAND} -E copy_directory ${CMAKE_SOURCE_DIR}/lib $<TARGET_FILE_DIR:ludo>/lib
     COMMAND ${CMAKE_COMMAND} -E copy_if_different ${CMAKE_SOURCE_DIR}/config.ini $<TARGET_FILE_DIR:ludo>/config.ini
     COMMAND ${CMAKE_COMMAND} -E make_directory $<TARGET_FILE_DIR:ludo>/downloads
-    COMMENT "Copying runtime assets (plugins, snippets, res, config) and initializing output directories..."
+    COMMENT "Copying runtime assets (plugins, snippets, res, tools, lib, config) and initializing output directories..."
 )
 
 install(TARGETS ludo DESTINATION bin)
@@ -514,3 +516,5 @@ install(FILES config.ini DESTINATION bin)
 install(DIRECTORY plugins/ DESTINATION bin/plugins)
 install(DIRECTORY snippets/ DESTINATION bin/snippets)
 install(DIRECTORY res/ DESTINATION bin/res)
+install(DIRECTORY tools/ DESTINATION bin/tools)
+install(DIRECTORY lib/ DESTINATION bin/lib)

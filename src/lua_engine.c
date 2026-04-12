@@ -130,6 +130,23 @@ static lua_State *create_lua_state(void) {
     if (!L) return NULL;
 
     luaL_openlibs(L);
+
+    /* Prepend lib/ directory to package.path so require("ftcsv") etc. work
+     * from both tool scripts and plugins. Relative to the process CWD (the
+     * directory that contains the executable). */
+    lua_getglobal(L, "package");
+    lua_getfield(L, -1, "path");
+    {
+        const char *existing = lua_tostring(L, -1);
+        char new_path[2048];
+        snprintf(new_path, sizeof(new_path), "lib/?.lua;%s",
+                 existing ? existing : "");
+        lua_pop(L, 1);
+        lua_pushstring(L, new_path);
+        lua_setfield(L, -2, "path");
+    }
+    lua_pop(L, 1);
+
     http_module_register(L);
     ludo_module_register(L);
     zip_module_register(L);
@@ -406,6 +423,33 @@ int lua_engine_run_script(const char *path) {
     if (!L) {
         gui_log(LOG_ERROR, "[lua_engine] failed to create Lua state for script");
         return 0;
+    }
+
+    /* Prepend the script's directory to package.path so require() finds
+       sibling .lua files (e.g. ftcsv.lua next to the tool script). */
+    {
+        const char *last_fwd  = strrchr(path, '/');
+        const char *last_back = strrchr(path, '\\');
+        const char *last_sep  = (last_fwd > last_back) ? last_fwd : last_back;
+        if (last_sep) {
+            char dir[512];
+            size_t dir_len = (size_t)(last_sep - path);
+            if (dir_len < sizeof(dir)) {
+                memcpy(dir, path, dir_len);
+                dir[dir_len] = '\0';
+                lua_getglobal(L, "package");
+                lua_getfield(L, -1, "path");
+                {
+                    const char *existing = lua_tostring(L, -1);
+                    char new_path[2048];
+                    snprintf(new_path, sizeof(new_path), "%s/?.lua;%s", dir, existing ? existing : "");
+                    lua_pop(L, 1);
+                    lua_pushstring(L, new_path);
+                    lua_setfield(L, -2, "path");
+                }
+                lua_pop(L, 1);
+            }
+        }
     }
 
     /* Load the file */

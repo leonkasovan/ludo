@@ -197,6 +197,86 @@ typedef struct {
     char path[1024];
 } SnippetEntry;
 
+/* ------------------------------------------------------------------ */
+/* Tool script registry (populated before setup_menus)                 */
+/* ------------------------------------------------------------------ */
+
+#define MAX_TOOL_SCRIPTS 32
+
+typedef struct {
+    char name[256];
+    char path[1024];
+} ToolScriptEntry;
+
+static ToolScriptEntry g_tool_scripts[MAX_TOOL_SCRIPTS];
+static int g_tool_script_count = 0;
+
+static void trim_tool_name(const char *filename, char *out, size_t out_sz) {
+    size_t len = strlen(filename);
+    if (len > 4 && strcmp(filename + len - 4, ".lua") == 0)
+        len -= 4;
+    if (len >= out_sz) len = out_sz - 1;
+    memcpy(out, filename, len);
+    out[len] = '\0';
+}
+
+static void scan_tools_directory(const char *tools_dir) {
+    g_tool_script_count = 0;
+
+#ifdef _WIN32
+    wchar_t pattern[512];
+    WIN32_FIND_DATAW fd;
+    HANDLE hFind;
+    wchar_t *tools_dir_w = utf8_to_wide_dup(tools_dir);
+
+    if (!tools_dir_w) return;
+    if (_snwprintf(pattern, 512, L"%ls\\*.lua", tools_dir_w) < 0) {
+        free(tools_dir_w);
+        return;
+    }
+    hFind = FindFirstFileW(pattern, &fd);
+    if (hFind == INVALID_HANDLE_VALUE) {
+        free(tools_dir_w);
+        return;
+    }
+    do {
+        char filename_utf8[512];
+        ToolScriptEntry *e;
+
+        if (fd.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) continue;
+        if (g_tool_script_count >= MAX_TOOL_SCRIPTS) break;
+        if (!wide_to_utf8(fd.cFileName, filename_utf8, sizeof(filename_utf8)))
+            continue;
+
+        e = &g_tool_scripts[g_tool_script_count];
+        trim_tool_name(filename_utf8, e->name, sizeof(e->name));
+        snprintf(e->path, sizeof(e->path), "%s\\%s", tools_dir, filename_utf8);
+        g_tool_script_count++;
+    } while (FindNextFileW(hFind, &fd));
+    FindClose(hFind);
+    free(tools_dir_w);
+#else
+    DIR *dir = opendir(tools_dir);
+    struct dirent *ent;
+
+    if (!dir) return;
+    while ((ent = readdir(dir))) {
+        size_t nlen = strlen(ent->d_name);
+        ToolScriptEntry *e;
+
+        if (nlen < 5) continue;
+        if (strcmp(ent->d_name + nlen - 4, ".lua") != 0) continue;
+        if (g_tool_script_count >= MAX_TOOL_SCRIPTS) break;
+
+        e = &g_tool_scripts[g_tool_script_count];
+        trim_tool_name(ent->d_name, e->name, sizeof(e->name));
+        snprintf(e->path, sizeof(e->path), "%s/%s", tools_dir, ent->d_name);
+        g_tool_script_count++;
+    }
+    closedir(dir);
+#endif
+}
+
 typedef struct LuaTestCtx LuaTestCtx;
 
 typedef struct {
@@ -1903,6 +1983,11 @@ static void menu_setting_cb(uiMenuItem *sender, uiWindow *w, void *data) { on_se
 static void menu_plugin_cb(uiMenuItem *sender, uiWindow *w, void *data)  { on_plugin_clicked(NULL, NULL); }
 static void menu_http_cb(uiMenuItem *sender, uiWindow *w, void *data) { on_http_clicked(NULL, NULL); }
 static void menu_lua_cb(uiMenuItem *sender, uiWindow *w, void *data)  { on_lua_clicked(NULL, NULL); }
+static void menu_tool_script_cb(uiMenuItem *sender, uiWindow *w, void *data) {
+    const char *path = (const char *)data;
+    (void)sender; (void)w;
+    lua_engine_run_script(path);
+}
 static void menu_lua_ref_cb(uiMenuItem *sender, uiWindow *w, void *data) {
     uiMsgBox(w, "LUA Reference", "Ludo Lua API:\n- ludo.download(url, [dir])\n- ludo.log(msg)\n- ludo.get_clipboard()");
 }
@@ -1946,6 +2031,16 @@ static void setup_menus(void) {
     uiMenuItemOnClicked(item, menu_http_cb, NULL);
     item = uiMenuAppendItem(menu, "LUA Tester\tCtrl+L");
     uiMenuItemOnClicked(item, menu_lua_cb, NULL);
+
+    /* Tool scripts from tools/ directory */
+    if (g_tool_script_count > 0) {
+        int i;
+        uiMenuAppendSeparator(menu);
+        for (i = 0; i < g_tool_script_count; i++) {
+            item = uiMenuAppendItem(menu, g_tool_scripts[i].name);
+            uiMenuItemOnClicked(item, menu_tool_script_cb, g_tool_scripts[i].path);
+        }
+    }
 
     /* ---- 3. Help Menu ---- */
     menu = uiNewMenu("Help");
@@ -2003,6 +2098,7 @@ static void on_header_clicked(uiTable *t, int column, void *data) {
 
 void gui_create(void) {
     /* IMPORTANT: Setup menus BEFORE creating the main window, as some platforms (e.g. macOS) require the menu to exist first for proper integration. */
+    scan_tools_directory("tools");
     setup_menus();
     
     memset(&g_gui, 0, sizeof(g_gui));
