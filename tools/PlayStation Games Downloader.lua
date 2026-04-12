@@ -7,6 +7,7 @@
 
 local ui    = require("ui")
 local ftcsv = require("ftcsv")
+local win_open = true
 
 -- Determine the tools directory from this script's own path.
 local _src = debug.getinfo(1, "S").source or ""
@@ -58,13 +59,13 @@ end
 
 local function search_platform(p, query, results)
     local filepath = TOOLS_DIR .. "/" .. p.file
-    local ok, data = pcall(ftcsv.parse, filepath, "\t")
+    local ok, iter = pcall(ftcsv.parseLine, filepath, "\t")
     if not ok then
-        ludo.logInfo("PS Downloader: cannot parse " .. filepath .. ": " .. tostring(data))
+        ludo.logInfo("PS Downloader: cannot open " .. filepath .. ": " .. tostring(iter))
         return
     end
     local q = query:lower()
-    for _, row in ipairs(data) do
+    for _, row in iter do
         if #results >= MAX_RESULTS then break end
         local name = trim(row[p.col_name])
         local id   = trim(row[p.col_id])
@@ -171,7 +172,7 @@ results_tbl:ColumnSetWidth(0, 40)
 results_tbl:ColumnSetWidth(1, 80)
 results_tbl:ColumnSetWidth(2, 110)
 results_tbl:ColumnSetWidth(3, 60)
-results_tbl:ColumnSetWidth(4, 90)
+results_tbl:ColumnSetWidth(4, 180)
 root:Append(results_tbl, true)
 
 -- Game details group
@@ -312,12 +313,16 @@ dl_btn:OnClicked(function(b, data)
     end
 
     status_lbl:SetText("Download queued: " .. r.name)
+
+    -- Close the window: win:Close() does not exist in libuilua.
+    -- Set win_open=false to exit the MainStep loop, then Destroy the window.
+    win_open = false
+    win:Destroy()
 end, nil)
 
 -- Show window and drive a nested event loop until the window is closed.
 -- Tool scripts must NOT call ui.Main()/ui.Uninit() — Ludo's own event loop
 -- is already running.  Use MainStep() instead.
-local win_open = true
 win:OnClosing(function(w, data)
     win_open = false
     return 1

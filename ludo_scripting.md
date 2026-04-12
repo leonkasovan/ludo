@@ -22,13 +22,14 @@ that returns a table with two functions: `validate(url)` and `process(url)`.
 1. [Lua Language Basics](#1-lua-language-basics)
 2. [Standard Lua Library](#2-standard-lua-library)
 3. [JSON Library (`json`)](#3-json-library-json)
-4. [HTTP Library (`http`)](#3-http-library)
-5. [Ludo Library (`ludo`)](#4-ludo-library)
-6. [UI Library (`ui`)](#5-ui-library)
-7. [Plugin System](#6-plugin-system)
-8. [Converting yt-dlp Extractors to Ludo Plugins](#7-converting-yt-dlp-extractors-to-ludo-plugins)
-9. [Testing and Debugging Plugins](#8-testing-and-debugging-plugins)
-10. [Zip Library (`zip`)](#9-zip-library-zip)
+4. [HTTP Library (`http`)](#4-http-library-http)
+5. [Zip Library (`zip`)](#5-zip-library-zip)
+6. [Ludo Library (`ludo`)](#6-ludo-library-ludo)
+7. [UI Library (`ui`)](#7-ui-library-ui)
+8. [Plugin System](#8-plugin-system)
+9. [Converting yt-dlp Extractors to Ludo Plugins](#9-converting-yt-dlp-extractors-to-ludo-plugins)
+10. [Testing and Debugging Plugins](#10-testing-and-debugging-plugins)
+11. [Tools Menu](#11-tools-menu)
 
 ---
 
@@ -549,19 +550,19 @@ end
 
 ---
 
-## 3. HTTP Library
+## 4. HTTP Library (`http`)
 
 The `http` module is registered as a global table. It provides HTTP client
 functionality backed by libcurl with cookie management, URL utilities, and
 custom headers.
 
-### 3.1 `http.get(url [, options])` → body, status, headers
+### 4.1 `http.get(url [, options])` → body, status, headers
 
 Perform an HTTP GET request.
 
 **Parameters:**
 - `url` (string) — The URL to fetch.
-- `options` (table, optional) — Request options (see [Options Table](#37-options-table)).
+- `options` (table, optional) — Request options (see [Options Table](#47-options-table)).
 
 **Returns:**
 - `body` (string) - Response body.
@@ -591,7 +592,7 @@ if status == 200 then
 end
 ```
 
-### 3.2 `http.head(url [, options])` → body, status, headers
+### 4.2 `http.head(url [, options])` → body, status, headers
 
 Perform an HTTP HEAD request (no response body).
 
@@ -620,7 +621,7 @@ if status == 301 or status == 302 then
 end
 ```
 
-### 3.3 `http.post(url, body [, options])` → body, status, headers
+### 4.3 `http.post(url, body [, options])` → body, status, headers
 
 Perform an HTTP POST request.
 
@@ -662,7 +663,7 @@ local body, status = http.post(
 )
 ```
 
-### 3.4 `http.set_cookie(filepath)`
+### 4.4 `http.set_cookie(filepath)`
 
 Set a file path for persistent cookie storage. All subsequent requests will
 read and write cookies from this file.
@@ -678,7 +679,7 @@ http.get("https://example.com/login")
 http.get("https://example.com/dashboard")  -- uses session cookies
 ```
 
-### 3.5 `http.clear_cookies()`
+### 4.5 `http.clear_cookies()`
 
 Clear the cookie jar and last URL state.
 
@@ -686,7 +687,7 @@ Clear the cookie jar and last URL state.
 http.clear_cookies()
 ```
 
-### 3.6 `http.get_last_url()` → string
+### 4.6 `http.get_last_url()` → string
 
 Get the last effective URL after all redirects from the most recent request.
 
@@ -699,7 +700,7 @@ local final_url = http.get_last_url()
 print(final_url)  --> https://github.com/user/repo/releases/tag/v1.2.3
 ```
 
-### 3.7 Options Table
+### 4.7 Options Table
 
 All HTTP request functions accept an optional `options` table:
 
@@ -711,7 +712,7 @@ All HTTP request functions accept an optional `options` table:
 | `headers` | table | none | Custom headers as `{["Name"] = "value"}` |
 | `cookies` | string | none | Path to cookie jar file |
 
-### 3.8 `http.url_encode(str)` → string
+### 4.8 `http.url_encode(str)` → string
 
 URL-encode a string (percent-encoding).
 
@@ -726,7 +727,7 @@ local encoded = http.url_encode("hello world & more")
 print(encoded)  --> hello%20world%20%26%20more
 ```
 
-### 3.9 `http.url_decode(str)` → string
+### 4.9 `http.url_decode(str)` → string
 
 Decode a URL-encoded string.
 
@@ -741,7 +742,7 @@ local decoded = http.url_decode("hello%20world%20%26%20more")
 print(decoded)  --> hello world & more
 ```
 
-### 3.10 `http.parse_url(url)` → table
+### 4.10 `http.parse_url(url)` → table
 
 Parse a URL into its components.
 
@@ -760,7 +761,7 @@ print(parts.path)    --> /api/data
 print(parts.query)   --> key=value
 ```
 
-### 3.11 Complete HTTP Example
+### 4.11 Complete HTTP Example
 
 ```lua
 -- Download plugin: find the latest release of a GitHub repo
@@ -792,7 +793,7 @@ end
 return plugin
 ```
 
-### 3.12 `http.read_cookie(filepath, name)` → string|nil
+### 4.12 `http.read_cookie(filepath, name)` → string|nil
 
 Read a named cookie value from a Netscape-format cookie file.
 
@@ -834,7 +835,7 @@ if sid then
 end
 ```
 
-### 3.13 `http.base64_encode(str)` → string
+### 4.13 `http.base64_encode(str)` → string
 
 Base64-encode a string (binary-safe).
 
@@ -849,7 +850,7 @@ local b64 = http.base64_encode("hello world")
 print(b64)  --> aGVsbG8gd29ybGQ=
 ```
 
-### 3.14 `http.base64_decode(str)` → string
+### 4.14 `http.base64_decode(str)` → string
 
 Decode a base64-encoded string (binary-safe).
 
@@ -864,7 +865,7 @@ local raw = http.base64_decode("aGVsbG8gd29ybGQ=")
 print(raw)  --> hello world
 ```
 
-### 3.15 `http.sha256(str)` → string
+### 4.15 `http.sha256(str)` → string
 
 Compute the SHA-256 digest of a string. Returns the raw 32-byte binary digest
 (NOT hex-encoded). Use `http.base64_encode` to convert to base64, or iterate
@@ -901,12 +902,94 @@ Ludo's HTTP engine supports transparent decompression for responses with
 
 ---
 
-## 4. Ludo Library
+## 5. Zip Library (`zip`)
+
+The `zip` global provides a single function for creating standard ZIP archives
+(PKZIP 2.0 / Info-ZIP compatible) using **zlib DEFLATE** compression.  No
+external dependency beyond the vendored `zlib-1.2.8` is required.
+
+### 5.1 `zip.create`
+
+```lua
+-- Pack an explicit list of files (entries use the basename only):
+local status, errmsg = zip.create(output_path, { file1, file2, ... })
+
+-- Pack an entire directory tree (recursive):
+local status, errmsg = zip.create(output_path, directory)
+
+-- Pack a directory tree, including only files matching a glob pattern:
+local status, errmsg = zip.create(output_path, directory, glob_filter)
+```
+
+**Parameters**
+
+| Parameter     | Type   | Description |
+|---------------|--------|-------------|
+| `output_path` | string | Destination `.zip` file path. Created or overwritten. |
+| `{ files }`   | table  | Array of source file paths. Each file is stored using its **basename** only (no subdirectory). |
+| `directory`   | string | Root directory to pack.  All files are included recursively; entry names preserve the relative path under `directory`. |
+| `glob_filter` | string | Optional case-insensitive glob pattern (`*` = any sequence, `?` = any single char) applied to **basenames**.  Example: `"*.mp4"`. Omit or pass `nil`/`""` to include every file. |
+
+**Return values**
+
+| Value    | Type    | Meaning |
+|----------|---------|----------|
+| `status` | integer | `0` on success; `-1` on any failure. |
+| `errmsg` | string  | Error description — present **only** when `status == -1`. |
+
+### 5.2 Examples
+
+```lua
+-- 1. Pack two downloaded files into a single archive
+local out = ludo.getOutputDirectory() .. "/bundle.zip"
+local status, err = zip.create(out, {
+    ludo.getOutputDirectory() .. "/video.mp4",
+    ludo.getOutputDirectory() .. "/cover.jpg",
+})
+if status ~= 0 then
+    ludo.logError("zip failed: " .. (err or "unknown error"))
+else
+    ludo.logSuccess("Created " .. out)
+end
+
+-- 2. Archive the entire downloads folder
+local status, err = zip.create(
+    ludo.getOutputDirectory() .. "/all.zip",
+    ludo.getOutputDirectory()
+)
+
+-- 3. Archive only MP4 files from the downloads folder
+local status, err = zip.create(
+    ludo.getOutputDirectory() .. "/videos.zip",
+    ludo.getOutputDirectory(),
+    "*.mp4"
+)
+if status ~= 0 then
+    ludo.logError("zip failed: " .. (err or "unknown"))
+end
+```
+
+### 5.3 Notes
+
+- Archives are written in **PKZIP 2.0** format; compatible with Windows
+  Explorer, 7-Zip, unzip, and all standard ZIP tools.
+- All files are compressed with **DEFLATE** (`Z_DEFAULT_COMPRESSION`).
+  The original file is not modified.
+- On **Windows** all paths are handled as **UTF-8** and converted to UTF-16
+  internally for Win32 API calls — filenames with non-ASCII characters work
+  correctly.
+- Maximum entries per archive: **4096**.
+- Maximum in-archive path length: **511 bytes**.
+- ZIP64 (archives > 4 GB or containing files > 4 GB) is **not** supported.
+
+---
+
+## 6. Ludo Library (`ludo`)
 
 The `ludo` module provides download management and application logging. It is
 registered as a global table.
 
-### 4.1 `ludo.newDownload(url [, output_dir [, mode [, filename [, headers]]]])` -> id, status, output_path
+### 6.1 `ludo.newDownload(url [, output_dir [, mode [, filename [, headers]]]])` -> id, status, output_path
 
 Enqueue a new download.
 
@@ -968,7 +1051,7 @@ else
 end
 ```
 
-### 4.2 `ludo.pauseDownload(id)`
+### 6.2 `ludo.pauseDownload(id)`
 
 Pause an active download.
 
@@ -981,7 +1064,7 @@ local id = ludo.newDownload("https://example.com/large-file.zip")
 ludo.pauseDownload(id)
 ```
 
-### 4.3 `ludo.removeDownload(id)`
+### 6.3 `ludo.removeDownload(id)`
 
 Remove a download from the manager (cancels if active).
 
@@ -992,7 +1075,7 @@ Remove a download from the manager (cancels if active).
 ludo.removeDownload(id)
 ```
 
-### 4.4 `ludo.logError(msg)`
+### 6.4 `ludo.logError(msg)`
 
 Log an error message to the application's Activity Log panel.
 
@@ -1003,7 +1086,7 @@ Log an error message to the application's Activity Log panel.
 ludo.logError("Failed to parse response from API")
 ```
 
-### 4.5 `ludo.logSuccess(msg)`
+### 6.5 `ludo.logSuccess(msg)`
 
 Log a success message to the Activity Log panel.
 
@@ -1014,7 +1097,7 @@ Log a success message to the Activity Log panel.
 ludo.logSuccess("Plugin loaded successfully")
 ```
 
-### 4.6 `ludo.logInfo(msg)`
+### 6.6 `ludo.logInfo(msg)`
 
 Log an informational message to the Activity Log panel.
 
@@ -1025,7 +1108,7 @@ Log an informational message to the Activity Log panel.
 ludo.logInfo("Scanning page for download links...")
 ```
 
-### 4.7 `ludo.setting`
+### 6.7 `ludo.setting`
 
 Configuration values loaded from `config.ini` are exposed through `ludo.setting`.
 
@@ -1034,7 +1117,7 @@ print(ludo.setting.maxDownloadRetry)
 print(ludo.setting.maxThread)
 print(ludo.setting.outputDir)
 ```
-### 4.8 `ludo.getOutputDirectory()` - string
+### 6.8 `ludo.getOutputDirectory()` - string
 
 Get the current default output directory.
 
@@ -1048,7 +1131,7 @@ ludo.logInfo("Files will be saved to: " .. dir)
 
 ---
 
-## 5. UI Library
+## 7. UI Library (`ui`)
 
 The `ui` module provides native GUI widget creation via libui-ng. It is registered
 as `require("ui")` or accessed via the global `ui` table. All widget
@@ -1058,9 +1141,9 @@ constructors return an object with chainable methods.
 > for tool scripts and plugins that need to show their own dialog windows.
 >
 > **Tool scripts** must NOT call `ui.Init()`, `ui.Main()`, or `ui.Uninit()`.
-> Use `ui.MainStep(true)` in a loop instead. See §9 for the correct pattern.
+> Use `ui.MainStep(true)` in a loop instead. See §11 for the correct pattern.
 
-### 5.1 Application Lifecycle
+### 7.1 Application Lifecycle
 
 #### `ui.Init()` → string|nil
 
@@ -1098,7 +1181,7 @@ Request the event loop to exit.
 
 ---
 
-### 5.2 Control Base Methods
+### 7.2 Control Base Methods
 
 These functions operate on **any** control, regardless of type:
 
@@ -1117,7 +1200,7 @@ Additionally, `Window` objects expose `Show`, `Hide`, `Enable`, `Disable`,
 
 ---
 
-### 5.3 Window
+### 7.3 Window
 
 #### `ui.NewWindow(title, width, height, hasMenubar)` → Window
 
@@ -1154,7 +1237,12 @@ win:Show()
 | `win:Hide()` | Hide the window |
 | `win:Enable()` / `win:Disable()` | Enable/disable |
 | `win:Visible()` / `win:Enabled()` | Query state |
-| `win:Destroy()` | Destroy the window |
+| `win:Destroy()` | Destroy the window and free resources |
+
+> **Programmatic close:** `win:Close()` does **not** exist in libuilua.
+> To close a window from code (e.g. a button callback), set `win_open = false`
+> and call `win:Destroy()`. `win:OnClosing` only fires when the user clicks
+> the title-bar X button — it is **not** triggered by `win:Destroy()`.
 
 ```lua
 -- Close handler (important for tool scripts)
@@ -1166,7 +1254,7 @@ end, nil)
 
 ---
 
-### 5.4 Box (Layout Container)
+### 7.4 Box (Layout Container)
 
 #### `ui.NewVerticalBox()` → Box
 #### `ui.NewHorizontalBox()` → Box
@@ -1193,7 +1281,7 @@ vbox:Append(entry, true)  -- entry stretches
 
 ---
 
-### 5.5 Button
+### 7.5 Button
 
 #### `ui.NewButton(text)` → Button
 
@@ -1214,7 +1302,7 @@ end, nil)
 
 ---
 
-### 5.6 Label
+### 7.6 Label
 
 #### `ui.NewLabel(text)` → Label
 
@@ -1229,7 +1317,7 @@ local lbl = ui.NewLabel("Status: ready")
 
 ---
 
-### 5.7 Checkbox
+### 7.7 Checkbox
 
 #### `ui.NewCheckbox(text)` → Checkbox
 
@@ -1252,7 +1340,7 @@ end
 
 ---
 
-### 5.8 Entry (Text Input)
+### 7.8 Entry (Text Input)
 
 #### `ui.NewEntry()` → Entry
 #### `ui.NewPasswordEntry()` → Entry  *(text is masked)*
@@ -1273,7 +1361,7 @@ url_entry:SetText("https://example.com")
 
 ---
 
-### 5.9 MultilineEntry (Text Area)
+### 7.9 MultilineEntry (Text Area)
 
 #### `ui.NewMultilineEntry()` → MultilineEntry         *(wrapping)*
 #### `ui.NewNonWrappingMultilineEntry()` → MultilineEntry *(no wrap)*
@@ -1294,7 +1382,7 @@ log:SetReadOnly(1)
 
 ---
 
-### 5.10 ProgressBar
+### 7.10 ProgressBar
 
 #### `ui.NewProgressBar()` → ProgressBar
 
@@ -1310,7 +1398,7 @@ pb:SetValue(75)
 
 ---
 
-### 5.11 Slider
+### 7.11 Slider
 
 #### `ui.NewSlider(min, max)` → Slider
 
@@ -1326,7 +1414,7 @@ pb:SetValue(75)
 
 ---
 
-### 5.12 Spinbox
+### 7.12 Spinbox
 
 #### `ui.NewSpinbox(min, max)` → Spinbox
 
@@ -1338,7 +1426,7 @@ pb:SetValue(75)
 
 ---
 
-### 5.13 Combobox (Dropdown)
+### 7.13 Combobox (Dropdown)
 
 #### `ui.NewCombobox()` → Combobox  *(read-only dropdown)*
 
@@ -1364,7 +1452,7 @@ end, nil)
 
 ---
 
-### 5.14 EditableCombobox
+### 7.14 EditableCombobox
 
 #### `ui.NewEditableCombobox()` → EditableCombobox  *(dropdown + free text)*
 
@@ -1377,7 +1465,7 @@ end, nil)
 
 ---
 
-### 5.15 RadioButtons
+### 7.15 RadioButtons
 
 #### `ui.NewRadioButtons()` → RadioButtons
 
@@ -1396,7 +1484,7 @@ rb:SetSelected(1)  -- Medium
 
 ---
 
-### 5.16 Group
+### 7.16 Group
 
 #### `ui.NewGroup(title)` → Group
 
@@ -1416,7 +1504,7 @@ grp:SetChild(ui.NewVerticalBox())
 
 ---
 
-### 5.17 Tab
+### 7.17 Tab
 
 #### `ui.NewTab()` → Tab
 
@@ -1439,7 +1527,7 @@ tab:SetSelected(0)
 
 ---
 
-### 5.18 Separator
+### 7.18 Separator
 
 #### `ui.NewHorizontalSeparator()` → Separator
 #### `ui.NewVerticalSeparator()` → Separator
@@ -1451,7 +1539,7 @@ hbox:Append(ui.NewVerticalSeparator())
 
 ---
 
-### 5.19 Date/Time Pickers
+### 7.19 Date/Time Pickers
 
 #### `ui.NewDateTimePicker()` → DateTimePicker
 #### `ui.NewDatePicker()` → DateTimePicker
@@ -1473,7 +1561,7 @@ print(t.year .. "-" .. t.month .. "-" .. t.day)
 
 ---
 
-### 5.20 ColorButton
+### 7.20 ColorButton
 
 #### `ui.NewColorButton()` → ColorButton
 
@@ -1491,7 +1579,7 @@ local r, g, b, a = cb:Color()
 
 ---
 
-### 5.21 Form (Labeled Layout)
+### 7.21 Form (Labeled Layout)
 
 #### `ui.NewForm()` → Form
 
@@ -1515,7 +1603,7 @@ form:Append("Log:", ui.NewMultilineEntry(), true)
 
 ---
 
-### 5.22 Grid (2D Layout)
+### 7.22 Grid (2D Layout)
 
 #### `ui.NewGrid()` → Grid
 
@@ -1541,7 +1629,7 @@ grid:Append(ui.NewEntry(),        1, 1, 1, 1, true,  ui.AlignFill, false, ui.Ali
 
 ---
 
-### 5.23 Area (Custom Drawing)
+### 7.23 Area (Custom Drawing)
 
 #### `ui.NewArea()` → Area
 
@@ -1551,7 +1639,7 @@ grid:Append(ui.NewEntry(),        1, 1, 1, 1, true,  ui.AlignFill, false, ui.Ali
 
 ---
 
-### 5.24 Table
+### 7.24 Table
 
 Tables display data from a `TableModel` using a model-view pattern.
 
@@ -1680,7 +1768,7 @@ end)
 
 ---
 
-### 5.25 Dialogs
+### 7.25 Dialogs
 
 These functions display native OS dialogs. All require a parent `Window`.
 
@@ -1706,7 +1794,7 @@ ui.MsgBoxError(win, "Error", "Failed to connect.")
 
 ---
 
-### 5.26 Complete Tool Script Example
+### 7.26 Complete Tool Script Example
 
 ```lua
 -- Example tool script (tools/my_tool.lua)
@@ -1764,7 +1852,7 @@ end
 
 ---
 
-### 5.27 Table Tool Example
+### 7.27 Table Tool Example
 
 ```lua
 -- tools/download_list.lua
@@ -1810,9 +1898,9 @@ end
 
 ---
 
-## 6. Plugin System
+## 8. Plugin System
 
-### 6.1 Plugin Structure
+### 8.1 Plugin Structure
 
 Each plugin is a `.lua` file placed in the `plugins/` directory. It must return
 a table with two functions:
@@ -1836,7 +1924,7 @@ end
 return plugin
 ```
 
-### 6.2 Plugin Lifecycle
+### 8.2 Plugin Lifecycle
 
 1. **Load** — On startup (or when the user selects a plugin directory), Ludo
    scans for `*.lua` files and verifies each has `validate` and `process`
@@ -1847,7 +1935,7 @@ return plugin
    `ludo.newDownload()` to enqueue files.
 4. **Fallback** — If no plugin matches, Ludo downloads the URL directly.
 
-### 6.3 Example: GitHub Release Plugin
+### 8.3 Example: GitHub Release Plugin
 
 ```lua
 -- plugins/github_release.lua
@@ -1888,7 +1976,7 @@ end
 return plugin
 ```
 
-### 6.4 Example: Direct File Plugin
+### 8.4 Example: Direct File Plugin
 
 ```lua
 -- plugins/direct_file.lua
@@ -1914,7 +2002,7 @@ end
 return plugin
 ```
 
-### 6.5 Example: Batch URL Plugin
+### 8.5 Example: Batch URL Plugin
 
 ```lua
 -- plugins/batch_url.lua
@@ -1951,7 +2039,7 @@ end
 return plugin
 ```
 
-### 6.6 Example: Plugin with UI Dialog
+### 8.6 Example: Plugin with UI Dialog
 
 ```lua
 -- plugins/custom_dialog.lua
@@ -2081,24 +2169,24 @@ return plugin
 
 ---
 
-## 7. Converting yt-dlp Extractors to Ludo Plugins
+## 9. Converting yt-dlp Extractors to Ludo Plugins
 
 [yt-dlp](https://github.com/yt-dlp/yt-dlp) is a Python video downloader whose
 *extractors* (one per site) are the de-facto reference for scraping media from
 social-media and video-hosting sites.  A Ludo plugin serves the same purpose
 but is written in Lua.  This section provides a systematic translation guide.
 
-### 7.1 Architecture Mapping
+### 9.1 Architecture Mapping
 
 | yt-dlp concept | Ludo equivalent | Notes |
 |----------------|-----------------|-------|
 | `InfoExtractor` class | `plugin` table returned by the `.lua` file | One class → one file |
-| `_VALID_URL` (regex) | `plugin.validate(url)` (Lua patterns) | See [Python→Lua pattern table](#715-regex-to-lua-pattern-cheat-sheet) |
+| `_VALID_URL` (regex) | `plugin.validate(url)` (Lua patterns) | See [Python→Lua pattern table](#95-regex-to-lua-pattern-cheat-sheet) |
 | `_real_extract(self, url)` | `plugin.process(url)` | Must call `ludo.newDownload()` |
 | `self._download_webpage(url, ...)` | `http.get(url, opts)` | Returns `body, status, headers` |
 | `self._download_json(url, ...)` | `http.get()` + `json.decode()` | Combine two calls |
 | `self._search_regex(pattern, ...)` | `string.match(text, pattern)` | Translate regex to Lua pattern |
-| `self._search_json(pattern, ...)` | `extract_json_object(text, pattern)` | Write a JSON brace-matcher (see §7.6) |
+| `self._search_json(pattern, ...)` | `extract_json_object(text, pattern)` | Write a JSON brace-matcher (see §9.6) |
 | `traverse_obj(data, ...)` | Nested table indexing with nil-checks | `data and data.key1 and data.key1.key2` |
 | `self.report_warning(msg)` | `ludo.logError(msg)` or `ludo.logInfo(msg)` | |
 | `self.raise_login_required(msg)` | `ludo.logError(msg); return nil` | |
@@ -2119,10 +2207,10 @@ but is written in Lua.  This section provides a systematic translation guide.
 | `re.search(r'...', text)` | `text:match("...")` | See pattern cheat sheet |
 | `re.findall(r'...', text)` | Loop with `text:gmatch("...")` | |
 | `re.sub(r'...', repl, text)` | `text:gsub("...", repl)` | |
-| `hashlib.md5(s).hexdigest()` | (not built-in) | See §7.7 |
+| `hashlib.md5(s).hexdigest()` | (not built-in) | See §9.7 |
 | `itertools.count(1)` | `for page = 1, math.huge do ... end` | |
 
-### 7.2 Step-by-Step Conversion Process
+### 9.2 Step-by-Step Conversion Process
 
 1. **Study `_VALID_URL`** — note the URL patterns the extractor handles.
    Convert the Python regex to one or more `string.match()` / `string.find()`
@@ -2150,7 +2238,7 @@ but is written in Lua.  This section provides a systematic translation guide.
 7. **Handle authentication** — if the extractor checks for `sessionid` or
    other cookies, use `http.set_cookie(filepath)` + `http.read_cookie()`.
 
-### 7.3 Common Python → Lua Translations
+### 9.3 Common Python → Lua Translations
 
 #### Downloading and parsing a web page
 
@@ -2265,7 +2353,7 @@ if sid then
 end
 ```
 
-### 7.4 Plugin Template (Site Extractor)
+### 9.4 Plugin Template (Site Extractor)
 
 Use this as a starting point when converting any yt-dlp extractor:
 
@@ -2366,7 +2454,7 @@ end
 return plugin
 ```
 
-### 7.5 Regex to Lua Pattern Cheat Sheet
+### 9.5 Regex to Lua Pattern Cheat Sheet
 
 | Python regex | Lua pattern | Notes |
 |--------------|-------------|-------|
@@ -2390,7 +2478,7 @@ return plugin
 | `re.findall(pat, text)` | `for m in text:gmatch(pat)` | |
 | `re.sub(pat, repl, text)` | `text:gsub(pat, repl)` | |
 
-### 7.6 Extracting JSON from HTML
+### 9.6 Extracting JSON from HTML
 
 Many yt-dlp extractors use `_search_json()` to find a JSON blob embedded in
 JavaScript.  In Lua, write a brace-matching helper:
@@ -2435,7 +2523,7 @@ end
 local shared = extract_json_object(body, "window%._sharedData%s*=")
 ```
 
-### 7.7 Things yt-dlp Has That Ludo Does Not
+### 9.7 Things yt-dlp Has That Ludo Does Not
 
 | yt-dlp feature | Workaround in Ludo |
 |----------------|-------------------|
@@ -2448,7 +2536,7 @@ local shared = extract_json_object(body, "window%._sharedData%s*=")
 | Proxy / SOCKS support | Not exposed in `http` module yet |
 | `--cookies-from-browser` | Export cookies with a browser extension and place in output dir |
 
-### 7.8 Real-World Example: Instagram
+### 9.8 Real-World Example: Instagram
 
 The `plugins/instagram.lua` file is a complete example of converting yt-dlp's
 `instagram.py` extractor into a Ludo plugin.  Key techniques used:
@@ -2467,9 +2555,9 @@ The `plugins/instagram.lua` file is a complete example of converting yt-dlp's
 
 ---
 
-## 8. Testing and Debugging Plugins
+## 10. Testing and Debugging Plugins
 
-### 8.1 Prerequisites
+### 10.1 Prerequisites
 
 Build Ludo in Debug configuration to get `ludo-debug.exe`:
 
@@ -2481,7 +2569,7 @@ cmake --build . --config Debug
 The debug build writes verbose curl logs and Lua output to `ludo.log` in the
 current working directory.
 
-### 8.2 Running a Plugin Script
+### 10.2 Running a Plugin Script
 
 Use the `-s` (or `--script`) flag to execute a standalone Lua script:
 
@@ -2493,7 +2581,7 @@ cd build
 The `-s` flag runs the script inside the full Ludo Lua environment — all
 built-in modules (`http`, `ludo`, `json`, `ui`) are available.
 
-### 8.3 Writing a Test Script
+### 10.3 Writing a Test Script
 
 A test script loads a plugin with `dofile()`, tests `validate()` with known
 URLs, and then calls `process()` on a live URL.
@@ -2544,7 +2632,7 @@ end
 ludo.logInfo("=== test done ===")
 ```
 
-### 8.4 Checking the Log
+### 10.4 Checking the Log
 
 After running the script, inspect `ludo.log` in the build directory:
 
@@ -2559,7 +2647,7 @@ tail -40 build/ludo.log
 grep "\[curl\]" build/ludo.log | tail -20
 ```
 
-### 8.5 Log Message Format
+### 10.5 Log Message Format
 
 ```
 [HH:MM:SS] [LEVEL] message
@@ -2574,7 +2662,7 @@ Log levels:
 - `[add]` — download manager adding a new URL.
 - `[perform_download]` — download starting with resolved filename.
 
-### 8.6 Typical Workflow
+### 10.6 Typical Workflow
 
 ```
 1.  Write/edit plugins/myplugin.lua  (in the project root plugins/ dir)
@@ -2590,7 +2678,7 @@ Log levels:
 > before testing.  The CMake build copies plugins during the configure step,
 > but manual copies are faster during development.
 
-### 8.7 Debugging Tips
+### 10.7 Debugging Tips
 
 - **Lua errors** are caught by `pcall()` in the test script and logged.
   If the script itself has a syntax error, `ludo-debug.exe` will print the
@@ -2624,96 +2712,14 @@ Log levels:
 
 ---
 
-## 9. Zip Library (`zip`)
-
-The `zip` global provides a single function for creating standard ZIP archives
-(PKZIP 2.0 / Info-ZIP compatible) using **zlib DEFLATE** compression.  No
-external dependency beyond the vendored `zlib-1.2.8` is required.
-
-### 9.1 `zip.create`
-
-```lua
--- Pack an explicit list of files (entries use the basename only):
-local status, errmsg = zip.create(output_path, { file1, file2, ... })
-
--- Pack an entire directory tree (recursive):
-local status, errmsg = zip.create(output_path, directory)
-
--- Pack a directory tree, including only files matching a glob pattern:
-local status, errmsg = zip.create(output_path, directory, glob_filter)
-```
-
-**Parameters**
-
-| Parameter     | Type   | Description |
-|---------------|--------|-------------|
-| `output_path` | string | Destination `.zip` file path. Created or overwritten. |
-| `{ files }`   | table  | Array of source file paths. Each file is stored using its **basename** only (no subdirectory). |
-| `directory`   | string | Root directory to pack.  All files are included recursively; entry names preserve the relative path under `directory`. |
-| `glob_filter` | string | Optional case-insensitive glob pattern (`*` = any sequence, `?` = any single char) applied to **basenames**.  Example: `"*.mp4"`. Omit or pass `nil`/`""` to include every file. |
-
-**Return values**
-
-| Value    | Type    | Meaning |
-|----------|---------|---------|
-| `status` | integer | `0` on success; `-1` on any failure. |
-| `errmsg` | string  | Error description — present **only** when `status == -1`. |
-
-### 9.2 Examples
-
-```lua
--- 1. Pack two downloaded files into a single archive
-local out = ludo.getOutputDirectory() .. "/bundle.zip"
-local status, err = zip.create(out, {
-    ludo.getOutputDirectory() .. "/video.mp4",
-    ludo.getOutputDirectory() .. "/cover.jpg",
-})
-if status ~= 0 then
-    ludo.logError("zip failed: " .. (err or "unknown error"))
-else
-    ludo.logSuccess("Created " .. out)
-end
-
--- 2. Archive the entire downloads folder
-local status, err = zip.create(
-    ludo.getOutputDirectory() .. "/all.zip",
-    ludo.getOutputDirectory()
-)
-
--- 3. Archive only MP4 files from the downloads folder
-local status, err = zip.create(
-    ludo.getOutputDirectory() .. "/videos.zip",
-    ludo.getOutputDirectory(),
-    "*.mp4"
-)
-if status ~= 0 then
-    ludo.logError("zip failed: " .. (err or "unknown"))
-end
-```
-
-### 9.3 Notes
-
-- Archives are written in **PKZIP 2.0** format; compatible with Windows
-  Explorer, 7-Zip, unzip, and all standard ZIP tools.
-- All files are compressed with **DEFLATE** (`Z_DEFAULT_COMPRESSION`).
-  The original file is not modified.
-- On **Windows** all paths are handled as **UTF-8** and converted to UTF-16
-  internally for Win32 API calls — filenames with non-ASCII characters work
-  correctly.
-- Maximum entries per archive: **4096**.
-- Maximum in-archive path length: **511 bytes**.
-- ZIP64 (archives > 4 GB or containing files > 4 GB) is **not** supported.
-
----
-
-## 10. Tools Menu
+## 11. Tools Menu
 
 The **Tools** menu automatically lists every `.lua` file found in the `tools/`
 directory (next to the executable). Clicking a tool entry runs that script in a
 fresh Lua state with the full Ludo API available (`http`, `ludo`, `ui`, `zip`,
 `json`).
 
-### 10.1 Tool Script Discovery
+### 11.1 Tool Script Discovery
 
 On startup, Ludo scans the `tools/` directory and adds one menu item per
 `.lua` file. The menu label is the filename without the `.lua` extension.
@@ -2724,7 +2730,7 @@ tools/
   my_tool.lua                        → Tools → my_tool
 ```
 
-### 10.2 Tool Script Environment
+### 11.2 Tool Script Environment
 
 Tool scripts run inside the already-running Ludo process via `lua_engine_run_script`:
 
@@ -2737,9 +2743,9 @@ Tool scripts run inside the already-running Ludo process via `lua_engine_run_scr
 - Unlike plugins, tool scripts do **not** need `validate`/`process` functions —
   they are executed as top-level scripts.
 - **Do NOT call `ui.Init()`, `ui.Uninit()`, or `ui.Main()`** — Ludo's UI is
-  already initialised. Use a `ui.MainStep()` loop instead (see §10.3).
+  already initialised. Use a `ui.MainStep()` loop instead (see §11.3).
 
-### 10.3 Shared Lua Libraries (`lib/`)
+### 11.3 Shared Lua Libraries (`lib/`)
 
 The `lib/` directory contains Lua modules available to **all** scripts (tool
 scripts and plugins) via `require()`. The directory is prepended to
@@ -2775,7 +2781,7 @@ end
 
 Common options: `{ headers=true, loadFromString=false, rename={...}, fieldsToKeep={...} }`
 
-### 10.4 Tool Script Template
+### 11.4 Tool Script Template
 
 ```lua
 -- tools/my_tool.lua
@@ -2793,14 +2799,19 @@ vbox:Append(ui.NewLabel("Hello from My Tool!"))
 local win_open = true
 local btn = ui.NewButton("Close")
 btn:OnClicked(function(b, data)
+    -- Programmatic close: win:Close() does NOT exist in libuilua.
+    -- Set win_open=false to exit the MainStep loop, then destroy the window.
     win_open = false
+    win:Destroy()
 end, nil)
 vbox:Append(btn)
 win:SetChild(vbox)
 
+-- User-initiated close (title-bar X button): allow close, exit the loop.
+-- win:OnClosing is NOT triggered by win:Destroy() — only by the X button.
 win:OnClosing(function(w, data)
     win_open = false
-    return 1
+    return 1  -- 1 = allow close; 0 = prevent close
 end, nil)
 win:Show()
 
@@ -2811,7 +2822,7 @@ while win_open do
 end
 ```
 
-### 10.5 Table-Based Tool Example (PlayStation Games Downloader)
+### 11.5 Table-Based Tool Example (PlayStation Games Downloader)
 
 The built-in **PlayStation Games Downloader** (`tools/PlayStation Games
 Downloader.lua`) demonstrates the model-view Table pattern in a tool script:
