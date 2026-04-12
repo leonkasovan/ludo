@@ -1,11 +1,12 @@
 # Ludo Scripting Manual
 
 Ludo embeds **Lua 5.2** as its scripting engine. Every plugin and script has
-access to the full Lua standard library plus three extension libraries provided
+access to the full Lua standard library plus five extension libraries provided
 by Ludo:
 
 | Module | Global name | Description |
 |--------|-------------|-------------|
+| JSON   | `json`      | JSON encode/decode via Lua CJSON |
 | HTTP   | `http`      | HTTP client powered by libcurl |
 | Ludo   | `ludo`      | Download manager & application control |
 | UI     | `ui`        | Native GUI widgets (libui) |
@@ -20,14 +21,14 @@ that returns a table with two functions: `validate(url)` and `process(url)`.
 
 1. [Lua Language Basics](#1-lua-language-basics)
 2. [Standard Lua Library](#2-standard-lua-library)
-3. [JSON Library (`json`)](#json-library-json)
-3. [HTTP Library (`http`)](#3-http-library)
-4. [Ludo Library (`ludo`)](#4-ludo-library)
-5. [UI Library (`ui`)](#5-ui-library)
-5. [Zip Library (`zip`)](#5-zip-library)
-6. [Plugin System](#6-plugin-system)
-7. [Converting yt-dlp Extractors to Ludo Plugins](#7-converting-yt-dlp-extractors-to-ludo-plugins)
-8. [Testing and Debugging Plugins](#8-testing-and-debugging-plugins)
+3. [JSON Library (`json`)](#3-json-library-json)
+4. [HTTP Library (`http`)](#3-http-library)
+5. [Ludo Library (`ludo`)](#4-ludo-library)
+6. [UI Library (`ui`)](#5-ui-library)
+7. [Plugin System](#6-plugin-system)
+8. [Converting yt-dlp Extractors to Ludo Plugins](#7-converting-yt-dlp-extractors-to-ludo-plugins)
+9. [Testing and Debugging Plugins](#8-testing-and-debugging-plugins)
+10. [Zip Library (`zip`)](#9-zip-library-zip)
 
 ---
 
@@ -500,7 +501,7 @@ bit32.extract(0xFF, 4, 4)   --> 15  (extract 4 bits from bit 4)
 
 ---
 
-## JSON Library (`json`)
+## 3. JSON Library (`json`)
 
 Ludo bundles a fast JSON implementation (Lua CJSON) exposed as the global
 `json` module. A "safe" wrapper is also available as `cjson_safe` which
