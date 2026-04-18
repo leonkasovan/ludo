@@ -10,6 +10,7 @@ end
 
 function plugin.process(url)
 	-- ludo.logInfo("Processing: " .. url)
+	local id, status, headers
 	
 	-- Step 1: Extract the file ID from the URL
 	local file_id = url:match("/d/([%w_-]+)")
@@ -21,16 +22,17 @@ function plugin.process(url)
 	
 	-- Step 2:
 	local real_url = "https://drive.google.com/uc?export=download&id=" .. file_id
-	local _, status, headers = http.head(real_url)
+	_, status, headers = http.head(real_url)
 	if status ~= 200 then
 		ludo.logError("Fail to get info header") 
 		return nil
 	end
 	
 	-- Step 3:
-	local id, status, output = nil, nil, nil
+	id, status, output = nil, nil, nil
 	if string.sub(headers["Content-Type"],1, 4) == "text" then -- over 100MB
-		local content, status, headers = http.get(real_url)
+		local content
+		content, status, headers = http.get(real_url)
 		local uuid = string.match(content, '"uuid" value="([%w_%-]+)"></form>')
 		if not uuid then
 			ludo.logError("Invalid response URL. Can't find uuid")
