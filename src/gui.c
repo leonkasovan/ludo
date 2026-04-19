@@ -1343,72 +1343,6 @@ static int resolve_toolbar_png_path(const char *name, char *out, size_t out_sz) 
     return 0;
 }
 
-static void toolbar_icons_init(void) {
-    g_gui.toolbar_icon_ctx = ludo_icons_init();
-    if (!g_gui.toolbar_icon_ctx) {
-        return;
-    }
-
-    /* 32x32 icon with 4px visual padding all around. */
-    ludo_icons_set_button_size((uintptr_t)uiControlHandle(uiControl(g_gui.tb_add)), TOOLBAR_BUTTON_SIZE, TOOLBAR_BUTTON_SIZE);
-    ludo_icons_set_button_size((uintptr_t)uiControlHandle(uiControl(g_gui.tb_pause)), TOOLBAR_BUTTON_SIZE, TOOLBAR_BUTTON_SIZE);
-    ludo_icons_set_button_size((uintptr_t)uiControlHandle(uiControl(g_gui.tb_resume)), TOOLBAR_BUTTON_SIZE, TOOLBAR_BUTTON_SIZE);
-    ludo_icons_set_button_size((uintptr_t)uiControlHandle(uiControl(g_gui.tb_remove)), TOOLBAR_BUTTON_SIZE, TOOLBAR_BUTTON_SIZE);
-    ludo_icons_set_button_size((uintptr_t)uiControlHandle(uiControl(g_gui.tb_plugin)), TOOLBAR_BUTTON_SIZE, TOOLBAR_BUTTON_SIZE);
-    ludo_icons_set_button_size((uintptr_t)uiControlHandle(uiControl(g_gui.tb_setting)), TOOLBAR_BUTTON_SIZE, TOOLBAR_BUTTON_SIZE);
-    ludo_icons_set_button_size((uintptr_t)uiControlHandle(uiControl(g_gui.tb_http)), TOOLBAR_BUTTON_SIZE, TOOLBAR_BUTTON_SIZE);
-    ludo_icons_set_button_size((uintptr_t)uiControlHandle(uiControl(g_gui.tb_lua)), TOOLBAR_BUTTON_SIZE, TOOLBAR_BUTTON_SIZE);
-    ludo_icons_set_button_size((uintptr_t)uiControlHandle(uiControl(g_gui.tb_about)), TOOLBAR_BUTTON_SIZE, TOOLBAR_BUTTON_SIZE);
-
-    char path[512];
-    if (resolve_toolbar_png_path(ICON_ADD, path, sizeof(path))) {
-        ludo_icons_set_button_png(g_gui.toolbar_icon_ctx,
-                                  (uintptr_t)uiControlHandle(uiControl(g_gui.tb_add)),
-                                  path);
-    }
-    if (resolve_toolbar_png_path(ICON_PAUSE, path, sizeof(path))) {
-        ludo_icons_set_button_png(g_gui.toolbar_icon_ctx,
-                                  (uintptr_t)uiControlHandle(uiControl(g_gui.tb_pause)),
-                                  path);
-    }
-    if (resolve_toolbar_png_path(ICON_RESUME, path, sizeof(path))) {
-        ludo_icons_set_button_png(g_gui.toolbar_icon_ctx,
-                                  (uintptr_t)uiControlHandle(uiControl(g_gui.tb_resume)),
-                                  path);
-    }
-    if (resolve_toolbar_png_path(ICON_REMOVE, path, sizeof(path))) {
-        ludo_icons_set_button_png(g_gui.toolbar_icon_ctx,
-                                  (uintptr_t)uiControlHandle(uiControl(g_gui.tb_remove)),
-                                  path);
-    }
-    if (resolve_toolbar_png_path(ICON_PLUGIN, path, sizeof(path))) {
-        ludo_icons_set_button_png(g_gui.toolbar_icon_ctx,
-                                  (uintptr_t)uiControlHandle(uiControl(g_gui.tb_plugin)),
-                                  path);
-    }
-    if (resolve_toolbar_png_path(ICON_SETTING, path, sizeof(path))) {
-        ludo_icons_set_button_png(g_gui.toolbar_icon_ctx,
-                                  (uintptr_t)uiControlHandle(uiControl(g_gui.tb_setting)),
-                                  path);
-    
-    }
-    if (resolve_toolbar_png_path(ICON_HTTP, path, sizeof(path))) {
-        ludo_icons_set_button_png(g_gui.toolbar_icon_ctx,
-                                  (uintptr_t)uiControlHandle(uiControl(g_gui.tb_http)),
-                                  path);
-    }
-    if (resolve_toolbar_png_path(ICON_LUA, path, sizeof(path))) {
-        ludo_icons_set_button_png(g_gui.toolbar_icon_ctx,
-                                  (uintptr_t)uiControlHandle(uiControl(g_gui.tb_lua)),
-                                  path);
-    }
-    if (resolve_toolbar_png_path(ICON_ABOUT, path, sizeof(path))) {
-        ludo_icons_set_button_png(g_gui.toolbar_icon_ctx,
-                                  (uintptr_t)uiControlHandle(uiControl(g_gui.tb_about)),
-                                  path);
-    }
-}
-
 static void toolbar_icons_shutdown(void) {
     if (g_gui.toolbar_icon_ctx) {
         ludo_icons_shutdown(g_gui.toolbar_icon_ctx);
@@ -1548,259 +1482,6 @@ static void on_add_clicked(uiButton *sender, void *data) {
     gui_log(LOG_INFO, "%s", msg);
 }
 
-static void on_pause_clicked(uiButton *sender, void *data) {
-    (void)sender; (void)data;
-    int acted = 0;
-    for (int i = 0; i < g_gui.row_count; i++) {
-        DownloadRow *r = &g_gui.rows[i];
-        if (r->selected) {
-            if (r->status.id > 0) {
-                if (download_manager_pause(r->status.id)) {
-                    acted++;
-                }
-            }
-            r->selected = 0; /* clear selection */
-        }
-    }
-    if (acted > 0) {
-        gui_log(LOG_INFO, "Paused checked downloads");
-        if (g_downloads_model) for (int j = 0; j < g_gui.row_count; j++) uiTableModelRowChanged(g_downloads_model, j);
-    } else {
-        gui_log(LOG_WARNING, "No action taken.");
-    }
-}
-
-static void on_resume_clicked(uiButton *sender, void *data) {
-    (void)sender; (void)data;
-    int acted = 0;
-    for (int i = 0; i < g_gui.row_count; i++) {
-        DownloadRow *r = &g_gui.rows[i];
-        if (r->selected) {
-            if (r->status.id > 0) {
-                if (download_manager_resume(r->status.id)) {
-                    acted++;
-                }
-            }
-            r->selected = 0; /* clear selection */
-        }
-    }
-    if (acted > 0) {
-        gui_log(LOG_INFO, "Resumed checked downloads");
-        if (g_downloads_model) for (int j = 0; j < g_gui.row_count; j++) uiTableModelRowChanged(g_downloads_model, j);
-    } else {
-        gui_log(LOG_WARNING, "No action taken.");
-    }
-}
-
-static void on_remove_clicked(uiButton *sender, void *data) {
-    (void)sender; (void)data;
-    int acted = 0;
-
-    /* BEST PRACTICE: Iterate backwards when deleting from an array */
-    for (int i = g_gui.row_count - 1; i >= 0; i--) {
-        DownloadRow *r = &g_gui.rows[i];
-        if (r->selected) {
-            if (r->status.id > 0) {
-                if (download_manager_remove(r->status.id)) {
-                    acted++;
-                    /* download_manager_remove dispatches a final marked_for_removal
-                     * progress update for all states (immediately for stopped ones,
-                     * deferred via the worker for RUNNING/QUEUED).  Either way,
-                     * gui_on_progress owns the row deletion — skip it here to
-                     * prevent a use-after-free / dangling-state mismatch. */
-                    continue;
-                }
-            }
-
-            /* Fallback: backend remove was not applicable (id == 0) or failed.
-             * Clean up the GUI row directly so it does not become a zombie. */
-            for (int j = i; j < g_gui.row_count - 1; j++) {
-                g_gui.rows[j] = g_gui.rows[j + 1];
-            }
-            g_gui.row_count--;
-
-            if (g_downloads_model) {
-                uiTableModelRowDeleted(g_downloads_model, i);
-            }
-        }
-    }
-
-    if (acted > 0) {
-        gui_log(LOG_INFO, "Removed checked downloads");
-    } else {
-        gui_log(LOG_WARNING, "No action taken.");
-    }
-}
-
-static void on_plugin_clicked(uiButton *sender, void *data) {
-    (void)sender; (void)data;
-    char *folder = uiOpenFolder(g_gui.window);
-    if (!folder || folder[0] == '\0') {
-        if (folder) uiFreeText(folder);
-        return;
-    }
-
-    lua_engine_load_plugins(folder);
-
-    char msg[1024];
-    snprintf(msg, sizeof(msg), "Plugins reloaded from: %s", folder);
-    gui_log(LOG_SUCCESS, "%s", msg);
-    uiFreeText(folder);
-}
-
-static void on_setting_clicked(uiButton *sender, void *data) {
-    (void)sender; (void)data;
-    char *folder = uiOpenFolder(g_gui.window);
-    if (!folder || folder[0] == '\0') {
-        if (folder) uiFreeText(folder);
-        return;
-    }
-
-    download_manager_set_output_dir(folder);
-    ludo_config_set_output_dir(folder);
-
-    char msg[1024];
-    snprintf(msg, sizeof(msg), "Default output directory changed to: %s", folder);
-    gui_log(LOG_SUCCESS, "%s", msg);
-    uiFreeText(folder);
-}
-
-static void on_http_clicked(uiButton *sender, void *data) {
-    (void)sender; (void)data;
-
-    // --- HTTP Test Window ---
-    int window_width = 900;
-    int window_height = 700;
-
-    gui_get_window_size(LUDO_GUI_WINDOW_HTTP_TEST, 900, 700, &window_width, &window_height);
-    uiWindow *win = uiNewWindow("HTTP Request Tester", window_width, window_height, 0);
-    uiWindowSetMargined(win, 1);
-
-    uiBox *vbox = uiNewVerticalBox();
-    uiBoxSetPadded(vbox, 1);
-
-    uiEntry *url_entry = uiNewEntry();
-    uiEntrySetText(url_entry, "");
-    uiBoxAppend(vbox, uiControl(url_entry), 0);
-
-    uiMultilineEntry *header_entry = uiNewMultilineEntry();
-    uiMultilineEntrySetText(header_entry, "");
-    uiBoxAppend(vbox, uiControl(header_entry), 0);
-
-    uiButton *send_btn = uiNewButton("Send HTTP Request");
-    uiBoxAppend(vbox, uiControl(send_btn), 0);
-
-    uiMultilineEntry *header_resp_entry = uiNewMultilineEntry();
-    uiMultilineEntrySetReadOnly(header_resp_entry, 1);
-    uiBoxAppend(vbox, uiControl(header_resp_entry), 1);
-
-    uiMultilineEntry *output_entry = uiNewMultilineEntry();
-    uiMultilineEntrySetReadOnly(output_entry, 1);
-    uiBoxAppend(vbox, uiControl(output_entry), 1);
-
-    HttpTestCtx *ctx = malloc(sizeof(HttpTestCtx));
-    if (!ctx) {
-        gui_log(LOG_ERROR, "[HTTP DEBUG] ctx alloc failed");
-        uiControlDestroy(uiControl(win));
-        return;
-    }
-    ctx->url_entry = url_entry;
-    ctx->header_entry = header_entry;
-    ctx->header_resp_entry = header_resp_entry;
-    ctx->output_entry = output_entry;
-    ctx->win = win;
-    g_active_http_test_ctx = ctx;
-
-    uiButtonOnClicked(send_btn, http_test_on_send, ctx);
-    uiWindowSetChild(win, uiControl(vbox));
-    gui_enable_window_persistence(win, &g_http_test_window_config_id);
-    uiControlShow(uiControl(win));
-    uiWindowOnClosing(win, destroy_http_test_window, ctx);
-}
-
-static void on_lua_clicked(uiButton *sender, void *data) {
-    (void)sender; (void)data;
-    // --- Lua Test Window ---
-    int window_width = 960;
-    int window_height = 640;
-
-    gui_get_window_size(LUDO_GUI_WINDOW_LUA_TEST, 960, 640, &window_width, &window_height);
-    uiWindow *win = uiNewWindow("Lua Script Tester", window_width, window_height, 0);
-    uiWindowSetMargined(win, 1);
-
-    uiBox *content_box = uiNewHorizontalBox();
-    uiBoxSetPadded(content_box, 1);
-
-    uiBox *snippet_box = uiNewVerticalBox();
-    uiBoxSetPadded(snippet_box, 1);
-
-    uiLabel *snippet_label = uiNewLabel("Snippets");
-    uiBoxAppend(snippet_box, uiControl(snippet_label), 0);
-
-    uiBox *editor_box = uiNewVerticalBox();
-    uiBoxSetPadded(editor_box, 1);
-
-    uiMultilineEntry *script_entry = uiNewMultilineEntry();
-    // uiMultilineEntrySetPlaceholder(script_entry, ...) is not available in libui-ng; skip placeholder.
-    uiBoxAppend(editor_box, uiControl(script_entry), 1);
-
-    uiButton *exec_btn = uiNewButton("Execute Lua Script");
-    uiBoxAppend(editor_box, uiControl(exec_btn), 0);
-
-    uiMultilineEntry *output_entry = uiNewMultilineEntry();
-    uiMultilineEntrySetReadOnly(output_entry, 1);
-    uiBoxAppend(editor_box, uiControl(output_entry), 1);
-
-    LuaTestCtx *ctx = malloc(sizeof(LuaTestCtx));
-    if (!ctx) {
-        gui_log(LOG_ERROR, "[LUA DEBUG] ctx alloc failed");
-        uiControlDestroy(uiControl(win));
-        return;
-    }
-    memset(ctx, 0, sizeof(*ctx));
-    ctx->script_entry = script_entry;
-    ctx->output_entry = output_entry;
-    ctx->win = win;
-    load_snippets_from_dir(ctx, "snippets");
-    ctx->snippet_model_handler.ctx = ctx;
-    ctx->snippet_model_handler.handler.NumColumns = snippet_model_num_columns;
-    ctx->snippet_model_handler.handler.ColumnType = snippet_model_column_type;
-    ctx->snippet_model_handler.handler.NumRows = snippet_model_num_rows;
-    ctx->snippet_model_handler.handler.CellValue = snippet_model_cell_value;
-    ctx->snippet_model_handler.handler.SetCellValue = snippet_model_set_cell_value;
-    ctx->snippet_model = uiNewTableModel(&ctx->snippet_model_handler.handler);
-    {
-        uiTableParams snippet_params;
-        memset(&snippet_params, 0, sizeof(snippet_params));
-        snippet_params.Model = ctx->snippet_model;
-        ctx->snippet_table = uiNewTable(&snippet_params);
-        uiTableAppendTextColumn(ctx->snippet_table, "Snippet", 0, uiTableModelColumnNeverEditable, NULL);
-        uiTableHeaderSetVisible(ctx->snippet_table, 0);
-        uiTableSetSelectionMode(ctx->snippet_table, uiTableSelectionModeOne);
-        uiTableOnRowDoubleClicked(ctx->snippet_table, on_snippet_row_double_clicked, ctx);
-        gui_apply_table_widths(ctx->snippet_table, LUDO_GUI_TABLE_SNIPPETS);
-        uiBoxAppend(snippet_box, uiControl(ctx->snippet_table), 1);
-    }
-
-    uiBoxAppend(content_box, uiControl(snippet_box), 0);
-    uiBoxAppend(content_box, uiControl(editor_box), 1);
-
-    uiButtonOnClicked(exec_btn, lua_test_on_exec, ctx);
-
-    uiWindowSetChild(win, uiControl(content_box));
-    gui_enable_window_persistence(win, &g_lua_test_window_config_id);
-    uiControlShow(uiControl(win));
-    uiWindowOnClosing(win, destroy_lua_test_window, ctx);
-}
-
-static void on_about_clicked(uiButton *sender, void *data) {
-    (void)sender; (void)data;
-    uiMsgBox(g_gui.window,
-             "About LUDO",
-             "LUDO\n\n"
-             "Lua powered and streamlined download manager");
-}
-
 /* ------------------------------------------------------------------ */
 /* Progress callback (invoked on main thread via uiQueueMain)          */
 /* ------------------------------------------------------------------ */
@@ -1919,9 +1600,9 @@ static int on_should_quit(void *data) {
 }
 
 /* ========================================================================= */
-/* Menu Wrappers & Callbacks                                                 */
+/* Download Menu Callbacks                                                   */
 /* ========================================================================= */
-static void menu_add_urls_cb(uiMenuItem *sender, uiWindow *w, void *data) {
+static void on_add_urls_clicked(uiMenuItem *sender, uiWindow *w, void *data) {
     (void)sender; (void)w; (void)data;
     char *clipboard = get_clipboard_text();
     if (clipboard && clipboard[0] != '\0') {
@@ -1934,10 +1615,92 @@ static void menu_add_urls_cb(uiMenuItem *sender, uiWindow *w, void *data) {
         free_clipboard_text(clipboard);
     }
 }
-static void menu_pause_cb(uiMenuItem *sender, uiWindow *w, void *data)   { on_pause_clicked(NULL, NULL); }
-static void menu_resume_cb(uiMenuItem *sender, uiWindow *w, void *data)  { on_resume_clicked(NULL, NULL); }
-static void menu_remove_cb(uiMenuItem *sender, uiWindow *w, void *data)  { on_remove_clicked(NULL, NULL); }
-static void menu_open_folder_cb(uiMenuItem *sender, uiWindow *w, void *data) {
+
+static void on_pause_clicked(uiMenuItem *sender, uiWindow *w, void *data) {
+    (void)sender; (void)w; (void)data;
+    int acted = 0;
+    for (int i = 0; i < g_gui.row_count; i++) {
+        DownloadRow *r = &g_gui.rows[i];
+        if (r->selected) {
+            if (r->status.id > 0) {
+                if (download_manager_pause(r->status.id)) {
+                    acted++;
+                }
+            }
+            r->selected = 0; /* clear selection */
+        }
+    }
+    if (acted > 0) {
+        gui_log(LOG_INFO, "Paused checked downloads");
+        if (g_downloads_model) for (int j = 0; j < g_gui.row_count; j++) uiTableModelRowChanged(g_downloads_model, j);
+    } else {
+        gui_log(LOG_WARNING, "No action taken.");
+    }
+}
+
+static void on_resume_clicked(uiMenuItem *sender, uiWindow *w, void *data) {
+    (void)sender; (void)w; (void)data;
+    int acted = 0;
+    for (int i = 0; i < g_gui.row_count; i++) {
+        DownloadRow *r = &g_gui.rows[i];
+        if (r->selected) {
+            if (r->status.id > 0) {
+                if (download_manager_resume(r->status.id)) {
+                    acted++;
+                }
+            }
+            r->selected = 0; /* clear selection */
+        }
+    }
+    if (acted > 0) {
+        gui_log(LOG_INFO, "Resumed checked downloads");
+        if (g_downloads_model) for (int j = 0; j < g_gui.row_count; j++) uiTableModelRowChanged(g_downloads_model, j);
+    } else {
+        gui_log(LOG_WARNING, "No action taken.");
+    }
+}
+
+static void on_remove_clicked(uiMenuItem *sender, uiWindow *w, void *data) {
+    (void)sender; (void)w; (void)data;
+    int acted = 0;
+
+    /* BEST PRACTICE: Iterate backwards when deleting from an array */
+    for (int i = g_gui.row_count - 1; i >= 0; i--) {
+        DownloadRow *r = &g_gui.rows[i];
+        if (r->selected) {
+            if (r->status.id > 0) {
+                if (download_manager_remove(r->status.id)) {
+                    acted++;
+                    /* download_manager_remove dispatches a final marked_for_removal
+                     * progress update for all states (immediately for stopped ones,
+                     * deferred via the worker for RUNNING/QUEUED).  Either way,
+                     * gui_on_progress owns the row deletion — skip it here to
+                     * prevent a use-after-free / dangling-state mismatch. */
+                    continue;
+                }
+            }
+
+            /* Fallback: backend remove was not applicable (id == 0) or failed.
+             * Clean up the GUI row directly so it does not become a zombie. */
+            for (int j = i; j < g_gui.row_count - 1; j++) {
+                g_gui.rows[j] = g_gui.rows[j + 1];
+            }
+            g_gui.row_count--;
+
+            if (g_downloads_model) {
+                uiTableModelRowDeleted(g_downloads_model, i);
+            }
+        }
+    }
+
+    if (acted > 0) {
+        gui_log(LOG_INFO, "Removed checked downloads");
+    } else {
+        gui_log(LOG_WARNING, "No action taken.");
+    }
+}
+
+static void on_open_download_folder_clicked(uiMenuItem *sender, uiWindow *w, void *data) {
     (void)sender; (void)w; (void)data;
     const char *dir = download_manager_get_output_dir();
     char abs_path[4096];
@@ -1979,21 +1742,249 @@ static void menu_open_folder_cb(uiMenuItem *sender, uiWindow *w, void *data) {
     }
 #endif
 }
-static void menu_setting_cb(uiMenuItem *sender, uiWindow *w, void *data) { on_setting_clicked(NULL, NULL); }
-static void menu_plugin_cb(uiMenuItem *sender, uiWindow *w, void *data)  { on_plugin_clicked(NULL, NULL); }
-static void menu_http_cb(uiMenuItem *sender, uiWindow *w, void *data) { on_http_clicked(NULL, NULL); }
-static void menu_lua_cb(uiMenuItem *sender, uiWindow *w, void *data)  { on_lua_clicked(NULL, NULL); }
-static void menu_tool_script_cb(uiMenuItem *sender, uiWindow *w, void *data) {
+
+static void on_change_download_folder_clicked(uiMenuItem *sender, uiWindow *w, void *data) {
+    (void)sender; (void)w; (void)data;
+    char *folder = uiOpenFolder(g_gui.window);
+    if (!folder || folder[0] == '\0') {
+        if (folder) uiFreeText(folder);
+        return;
+    }
+
+    download_manager_set_output_dir(folder);
+    ludo_config_set_output_dir(folder);
+
+    char msg[1024];
+    snprintf(msg, sizeof(msg), "Default output directory changed to: %s", folder);
+    gui_log(LOG_SUCCESS, "%s", msg);
+    uiFreeText(folder);
+}
+
+/* ========================================================================= */
+/* Tools Menu Callbacks                                                      */
+/* ========================================================================= */
+static void on_setting_clicked(uiMenuItem *sender, uiWindow *w, void *data) {
+    (void)sender; (void)w; (void)data;
+    // Open config.ini in current directory
+#ifdef _WIN32
+    if ((INT_PTR)ShellExecuteW(NULL, L"open", L"config.ini", NULL, NULL, SW_SHOWNORMAL) <= 32) {
+        gui_log(LOG_ERROR, "Failed to open config.ini.");
+    }
+#else
+    pid_t pid;
+    char *argv[] = { "xdg-open", "config.ini", NULL };
+    if (posix_spawnp(&pid, argv[0], NULL, NULL, argv, environ) != 0) {
+        gui_log(LOG_ERROR, "Failed to open config.ini.");
+    }
+#endif
+}
+
+static void on_plugins_clicked(uiMenuItem *sender, uiWindow *w, void *data) {
+    (void)sender; (void)w; (void)data;
+    // Open plugins directory
+#ifdef _WIN32
+    if ((INT_PTR)ShellExecuteW(NULL, L"open", L"plugins", NULL, NULL, SW_SHOWNORMAL) <= 32) {
+        gui_log(LOG_ERROR, "Failed to open plugins directory.");
+    }
+#else
+    pid_t pid;
+    char *argv[] = { "xdg-open", "plugins", NULL };
+    if (posix_spawnp(&pid, argv[0], NULL, NULL, argv, environ) != 0) {
+        gui_log(LOG_ERROR, "Failed to open plugins directory.");
+    }
+#endif
+}
+
+static void on_snippets_clicked(uiMenuItem *sender, uiWindow *w, void *data) {
+    (void)sender; (void)w; (void)data;
+    // Open snippets directory
+#ifdef _WIN32
+    if ((INT_PTR)ShellExecuteW(NULL, L"open", L"snippets", NULL, NULL, SW_SHOWNORMAL) <= 32) {
+        gui_log(LOG_ERROR, "Failed to open snippets directory.");
+    }
+#else
+    pid_t pid;
+    char *argv[] = { "xdg-open", "snippets", NULL };
+    if (posix_spawnp(&pid, argv[0], NULL, NULL, argv, environ) != 0) {
+        gui_log(LOG_ERROR, "Failed to open snippets directory.");
+    }
+#endif
+}
+
+static void on_tools_clicked(uiMenuItem *sender, uiWindow *w, void *data) {
+    (void)sender; (void)w; (void)data;
+    // Open tools directory
+#ifdef _WIN32
+    if ((INT_PTR)ShellExecuteW(NULL, L"open", L"tools", NULL, NULL, SW_SHOWNORMAL) <= 32) {
+        gui_log(LOG_ERROR, "Failed to open tools directory.");
+    }
+#else
+    pid_t pid;
+    char *argv[] = { "xdg-open", "tools", NULL };
+    if (posix_spawnp(&pid, argv[0], NULL, NULL, argv, environ) != 0) {
+        gui_log(LOG_ERROR, "Failed to open tools directory.");
+    }
+#endif
+}
+
+static void on_http_clicked(uiMenuItem *sender, uiWindow *w, void *data) {
+    (void)sender; (void)w; (void)data;
+
+    // --- HTTP Test Window ---
+    int window_width = 900;
+    int window_height = 700;
+
+    gui_get_window_size(LUDO_GUI_WINDOW_HTTP_TEST, 900, 700, &window_width, &window_height);
+    uiWindow *win = uiNewWindow("HTTP Request Tester", window_width, window_height, 0);
+    uiWindowSetMargined(win, 1);
+
+    uiBox *vbox = uiNewVerticalBox();
+    uiBoxSetPadded(vbox, 1);
+
+    uiEntry *url_entry = uiNewEntry();
+    uiEntrySetText(url_entry, "");
+    uiBoxAppend(vbox, uiControl(url_entry), 0);
+
+    uiMultilineEntry *header_entry = uiNewMultilineEntry();
+    uiMultilineEntrySetText(header_entry, "");
+    uiBoxAppend(vbox, uiControl(header_entry), 0);
+
+    uiButton *send_btn = uiNewButton("Send HTTP Request");
+    uiBoxAppend(vbox, uiControl(send_btn), 0);
+
+    uiMultilineEntry *header_resp_entry = uiNewMultilineEntry();
+    uiMultilineEntrySetReadOnly(header_resp_entry, 1);
+    uiBoxAppend(vbox, uiControl(header_resp_entry), 1);
+
+    uiMultilineEntry *output_entry = uiNewMultilineEntry();
+    uiMultilineEntrySetReadOnly(output_entry, 1);
+    uiBoxAppend(vbox, uiControl(output_entry), 1);
+
+    HttpTestCtx *ctx = malloc(sizeof(HttpTestCtx));
+    if (!ctx) {
+        gui_log(LOG_ERROR, "[HTTP DEBUG] ctx alloc failed");
+        uiControlDestroy(uiControl(win));
+        return;
+    }
+    ctx->url_entry = url_entry;
+    ctx->header_entry = header_entry;
+    ctx->header_resp_entry = header_resp_entry;
+    ctx->output_entry = output_entry;
+    ctx->win = win;
+    g_active_http_test_ctx = ctx;
+
+    uiButtonOnClicked(send_btn, http_test_on_send, ctx);
+    uiWindowSetChild(win, uiControl(vbox));
+    gui_enable_window_persistence(win, &g_http_test_window_config_id);
+    uiControlShow(uiControl(win));
+    uiWindowOnClosing(win, destroy_http_test_window, ctx);
+}
+
+static void on_lua_clicked(uiMenuItem *sender, uiWindow *w, void *data) {
+    (void)sender; (void)w; (void)data;
+
+    // --- Lua Test Window ---
+    int window_width = 960;
+    int window_height = 640;
+
+    gui_get_window_size(LUDO_GUI_WINDOW_LUA_TEST, 960, 640, &window_width, &window_height);
+    uiWindow *win = uiNewWindow("Lua Script Tester", window_width, window_height, 0);
+    uiWindowSetMargined(win, 1);
+
+    uiBox *content_box = uiNewHorizontalBox();
+    uiBoxSetPadded(content_box, 1);
+
+    uiBox *snippet_box = uiNewVerticalBox();
+    uiBoxSetPadded(snippet_box, 1);
+
+    uiLabel *snippet_label = uiNewLabel("Snippets");
+    uiBoxAppend(snippet_box, uiControl(snippet_label), 0);
+
+    uiBox *editor_box = uiNewVerticalBox();
+    uiBoxSetPadded(editor_box, 1);
+
+    uiMultilineEntry *script_entry = uiNewMultilineEntry();
+    // uiMultilineEntrySetPlaceholder(script_entry, ...) is not available in libui-ng; skip placeholder.
+    uiBoxAppend(editor_box, uiControl(script_entry), 1);
+
+    uiButton *exec_btn = uiNewButton("Execute Lua Script");
+    uiBoxAppend(editor_box, uiControl(exec_btn), 0);
+
+    uiMultilineEntry *output_entry = uiNewMultilineEntry();
+    uiMultilineEntrySetReadOnly(output_entry, 1);
+    uiBoxAppend(editor_box, uiControl(output_entry), 1);
+
+    LuaTestCtx *ctx = malloc(sizeof(LuaTestCtx));
+    if (!ctx) {
+        gui_log(LOG_ERROR, "[LUA DEBUG] ctx alloc failed");
+        uiControlDestroy(uiControl(win));
+        return;
+    }
+    memset(ctx, 0, sizeof(*ctx));
+    ctx->script_entry = script_entry;
+    ctx->output_entry = output_entry;
+    ctx->win = win;
+    load_snippets_from_dir(ctx, "snippets");
+    ctx->snippet_model_handler.ctx = ctx;
+    ctx->snippet_model_handler.handler.NumColumns = snippet_model_num_columns;
+    ctx->snippet_model_handler.handler.ColumnType = snippet_model_column_type;
+    ctx->snippet_model_handler.handler.NumRows = snippet_model_num_rows;
+    ctx->snippet_model_handler.handler.CellValue = snippet_model_cell_value;
+    ctx->snippet_model_handler.handler.SetCellValue = snippet_model_set_cell_value;
+    ctx->snippet_model = uiNewTableModel(&ctx->snippet_model_handler.handler);
+    {
+        uiTableParams snippet_params;
+        memset(&snippet_params, 0, sizeof(snippet_params));
+        snippet_params.Model = ctx->snippet_model;
+        ctx->snippet_table = uiNewTable(&snippet_params);
+        uiTableAppendTextColumn(ctx->snippet_table, "Snippet", 0, uiTableModelColumnNeverEditable, NULL);
+        uiTableHeaderSetVisible(ctx->snippet_table, 0);
+        uiTableSetSelectionMode(ctx->snippet_table, uiTableSelectionModeOne);
+        uiTableOnRowDoubleClicked(ctx->snippet_table, on_snippet_row_double_clicked, ctx);
+        gui_apply_table_widths(ctx->snippet_table, LUDO_GUI_TABLE_SNIPPETS);
+        uiBoxAppend(snippet_box, uiControl(ctx->snippet_table), 1);
+    }
+
+    uiBoxAppend(content_box, uiControl(snippet_box), 0);
+    uiBoxAppend(content_box, uiControl(editor_box), 1);
+
+    uiButtonOnClicked(exec_btn, lua_test_on_exec, ctx);
+
+    uiWindowSetChild(win, uiControl(content_box));
+    gui_enable_window_persistence(win, &g_lua_test_window_config_id);
+    uiControlShow(uiControl(win));
+    uiWindowOnClosing(win, destroy_lua_test_window, ctx);
+}
+
+static void on_tool_script_clicked(uiMenuItem *sender, uiWindow *w, void *data) {
     const char *path = (const char *)data;
     (void)sender; (void)w;
     lua_engine_run_script(path);
 }
-static void menu_lua_ref_cb(uiMenuItem *sender, uiWindow *w, void *data) {
-    uiMsgBox(w, "LUA Reference", "Ludo Lua API:\n- ludo.download(url, [dir])\n- ludo.log(msg)\n- ludo.get_clipboard()");
+
+static void on_lua_ref_clicked(uiMenuItem *sender, uiWindow *w, void *data) {
+    (void)sender; (void)w; (void)data;
+    // Open Lua reference URL in default browser
+#ifdef _WIN32
+    if ((INT_PTR)ShellExecuteW(NULL, L"open", L"ludo_scripting.htm", NULL, NULL, SW_SHOWNORMAL) <= 32) {
+        gui_log(LOG_ERROR, "Failed to open Lua reference URL.");
+    }
+#else
+    pid_t pid;
+    char *argv[] = { "xdg-open", "ludo_scripting.htm", NULL };
+    if (posix_spawnp(&pid, argv[0], NULL, NULL, argv, environ) != 0) {
+        gui_log(LOG_ERROR, "Failed to open Lua reference URL.");
+    }
+#endif    
 }
 
-static void menu_about_cb(uiMenuItem *sender, uiWindow *w, void *data) {
-    uiMsgBox(w, "About", "Ludo Lua powered Download Manager\nVersion 1.0\nA lightweight C/Lua download manager.");
+
+static void on_about_clicked(uiMenuItem *sender, uiWindow *w, void *data) {
+    (void)sender; (void)w; (void)data;
+    uiMsgBox(g_gui.window,
+             "About LUDO",
+             "LUDO\n\n"
+             "Lua powered and streamlined download manager");
 }
 
 /* ========================================================================= */
@@ -2007,30 +1998,36 @@ static void setup_menus(void) {
     /* ---- 1. Download Menu ---- */
     menu = uiNewMenu("Download");
     item = uiMenuAppendItem(menu, "Add URLs\tCtrl+U");
-    uiMenuItemOnClicked(item, menu_add_urls_cb, NULL);
+    uiMenuItemOnClicked(item, on_add_urls_clicked, NULL);
     uiMenuAppendSeparator(menu);
     item = uiMenuAppendItem(menu, "Pause\tCtrl+P");
-    uiMenuItemOnClicked(item, menu_pause_cb, NULL);
+    uiMenuItemOnClicked(item, on_pause_clicked, NULL);
     item = uiMenuAppendItem(menu, "Resume\tCtrl+R");
-    uiMenuItemOnClicked(item, menu_resume_cb, NULL);
+    uiMenuItemOnClicked(item, on_resume_clicked, NULL);
     item = uiMenuAppendItem(menu, "Remove\tCtrl+Del");
-    uiMenuItemOnClicked(item, menu_remove_cb, NULL);
+    uiMenuItemOnClicked(item, on_remove_clicked, NULL);
     uiMenuAppendSeparator(menu); // Add a visual separator
-    item = uiMenuAppendItem(menu, "Open Folder\tCtrl+O");
-    uiMenuItemOnClicked(item, menu_open_folder_cb, NULL);
+    item = uiMenuAppendItem(menu, "Open Download Folder\tCtrl+O");
+    uiMenuItemOnClicked(item, on_open_download_folder_clicked, NULL);
+    item = uiMenuAppendItem(menu, "Change Download Folder\tCtrl+Shift+O");
+    uiMenuItemOnClicked(item, on_change_download_folder_clicked, NULL);
 
     /* ---- 2. Tools Menu ---- */
     menu = uiNewMenu("Tools");
     item = uiMenuAppendItem(menu, "Setting\tCtrl+S");
-    uiMenuItemOnClicked(item, menu_setting_cb, NULL);
-    item = uiMenuAppendItem(menu, "Plugins\tCtrl+Shift+P");
-    uiMenuItemOnClicked(item, menu_plugin_cb, NULL);
+    uiMenuItemOnClicked(item, on_setting_clicked, NULL);
+    item = uiMenuAppendItem(menu, "Open Plugins Folder\tCtrl+Shift+P");
+    uiMenuItemOnClicked(item, on_plugins_clicked, NULL);
+    item = uiMenuAppendItem(menu, "Open Snippets Folder\tCtrl+Shift+S");
+    uiMenuItemOnClicked(item, on_snippets_clicked, NULL);
+    item = uiMenuAppendItem(menu, "Open Tools Folder\tCtrl+Shift+T");
+    uiMenuItemOnClicked(item, on_tools_clicked, NULL);
     
     /* Assuming on_http_clicked and on_lua_clicked were already updated to menu signatures */
     item = uiMenuAppendItem(menu, "HTTP Tester\tCtrl+H");
-    uiMenuItemOnClicked(item, menu_http_cb, NULL);
+    uiMenuItemOnClicked(item, on_http_clicked, NULL);
     item = uiMenuAppendItem(menu, "LUA Tester\tCtrl+L");
-    uiMenuItemOnClicked(item, menu_lua_cb, NULL);
+    uiMenuItemOnClicked(item, on_lua_clicked, NULL);
 
     /* Tool scripts from tools/ directory */
     if (g_tool_script_count > 0) {
@@ -2038,18 +2035,18 @@ static void setup_menus(void) {
         uiMenuAppendSeparator(menu);
         for (i = 0; i < g_tool_script_count; i++) {
             item = uiMenuAppendItem(menu, g_tool_scripts[i].name);
-            uiMenuItemOnClicked(item, menu_tool_script_cb, g_tool_scripts[i].path);
+            uiMenuItemOnClicked(item, on_tool_script_clicked, g_tool_scripts[i].path);
         }
     }
 
     /* ---- 3. Help Menu ---- */
     menu = uiNewMenu("Help");
     item = uiMenuAppendItem(menu, "LUA Reference\tF1");
-    uiMenuItemOnClicked(item, menu_lua_ref_cb, NULL);
+    uiMenuItemOnClicked(item, on_lua_ref_clicked, NULL);
     
     /* Cross-platform native standard for About */
     item = uiMenuAppendAboutItem(menu); 
-    uiMenuItemOnClicked(item, menu_about_cb, NULL);
+    uiMenuItemOnClicked(item, on_about_clicked, NULL);
 }
 
 static int g_sort_col = -1;
@@ -2120,59 +2117,6 @@ void gui_create(void) {
     /* Root vertical box */
     uiBox *root = uiNewVerticalBox();
     uiBoxSetPadded(root, 1);
-
-    // uiLabel *title = uiNewLabel("Download Manager");
-    // uiBoxAppend(root, uiControl(title), 0);
-
-    /* ---- Toolbar ---- */
-    // uiBox *toolbar = uiNewHorizontalBox();
-    // uiBoxSetPadded(toolbar, 0);
-
-    // g_gui.tb_add = uiNewButton("Add");
-    // uiButtonOnClicked(g_gui.tb_add, on_add_clicked, NULL);
-    // uiBoxAppend(toolbar, uiControl(g_gui.tb_add), 0);
-
-    // g_gui.tb_pause = uiNewButton("Pause");
-    // uiButtonOnClicked(g_gui.tb_pause, on_pause_clicked, NULL);
-    // uiBoxAppend(toolbar, uiControl(g_gui.tb_pause), 0);
-
-    // g_gui.tb_resume = uiNewButton("Resume");
-    // uiButtonOnClicked(g_gui.tb_resume, on_resume_clicked, NULL);
-    // uiBoxAppend(toolbar, uiControl(g_gui.tb_resume), 0);
-
-    // g_gui.tb_remove = uiNewButton("Remove");
-    // uiButtonOnClicked(g_gui.tb_remove, on_remove_clicked, NULL);
-    // uiBoxAppend(toolbar, uiControl(g_gui.tb_remove), 0);
-
-    // uiBoxAppend(toolbar, uiControl(uiNewVerticalSeparator()), 0);
-
-    // g_gui.tb_plugin = uiNewButton("Plugin");
-    // uiButtonOnClicked(g_gui.tb_plugin, on_plugin_clicked, NULL);
-    // uiBoxAppend(toolbar, uiControl(g_gui.tb_plugin), 0);
-
-    // g_gui.tb_setting = uiNewButton("Setting");
-    // uiButtonOnClicked(g_gui.tb_setting, on_setting_clicked, NULL);
-    // uiBoxAppend(toolbar, uiControl(g_gui.tb_setting), 0);
-
-    // g_gui.tb_http = uiNewButton("HTTP");
-    // uiButtonOnClicked(g_gui.tb_http, on_http_clicked, NULL);
-    // uiBoxAppend(toolbar, uiControl(g_gui.tb_http), 0);
-
-    // g_gui.tb_lua = uiNewButton("Lua");
-    // uiButtonOnClicked(g_gui.tb_lua, on_lua_clicked, NULL);
-    // uiBoxAppend(toolbar, uiControl(g_gui.tb_lua), 0);
-
-    // g_gui.tb_about = uiNewButton("About");
-    // uiButtonOnClicked(g_gui.tb_about, on_about_clicked, NULL);
-    // uiBoxAppend(toolbar, uiControl(g_gui.tb_about), 0);
-
-    // uiBoxAppend(root, uiControl(toolbar), 0);
-
-#ifdef _WIN32
-    // toolbar_icons_init();
-#endif
-
-    // uiBoxAppend(root, uiControl(uiNewHorizontalSeparator()), 0);
 
     /* ---- URL input row ---- */
     uiBox *input_row = uiNewHorizontalBox();

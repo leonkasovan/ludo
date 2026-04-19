@@ -16,8 +16,8 @@ endif()
 # -------------------------
 # Versioning (auto-increment build)
 # -------------------------
-set(LUDO_VERSION_MAJOR 0)
-set(LUDO_VERSION_MINOR 6)
+set(LUDO_VERSION_MAJOR 1)
+set(LUDO_VERSION_MINOR 0)
 set(LUDO_VERSION_PATCH 0)
 
 set(LUDO_VERSION_FILE "${CMAKE_BINARY_DIR}/build_version.txt")
@@ -41,13 +41,6 @@ set(LUDO_DESCRIPTION "Lua powered and streamlined download manager")
 # Build configurations
 # ------------------------------------------------------------
 get_property(LUDO_IS_MULTI_CONFIG GLOBAL PROPERTY GENERATOR_IS_MULTI_CONFIG)
-
-if(CMAKE_GENERATOR STREQUAL "Ninja" AND NOT LUDO_IS_MULTI_CONFIG)
-    message(WARNING
-        "Generator '${CMAKE_GENERATOR}' is single-config. '--config <Debug|Release>' is ignored. "
-        "Use '-G \"Ninja Multi-Config\"' to build Debug and Release from one build directory."
-    )
-endif()
 
 if(LUDO_IS_MULTI_CONFIG)
     set(CMAKE_CONFIGURATION_TYPES "Debug;Release" CACHE STRING "Available build configurations" FORCE)
@@ -505,16 +498,18 @@ add_custom_command(TARGET ludo POST_BUILD
     COMMAND ${CMAKE_COMMAND} -E copy_directory ${CMAKE_SOURCE_DIR}/snippets $<TARGET_FILE_DIR:ludo>/snippets
     COMMAND ${CMAKE_COMMAND} -E copy_directory ${CMAKE_SOURCE_DIR}/res $<TARGET_FILE_DIR:ludo>/res
     COMMAND ${CMAKE_COMMAND} -E copy_directory ${CMAKE_SOURCE_DIR}/tools $<TARGET_FILE_DIR:ludo>/tools
-    COMMAND ${CMAKE_COMMAND} -E copy_directory ${CMAKE_SOURCE_DIR}/lib $<TARGET_FILE_DIR:ludo>/lib
+    COMMAND ${CMAKE_COMMAND} -E copy_directory ${CMAKE_SOURCE_DIR}/lualib $<TARGET_FILE_DIR:ludo>/lualib
     COMMAND ${CMAKE_COMMAND} -E copy_if_different ${CMAKE_SOURCE_DIR}/config.ini $<TARGET_FILE_DIR:ludo>/config.ini
+    COMMAND ${CMAKE_COMMAND} -E copy_if_different ${CMAKE_SOURCE_DIR}/ludo_scripting.htm $<TARGET_FILE_DIR:ludo>/ludo_scripting.htm
     COMMAND ${CMAKE_COMMAND} -E make_directory $<TARGET_FILE_DIR:ludo>/downloads
-    COMMENT "Copying runtime assets (plugins, snippets, res, tools, lib, config) and initializing output directories..."
+    COMMENT "Copying runtime assets (plugins, snippets, res, tools, lualib, config) and initializing output directories..."
 )
 
 install(TARGETS ludo DESTINATION bin)
 install(FILES config.ini DESTINATION bin)
+install(FILES ludo_scripting.htm DESTINATION bin)
 install(DIRECTORY plugins/ DESTINATION bin/plugins)
 install(DIRECTORY snippets/ DESTINATION bin/snippets)
 install(DIRECTORY res/ DESTINATION bin/res)
 install(DIRECTORY tools/ DESTINATION bin/tools)
-install(DIRECTORY lib/ DESTINATION bin/lib)
+install(DIRECTORY lualib/ DESTINATION bin/lualib)

@@ -2,7 +2,7 @@
 -- Downloads PS game PKG files from the PlayStation Store CDN.
 -- Supports PSX, PSP, PSV, PS3, PSM platforms.
 --
--- Requires lib/ftcsv.lua for TSV parsing.
+-- Requires lualib/ftcsv.lua for TSV parsing.
 -- TSV files (PSX_GAMES.tsv etc.) must be in the same directory as this script.
 
 local ui    = require("ui")
@@ -16,32 +16,32 @@ local TOOLS_DIR = _src:match("^@(.+)[\\/][^\\/]+$") or "tools"
 -- Platform definitions using the actual TSV header column names.
 local PLATFORMS = {
     { name = "PSX", file = "PSX_GAMES.tsv",
-      col_id  = "Title ID",           col_region = "Region",
+      col_title_id  = "Title ID",           col_region = "Region", col_content_id = "Content ID",
       col_name = "Name",              col_pkg    = "PKG direct link",
       col_date = "Last Modification Date",       col_size   = "File Size" },
     { name = "PSP", file = "PSP_GAMES.tsv",
-      col_id  = "Title ID",           col_region = "Region",
+      col_title_id  = "Title ID",           col_region = "Region", col_content_id = "Content ID",
       col_name = "Name",              col_pkg    = "PKG direct link",
       col_date = "Last Modification Date",       col_size   = "File Size",
-      col_rap_url = "Download .RAP file" },
+      col_rap = "RAP" },
     { name = "PSV", file = "PSV_GAMES.tsv",
-      col_id  = "Title ID",           col_region = "Region",
-      col_name = "Name",              col_pkg    = "PKG direct link",
+      col_title_id  = "Title ID",           col_region = "Region", col_content_id = "Content ID",
+      col_name = "Name",              col_pkg    = "PKG direct link", col_zrif = "zRIF",
       col_date = "Last Modification Date",       col_size   = "File Size" },
     { name = "PS3", file = "PS3_GAMES.tsv",
-      col_id  = "Title ID",           col_region = "Region",
+      col_title_id  = "Title ID",           col_region = "Region", col_content_id = "Content ID",
       col_name = "Name",              col_pkg    = "PKG direct link",
       col_date = "Last Modification Date",       col_size   = "File Size",
-      col_rap_url = "Download .RAP file" },
+      col_rap = "RAP" },
     { name = "PSM", file = "PSM_GAMES.tsv",
-      col_id  = "Title ID",           col_region = "Region",
-      col_name = "Name",              col_pkg    = "PKG direct link",
+      col_title_id  = "Title ID",           col_region = "Region", col_content_id = "Content ID",
+      col_name = "Name",              col_pkg    = "PKG direct link", col_zrif = "zRIF",
       col_date = "Last Modification Date",       col_size   = "File Size" },
 }
 
-local MAX_RESULTS = 50
+local MAX_RESULTS = 99
 
--- Search results: { platform, id, region, name, date, size, pkg_url, rap_url }
+-- Search results: { platform, id, region, name, date, size, pkg_url, rap }
 local search_results = {}
 
 local function trim(s)
@@ -57,6 +57,10 @@ local function format_size(s)
     else return tostring(n) .. " B" end
 end
 
+local function ascii_to_hex(s)
+    return (s or ""):gsub(".", function(c) return string.format("%02X", string.byte(c)) end)
+end
+
 local function search_platform(p, query, results)
     local filepath = TOOLS_DIR .. "/" .. p.file
     local ok, iter = pcall(ftcsv.parseLine, filepath, "\t")
@@ -68,26 +72,33 @@ local function search_platform(p, query, results)
     for _, row in iter do
         if #results >= MAX_RESULTS then break end
         local name = trim(row[p.col_name])
-        local id   = trim(row[p.col_id])
+        local title_id   = trim(row[p.col_title_id])
         local pkg  = trim(row[p.col_pkg])
         if pkg ~= "" and pkg ~= "MISSING" and
-           (name:lower():find(q, 1, true) or id:lower():find(q, 1, true)) then
-            local rap_url = nil
-            if p.col_rap_url then
-                local rv = trim(row[p.col_rap_url] or "")
-                if rv ~= "" and rv ~= "MISSING" and rv:match("^https?://") then
-                    rap_url = rv
+           (name:lower():find(q, 1, true) or title_id:lower():find(q, 1, true)) then
+            local rap = nil
+            if p.col_rap then
+                local rv = trim(row[p.col_rap] or "")
+                if rv ~= "" and rv ~= "MISSING" and #rv == 32 then
+                    rap = rv
+                end
+            end
+            local zrif = nil
+            if p.col_zrif then
+                local zv = trim(row[p.col_zrif] or "")
+                if zv ~= "" and zv ~= "MISSING" and #zv == 48 then
+                    zrif = zv
                 end
             end
             table.insert(results, {
                 platform = p.name,
-                id       = id,
+                title_id = title_id,
                 region   = trim(row[p.col_region]),
                 name     = name,
                 date     = trim(row[p.col_date]):sub(1, 10),
                 size     = trim(row[p.col_size]),
                 pkg_url  = pkg,
-                rap_url  = rap_url,
+                rap      = rap,
             })
         end
     end
@@ -110,7 +121,7 @@ local handler = {
         if not r then return "" end
         if     col == COL_NUM      then return tostring(row + 1)
         elseif col == COL_PLATFORM then return r.platform or ""
-        elseif col == COL_ID       then return r.id       or ""
+        elseif col == COL_ID       then return r.title_id or ""
         elseif col == COL_REGION   then return r.region   or ""
         elseif col == COL_SIZE     then return format_size(r.size)
         elseif col == COL_NAME     then return r.name     or ""
@@ -218,7 +229,7 @@ local function update_details(idx)
     end
     local r = search_results[idx]
     lbl_plat:SetText("Platform : " .. (r.platform or "-"))
-    lbl_id:SetText("Title ID : " .. (r.id or "-"))
+    lbl_id:SetText("Title ID : " .. (r.title_id or "-"))
     lbl_region:SetText("Region   : " .. (r.region or "-"))
     lbl_name:SetText("Name     : " .. (r.name or "-"))
     lbl_date:SetText("Date     : " .. (r.date or "-"))
@@ -294,21 +305,24 @@ dl_btn:OnClicked(function(b, data)
 
     -- Queue the PKG download.
     local _, pkg_status, pkg_out = ludo.newDownload(
-        r.pkg_url, outdir, ludo.DOWNLOAD_NOW, r.id .. ".pkg")
+        r.pkg_url, outdir, ludo.DOWNLOAD_NOW, r.title_id .. ".pkg")
     if pkg_status == 200 or pkg_status == 206 or pkg_status == 0 then
-        ludo.logSuccess("Queued PKG: " .. (pkg_out or (r.id .. ".pkg")))
+        ludo.logSuccess("Queued PKG: " .. (pkg_out or (r.title_id .. ".pkg")))
     else
-        ludo.logError("PKG preflight HTTP " .. tostring(pkg_status) .. " for " .. r.id)
+        ludo.logError("PKG preflight HTTP " .. tostring(pkg_status) .. " for " .. r.title_id)
     end
 
-    -- Queue the RAP download if present (PS3/PSP).
-    if r.rap_url then
-        local _, rap_status, rap_out = ludo.newDownload(
-            r.rap_url, outdir, ludo.DOWNLOAD_NOW, r.id .. ".rap")
-        if rap_status == 200 or rap_status == 206 or rap_status == 0 then
-            ludo.logSuccess("Queued RAP: " .. (rap_out or (r.id .. ".rap")))
+    -- Generate binary RAP (content_id.rap) file if present (PS3/PSP).
+    if r.rap then
+        local rap_path = outdir .. "/" .. r.content_id .. ".rap"
+        -- open as binary to avoid newline translation on Windows, which would corrupt the RAP file
+        local rap_file = io.open(rap_path, "wb")
+        if rap_file then
+            rap_file:write(ascii_to_hex(r.rap))
+            rap_file:close()
+            ludo.logSuccess("Generated RAP: " .. rap_path)
         else
-            ludo.logError("RAP preflight HTTP " .. tostring(rap_status) .. " for " .. r.id)
+            ludo.logError("Failed to write RAP file: " .. rap_path)
         end
     end
 

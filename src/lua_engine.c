@@ -139,7 +139,7 @@ static lua_State *create_lua_state(void) {
     {
         const char *existing = lua_tostring(L, -1);
         char new_path[2048];
-        snprintf(new_path, sizeof(new_path), "lib/?.lua;%s",
+        snprintf(new_path, sizeof(new_path), "lualib/?.lua;%s",
                  existing ? existing : "");
         lua_pop(L, 1);
         lua_pushstring(L, new_path);

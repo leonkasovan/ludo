@@ -1,0 +1,4267 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Ludo Scripting Manual</title>
+    <style>
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            line-height: 1.6;
+            margin: 0;
+            padding: 20px;
+            background-color: #f5f5f5;
+            color: #333;
+        }
+        .container {
+            max-width: 1200px;
+            margin: 0 auto;
+            background-color: white;
+            padding: 30px;
+            border-radius: 8px;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+        }
+        h1, h2, h3, h4, h5, h6 {
+            color: #2c3e50;
+            margin-top: 30px;
+            margin-bottom: 15px;
+        }
+        h1 {
+            border-bottom: 3px solid #3498db;
+            padding-bottom: 10px;
+            font-size: 2.5em;
+        }
+        h2 {
+            border-bottom: 2px solid #3498db;
+            padding-bottom: 8px;
+            font-size: 2em;
+        }
+        h3 {
+            color: #34495e;
+            font-size: 1.5em;
+        }
+        h4 {
+            color: #7f8c8d;
+            font-size: 1.2em;
+        }
+        p {
+            margin-bottom: 15px;
+        }
+        code {
+            background-color: #f8f8f8;
+            padding: 2px 6px;
+            border-radius: 3px;
+            font-family: 'Courier New', monospace;
+            font-size: 0.9em;
+        }
+        pre {
+            background-color: #2c3e50;
+            color: #ecf0f1;
+            padding: 15px;
+            border-radius: 5px;
+            overflow-x: auto;
+            margin: 15px 0;
+        }
+        pre code {
+            background-color: transparent;
+            padding: 0;
+            border-radius: 0;
+        }
+        table {
+            width: 100%;
+            border-collapse: collapse;
+            margin: 20px 0;
+            background-color: #fff;
+        }
+        th, td {
+            border: 1px solid #ddd;
+            padding: 12px;
+            text-align: left;
+        }
+        th {
+            background-color: #3498db;
+            color: white;
+            font-weight: bold;
+        }
+        tr:nth-child(even) {
+            background-color: #f2f2f2;
+        }
+        tr:hover {
+            background-color: #e8f4fd;
+        }
+        ul, ol {
+            margin: 15px 0;
+            padding-left: 30px;
+        }
+        li {
+            margin-bottom: 8px;
+        }
+        blockquote {
+            border-left: 4px solid #3498db;
+            padding-left: 15px;
+            margin: 15px 0;
+            font-style: italic;
+            color: #555;
+        }
+        a {
+            color: #3498db;
+            text-decoration: none;
+        }
+        a:hover {
+            text-decoration: underline;
+        }
+        .toc {
+            background-color: #ecf0f1;
+            padding: 20px;
+            border-radius: 5px;
+            margin: 20px 0;
+        }
+        .toc ul {
+            list-style-type: none;
+            padding-left: 0;
+        }
+        .toc li {
+            margin: 5px 0;
+        }
+        .toc a {
+            color: #2c3e50;
+        }
+        .note {
+            background-color: #fff3cd;
+            border: 1px solid #ffeaa7;
+            border-radius: 5px;
+            padding: 15px;
+            margin: 15px 0;
+        }
+        .note strong {
+            color: #856404;
+        }
+        .code-block {
+            position: relative;
+        }
+        .code-block::before {
+            content: attr(data-lang);
+            position: absolute;
+            top: 5px;
+            right: 10px;
+            color: #95a5a6;
+            font-size: 0.8em;
+            font-weight: bold;
+        }
+        .highlight {
+            background-color: #ffff99;
+        }
+        .function-signature {
+            background-color: #e8f5e8;
+            border-left: 4px solid #27ae60;
+            padding: 10px 15px;
+            margin: 10px 0;
+            font-family: 'Courier New', monospace;
+        }
+        .api-table {
+            font-size: 0.9em;
+        }
+        .api-table th {
+            background-color: #2c3e50;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>Ludo Scripting Manual</h1>
+
+        <p>Ludo embeds <strong>Lua 5.2</strong> as its scripting engine. Every plugin and script has access to the full Lua standard library plus five extension libraries provided by Ludo:</p>
+
+        <table>
+            <thead>
+                <tr>
+                    <th>Module</th>
+                    <th>Global name</th>
+                    <th>Description</th>
+                </tr>
+            </thead>
+            <tbody>
+                <tr>
+                    <td>JSON</td>
+                    <td><code>json</code></td>
+                    <td>JSON encode/decode via Lua CJSON</td>
+                </tr>
+                <tr>
+                    <td>HTTP</td>
+                    <td><code>http</code></td>
+                    <td>HTTP client powered by libcurl</td>
+                </tr>
+                <tr>
+                    <td>Ludo</td>
+                    <td><code>ludo</code></td>
+                    <td>Download manager &amp; application control</td>
+                </tr>
+                <tr>
+                    <td>UI</td>
+                    <td><code>ui</code></td>
+                    <td>Native GUI widgets (libui-ng)</td>
+                </tr>
+                <tr>
+                    <td>Zip</td>
+                    <td><code>zip</code></td>
+                    <td>ZIP archive creation (zlib deflate)</td>
+                </tr>
+            </tbody>
+        </table>
+
+        <p>Scripts are loaded from the <code>plugins/</code> directory. Each plugin is a <code>.lua</code> file that returns a table with two functions: <code>validate(url)</code> and <code>process(url)</code>.</p>
+
+        <div class="toc">
+            <h2>Table of Contents</h2>
+            <ol>
+                <li><a href="#1-lua-language-basics">Lua Language Basics</a></li>
+                <li><a href="#2-standard-lua-library">Standard Lua Library</a></li>
+                <li><a href="#3-json-library-json">JSON Library (<code>json</code>)</a></li>
+                <li><a href="#4-http-library-http">HTTP Library (<code>http</code>)</a></li>
+                <li><a href="#5-zip-library-zip">Zip Library (<code>zip</code>)</a></li>
+                <li><a href="#6-ludo-library-ludo">Ludo Library (<code>ludo</code>)</a></li>
+                <li><a href="#7-ui-library-ui">UI Library (<code>ui</code>)</a></li>
+                <li><a href="#8-plugin-system">Plugin System</a></li>
+                <li><a href="#9-converting-yt-dlp-extractors-to-ludo-plugins">Converting yt-dlp Extractors to Ludo Plugins</a></li>
+                <li><a href="#10-testing-and-debugging-plugins">Testing and Debugging Plugins</a></li>
+                <li><a href="#11-tools-menu">Tools Menu</a></li>
+            </ol>
+        </div>
+
+        <h2 id="1-lua-language-basics">1. Lua Language Basics</h2>
+
+        <h3>1.1 Variables and Types</h3>
+
+        <p>Lua is dynamically typed. Variables do not need type declarations.</p>
+
+        <pre><code>lua
+-- Numbers
+local count = 42
+local pi    = 3.14159
+
+-- Strings
+local name  = "Ludo"
+local path  = 'C:\\Downloads'
+local multi = [[
+This is a
+multi-line string.
+]]
+
+-- Booleans
+local active = true
+local done   = false
+
+-- Nil (absence of value)
+local nothing = nil
+</code></pre>
+
+        <h3>1.2 Tables</h3>
+
+        <p>Tables are Lua's only compound data structure — they serve as arrays, dictionaries, objects, and modules.</p>
+
+        <pre><code>lua
+-- Array-style (1-indexed)
+local fruits = { "apple", "banana", "cherry" }
+print(fruits[1])  --> apple
+print(#fruits)    --> 3
+
+-- Dictionary-style
+local config = {
+    url  = "https://example.com",
+    port = 8080,
+}
+print(config.url)       --> https://example.com
+print(config["port"])   --> 8080
+
+-- Mixed
+local entry = {
+    name = "file.zip",
+    tags = { "release", "stable" },
+}
+</code></pre>
+
+        <h3>1.3 Control Flow</h3>
+
+        <pre><code>lua
+-- if / elseif / else
+if status == 200 then
+    print("OK")
+elseif status == 404 then
+    print("Not found")
+else
+    print("Error: " .. status)
+end
+
+-- while
+local i = 1
+while i <= 5 do
+    print(i)
+    i = i + 1
+end
+
+-- for (numeric)
+for i = 1, 10 do
+    print(i)
+end
+
+-- for (generic / pairs)
+local t = { a = 10, b = 20, c = 3 }
+for key, value in pairs(t) do
+    print(key, value)
+end
+
+-- for (array / ipairs)
+local list = { "x", "y", "z" }
+for index, value in ipairs(list) do
+    print(index, value)
+end
+</code></pre>
+
+        <h3>1.4 Functions</h3>
+
+        <pre><code>lua
+-- Named function
+function greet(name)
+    return "Hello, " .. name .. "!"
+end
+
+-- Local function
+local function add(a, b)
+    return a + b
+end
+
+-- Anonymous / closure
+local double = function(x) return x * 2 end
+
+-- Variadic
+function printf(fmt, ...)
+    print(string.format(fmt, ...))
+end
+
+-- Multiple return values
+function minmax(list)
+    local lo, hi = list[1], list[1]
+    for _, v in ipairs(list) do
+        if v < lo then lo = v end
+        if v > hi then hi = v end
+    end
+    return lo, hi
+end
+
+local lo, hi = minmax({3, 1, 4, 1, 5, 9})
+print(lo, hi)  --> 1  9
+</code></pre>
+
+        <h3>1.5 String Operations</h3>
+
+        <pre><code>lua
+local s = "Hello, World!"
+
+print(string.len(s))           --> 13
+print(string.upper(s))         --> HELLO, WORLD!
+print(string.lower(s))         --> hello, world!
+print(string.sub(s, 1, 5))     --> Hello
+print(string.rep("ab", 3))     --> ababab
+print(string.reverse(s))       --> !dlroW ,olleH
+print(string.find(s, "World")) --> 8  12
+print(string.format("pi=%.2f", 3.14159))  --> pi=3.14
+
+-- Pattern matching
+for word in string.gmatch(s, "%a+") do
+    print(word)
+end
+
+-- Substitution
+local result = string.gsub(s, "World", "Lua")
+print(result)  --> Hello, Lua!
+</code></pre>
+
+        <h3>1.5.1 Lua Pattern Reference</h3>
+
+        <p>Lua does <strong>not</strong> use PCRE/POSIX regular expressions. It has its own lightweight pattern language used by <code>string.match</code>, <code>string.gmatch</code>, <code>string.gsub</code>, and <code>string.find</code>.</p>
+
+        <h4>Character Classes</h4>
+
+        <table>
+            <thead>
+                <tr>
+                    <th>Class</th>
+                    <th>Meaning</th>
+                </tr>
+            </thead>
+            <tbody>
+                <tr>
+                    <td><code>.</code></td>
+                    <td>Any character</td>
+                </tr>
+                <tr>
+                    <td><code>%a</code></td>
+                    <td>Any letter (A-Z, a-z)</td>
+                </tr>
+                <tr>
+                    <td><code>%d</code></td>
+                    <td>Any digit (0-9)</td>
+                </tr>
+                <tr>
+                    <td><code>%l</code></td>
+                    <td>Any lowercase letter</td>
+                </tr>
+                <tr>
+                    <td><code>%u</code></td>
+                    <td>Any uppercase letter</td>
+                </tr>
+                <tr>
+                    <td><code>%w</code></td>
+                    <td>Any alphanumeric character (letter or digit)</td>
+                </tr>
+                <tr>
+                    <td><code>%s</code></td>
+                    <td>Any whitespace (space, tab, newline, etc.)</td>
+                </tr>
+                <tr>
+                    <td><code>%p</code></td>
+                    <td>Any punctuation character</td>
+                </tr>
+                <tr>
+                    <td><code>%c</code></td>
+                    <td>Any control character</td>
+                </tr>
+                <tr>
+                    <td><code>%x</code></td>
+                    <td>Any hexadecimal digit (0-9, a-f, A-F)</td>
+                </tr>
+                <tr>
+                    <td><code>%A</code></td>
+                    <td>Complement of <code>%a</code> (any non-letter)</td>
+                </tr>
+                <tr>
+                    <td><code>%D</code></td>
+                    <td>Complement of <code>%d</code> (any non-digit)</td>
+                </tr>
+            </tbody>
+        </table>
+
+        <h4>Quantifiers</h4>
+
+        <table>
+            <thead>
+                <tr>
+                    <th>Quantifier</th>
+                    <th>Meaning</th>
+                </tr>
+            </thead>
+            <tbody>
+                <tr>
+                    <td><code>+</code></td>
+                    <td>1 or more (greedy)</td>
+                </tr>
+                <tr>
+                    <td><code>*</code></td>
+                    <td>0 or more (greedy)</td>
+                </tr>
+                <tr>
+                    <td><code>-</code></td>
+                    <td>0 or more (lazy / non-greedy)</td>
+                </tr>
+                <tr>
+                    <td><code>?</code></td>
+                    <td>0 or 1</td>
+                </tr>
+            </tbody>
+        </table>
+
+        <h4>Anchors &amp; Special</h4>
+
+        <table>
+            <thead>
+                <tr>
+                    <th>Symbol</th>
+                    <th>Meaning</th>
+                </tr>
+            </thead>
+            <tbody>
+                <tr>
+                    <td><code>^</code></td>
+                    <td>Start of string (only at the beginning of a pattern)</td>
+                </tr>
+                <tr>
+                    <td><code>$</code></td>
+                    <td>End of string (only at the end of a pattern)</td>
+                </tr>
+                <tr>
+                    <td><code>%b()</code></td>
+                    <td>Balanced match between two characters, e.g. <code>%b()</code> matches balanced parentheses</td>
+                </tr>
+                <tr>
+                    <td><code>%%</code></td>
+                    <td>Literal <code>%</code></td>
+                </tr>
+                <tr>
+                    <td><code>%.</code></td>
+                    <td>Literal <code>.</code> (escape any magic character with <code>%</code>)</td>
+                </tr>
+            </tbody>
+        </table>
+
+        <h4>Character Sets <code>[ ]</code></h4>
+
+        <pre><code>lua
+"[aeiou]"        -- matches any vowel
+"[0-9]"          -- matches any digit (same as %d)
+"[%w_]"          -- matches alphanumeric or underscore
+"[^%s]"          -- matches any non-whitespace character
+"[%w%-_]"        -- matches alphanumeric, hyphen, or underscore
+</code></pre>
+
+        <h4>Captures <code>( )</code></h4>
+
+        <p>Parentheses create <strong>captures</strong> — the matched substrings are returned by <code>string.match</code> or passed to replacement functions in <code>string.gsub</code>.</p>
+
+        <pre><code>lua
+-- Single capture
+local year = string.match("Date: 2026-04-05", "(%d%d%d%d)")
+print(year)  --> 2026
+
+-- Multiple captures
+local y, m, d = string.match("2026-04-05", "(%d+)-(%d+)-(%d+)")
+print(y, m, d)  --> 2026  04  05
+
+-- Non-capturing: use the full match (no parentheses)
+local full = string.match("hello world", "%a+")
+print(full)  --> hello
+</code></pre>
+
+        <h4>Practical Examples for Plugin Development</h4>
+
+        <pre><code>lua
+-- Match a URL host
+local host = url:match("^https?://([^/?#]+)")
+-- "https://www.instagram.com/p/abc" -> "www.instagram.com"
+
+-- Match a path segment
+local shortcode = url:match("/p/([%w%-_]+)")
+-- "https://www.instagram.com/p/aye83DjauH/" -> "aye83DjauH"
+
+-- Optional path segments (reel or reels)
+local id = url:match("/reels?/([%w%-_]+)")
+-- matches both /reel/xxx and /reels/xxx
+
+-- Extract JSON value from HTML
+local video_id = html:match('"video_id"%s*:%s*"([^"]+)"')
+
+-- Extract an attribute from an HTML tag
+local src = html:match('<video[^>]+src="([^"]+)"')
+
+-- Extract query parameter
+local v = query:match("[?&]v=([^&]+)")
+
+-- Iterate over all matches (gmatch)
+for link in body:gmatch('href="(/[^"]+/download/[^"]+)"') do
+    print(link)
+end
+
+-- Greedy vs lazy
+local s = "<div>hello</div><div>world</div>"
+print(s:match("<div>(.-)</div>"))  --> hello   (lazy -)
+print(s:match("<div>(.+)</div>"))  --> hello</div><div>world  (greedy +)
+
+-- Escape literal dots in domain patterns
+url:match("instagram%.com")   -- correct: matches "instagram.com"
+url:match("instagram.com")    -- WRONG: '.' matches any character
+
+-- Match colon-separated key-value in text
+local key, val = line:match('^([^:]+):%s*(.*)')
+
+-- tab-separated fields (cookie files)
+local name, value = line:match("\t([^\t]+)\t([^\t]*)$")
+</code></pre>
+
+        <h4>Key Differences from Python <code>re</code> / PCRE</h4>
+
+        <table>
+            <thead>
+                <tr>
+                    <th>Python <code>re</code></th>
+                    <th>Lua pattern</th>
+                    <th>Notes</th>
+                </tr>
+            </thead>
+            <tbody>
+                <tr>
+                    <td><code>\d</code></td>
+                    <td><code>%d</code></td>
+                    <td><code>%</code> instead of <code>\</code> for classes</td>
+                </tr>
+                <tr>
+                    <td><code>\w</code></td>
+                    <td><code>%w</code></td>
+                    <td>Lua <code>%w</code> does not include <code>_</code></td>
+                </tr>
+                <tr>
+                    <td><code>[\w_]</code> or <code>\w</code></td>
+                    <td><code>[%w_]</code></td>
+                    <td>Add <code>_</code> explicitly in Lua</td>
+                </tr>
+                <tr>
+                    <td><code>\s</code></td>
+                    <td><code>%s</code></td>
+                    <td></td>
+                </tr>
+                <tr>
+                    <td><code>\b</code></td>
+                    <td>(not available)</td>
+                    <td>No word-boundary anchor</td>
+                </tr>
+                <tr>
+                    <td><code>.*?</code></td>
+                    <td><code>.-</code></td>
+                    <td>Lazy quantifier uses <code>-</code></td>
+                </tr>
+                <tr>
+                    <td><code>.+?</code></td>
+                    <td><code>.+</code> with <code>-</code></td>
+                    <td>Use <code>(.-)</code> for lazy</td>
+                </tr>
+                <tr>
+                    <td><code>(?:...)</code></td>
+                    <td>(not available)</td>
+                    <td>All <code>()</code> are captures</td>
+                </tr>
+                <tr>
+                    <td><code>re.IGNORECASE</code></td>
+                    <td>(not available)</td>
+                    <td>Use <code>[Aa]</code> or <code>string.lower()</code> first</td>
+                </tr>
+                <tr>
+                    <td><code>|</code> (alternation)</td>
+                    <td>(not available)</td>
+                    <td>Use multiple <code>match()</code> calls</td>
+                </tr>
+                <tr>
+                    <td><code>{3,5}</code></td>
+                    <td>(not available)</td>
+                    <td>Manually expand or use loops</td>
+                </tr>
+            </tbody>
+        </table>
+
+        <h3>1.6 Error Handling</h3>
+
+        <pre><code>lua
+-- pcall (protected call)
+local ok, err = pcall(function()
+    error("something went wrong")
+end)
+if not ok then
+    print("Caught error: " .. err)
+end
+
+-- xpcall (with custom error handler)
+local ok, err = xpcall(
+    function() error("oops") end,
+    function(e) return "HANDLED: " .. e end
+)
+print(err)  --> HANDLED: ...:oops
+</code></pre>
+
+        <h2 id="2-standard-lua-library">2. Standard Lua Library</h2>
+
+        <p>Ludo opens all standard Lua 5.2 libraries. Below is a summary of each module with usage examples.</p>
+
+        <h3>2.1 Base Functions</h3>
+
+        <pre><code>lua
+print("Hello")             -- Print to stdout
+type(42)                   -- "number"
+type("hi")                 -- "string"
+type(nil)                  -- "nil"
+tostring(123)              -- "123"
+tonumber("42")             -- 42
+tonumber("0xff")           -- 255
+assert(1 + 1 == 2)         -- passes
+assert(false, "failed!")   -- raises error
+
+-- Iterate table
+local t = { a = 10, b = 20 }
+for k, v in pairs(t) do print(k, v) end
+
+-- Iterate array
+local a = { "x", "y" }
+for i, v in ipairs(a) do print(i, v) end
+
+-- Load and execute a string
+local f = load("return 2 + 3")
+print(f())  --> 5
+
+-- Execute a file
+dofile("script.lua")
+</code></pre>
+
+        <h3>2.2 <code>string</code> Library</h3>
+
+        <pre><code>lua
+string.byte("A")               --> 65
+string.char(65)                --> "A"
+string.len("hello")            --> 5
+string.rep("-", 40)            --> ----------------------------------------
+string.format("%d items", 5)   --> "5 items"
+string.find("foobar", "ob")    --> 3  4
+string.sub("abcdef", 2, 4)     --> "bcd"
+string.gsub("aaa", "a", "b")   --> "bbb"  3
+string.match("2024-01-15", "(%d+)-(%d+)-(%d+)")  --> "2024" "01" "15"
+string.upper("hello")          --> "HELLO"
+string.lower("HELLO")          --> "hello"
+string.reverse("abc")          --> "cba"
+</code></pre>
+
+        <h3>2.3 <code>table</code> Library</h3>
+
+        <pre><code>lua
+local t = { 3, 1, 4, 1, 5 }
+
+table.insert(t, 9)          -- append 9
+table.insert(t, 2, 99)      -- insert 99 at position 2
+table.remove(t, 1)          -- remove first element
+table.sort(t)               -- sort in-place
+
+-- Sort with comparator
+table.sort(t, function(a, b) return a > b end)
+
+-- Concatenate array elements
+local csv = table.concat({ "a", "b", "c" }, ",")
+print(csv)  --> a,b,c
+
+-- Unpack
+local a, b, c = table.unpack({ 10, 20, 30 })
+print(a, b, c)  --> 10  20  30
+</code></pre>
+
+        <h3>2.4 <code>math</code> Library</h3>
+
+        <pre><code>lua
+math.abs(-7)         --> 7
+math.ceil(2.3)       --> 3
+math.floor(2.9)      --> 2
+math.max(1, 5, 3)    --> 5
+math.min(1, 5, 3)    --> 1
+math.sqrt(144)       --> 12
+math.sin(math.pi/2)  --> 1.0
+math.cos(0)          --> 1.0
+math.log(math.exp(1))  --> 1.0
+math.random()        --> random float [0, 1)
+math.random(1, 100)  --> random integer [1, 100]
+math.randomseed(os.time())
+
+-- Constants
+print(math.pi)    --> 3.1415926535898
+print(math.huge)  --> inf
+</code></pre>
+
+        <h3>2.5 <code>io</code> Library</h3>
+
+        <pre><code>lua
+-- Read entire file
+local f = io.open("data.txt", "r")
+if f then
+    local content = f:read("*a")
+    f:close()
+    print(content)
+end
+
+-- Write to file
+local f = io.open("output.txt", "w")
+f:write("line 1\n")
+f:write("line 2\n")
+f:close()
+
+-- Append to file
+local f = io.open("log.txt", "a")
+f:write("new entry\n")
+f:close()
+
+-- Read line by line
+for line in io.lines("data.txt") do
+    print(line)
+end
+</code></pre>
+
+        <h3>2.6 <code>os</code> Library</h3>
+
+        <pre><code>lua
+print(os.time())              -- current Unix timestamp
+print(os.date("%Y-%m-%d"))    -- formatted date: "2026-03-20"
+print(os.date("%H:%M:%S"))    -- formatted time: "14:30:00"
+print(os.clock())             -- CPU time in seconds
+
+os.execute("mkdir new_folder")  -- run system command
+
+local tmpname = os.tmpname()    -- temporary file path
+os.remove("old_file.txt")      -- delete a file
+os.rename("old.txt", "new.txt") -- rename a file
+
+-- Environment variables
+print(os.getenv("PATH"))
+
+-- Measure elapsed time
+local start = os.clock()
+-- ... work ...
+local elapsed = os.clock() - start
+print(string.format("Took %.3f seconds", elapsed))
+</code></pre>
+
+        <h3>2.7 <code>bit32</code> Library (Lua 5.2)</h3>
+
+        <pre><code>lua
+bit32.band(0xFF, 0x0F)     --> 15
+bit32.bor(0xF0, 0x0F)      --> 255
+bit32.bxor(0xFF, 0x0F)     --> 240
+bit32.bnot(0)              --> 4294967295
+bit32.lshift(1, 8)         --> 256
+bit32.rshift(256, 4)       --> 16
+bit32.btest(0xFF, 0x01)    --> true
+bit32.extract(0xFF, 4, 4)  --> 15  (extract 4 bits from bit 4)
+</code></pre>
+
+        <h2 id="3-json-library-json">3. JSON Library (<code>json</code>)</h2>
+
+        <p>Ludo bundles a fast JSON implementation (Lua CJSON) exposed as the global <code>json</code> module. A "safe" wrapper is also available as <code>cjson_safe</code> which returns <code>nil, err</code> instead of throwing on parse/encode errors.</p>
+
+        <p><strong>Key functions:</strong></p>
+        <ul>
+            <li><code>json.encode(value)</code> → string: serialise a Lua value (tables, numbers, booleans, strings, <code>json.null</code>) to JSON. Use <code>json.null</code> to represent JSON <code>null</code> in Lua tables.</li>
+            <li><code>json.decode(text)</code> → lua value: parse a JSON string and return the Lua representation. <code>json.decode</code> raises on malformed input — use <code>pcall(json.decode, text)</code> to catch errors, or use <code>require("cjson_safe")</code> to get the safe wrapper that returns <code>nil, err</code>.</li>
+        </ul>
+
+        <p><strong>Special values &amp; behaviour:</strong></p>
+        <ul>
+            <li><code>json.null</code> — a lightuserdata sentinel used to represent JSON <code>null</code>. Compare with <code>if v == json.null then ... end</code>.</li>
+            <li>The decoder enforces strict JSON syntax and will error on invalid input.</li>
+        </ul>
+
+        <p><strong>Configuration functions:</strong> (each returns the previous/current value)</p>
+        <ul>
+            <li><code>json.encode_sparse_array(convert, ratio, safe)</code> — control sparse array handling when encoding.</li>
+            <li><code>json.encode_max_depth(n)</code> — maximum nesting allowed when encoding.</li>
+            <li><code>json.decode_max_depth(n)</code> — maximum nesting allowed when decoding.</li>
+            <li><code>json.encode_number_precision(n)</code> — number-to-string precision for encode.</li>
+            <li><code>json.encode_keep_buffer(true|false)</code> — reuse internal encode buffer.</li>
+            <li><code>json.encode_invalid_numbers(option)</code> — how to handle NaN/Inf when encoding (<code>off</code>, <code>on</code>, or <code>null</code>).</li>
+            <li><code>json.decode_invalid_numbers(option)</code> — whether to accept non-standard numbers when decoding.</li>
+        </ul>
+
+        <p><strong>Examples</strong></p>
+        <pre><code>lua
+local json = json or require("json")
+
+-- Encode a request body (used by plugins/youtube.lua)
+local body = json.encode({ videoId = vid, context = { client = { hl = "en" } } })
+
+-- Decode safely
+local ok, data = pcall(json.decode, normalize_json_response(response_body))
+if not ok then
+        print("JSON error:", data)
+end
+</code></pre>
+
+        <h2 id="4-http-library-http">4. HTTP Library (<code>http</code>)</h2>
+
+        <p>The <code>http</code> module is registered as a global table. It provides HTTP client functionality backed by libcurl with cookie management, URL utilities, and custom headers.</p>
+
+        <h3>4.1 <code>http.get(url [, options])</code> → body, status, headers</h3>
+
+        <p>Perform an HTTP GET request.</p>
+
+        <p><strong>Parameters:</strong></p>
+        <ul>
+            <li><code>url</code> (string) — The URL to fetch.</li>
+            <li><code>options</code> (table, optional) — Request options (see <a href="#47-options-table">Options Table</a>).</li>
+        </ul>
+
+        <p><strong>Returns:</strong></p>
+        <ul>
+            <li><code>body</code> (string) - Response body.</li>
+            <li><code>status</code> (number) - HTTP status code.</li>
+            <li><code>headers</code> (table) - Response headers as key-value pairs.</li>
+        </ul>
+
+        <pre><code>lua
+-- Simple GET
+local body, status, headers = http.get("https://httpbin.org/get")
+print(status)                  --> 200
+print(headers["Content-Type"]) --> application/json
+
+-- GET with options
+local body, status = http.get("https://api.example.com/data", {
+    user_agent = "MyBot/1.0",
+    timeout    = 30,
+    headers    = {
+        ["Authorization"] = "Bearer my_token",
+        ["Accept"]        = "application/json",
+    },
+})
+
+-- Parse JSON response
+if status == 200 then
+    -- Process body as needed
+    print("Received " .. #body .. " bytes")
+end
+</code></pre>
+
+        <h3>4.2 <code>http.head(url [, options])</code> → body, status, headers</h3>
+
+        <p>Perform an HTTP HEAD request (no response body).</p>
+
+        <p><strong>Parameters:</strong></p>
+        <ul>
+            <li><code>url</code> (string) — The URL to check.</li>
+            <li><code>options</code> (table, optional) — Request options.</li>
+        </ul>
+
+        <p><strong>Returns:</strong></p>
+        <ul>
+            <li><code>body</code> (string) — Always empty string.</li>
+            <li><code>status</code> (number) — HTTP status code.</li>
+            <li><code>headers</code> (table) — Response headers.</li>
+        </ul>
+
+        <pre><code>lua
+-- Check if a URL exists
+local _, status, headers = http.head("https://example.com/file.zip")
+if status == 200 then
+    print("File size: " .. (headers["Content-Length"] or "unknown"))
+end
+
+-- Check redirect target
+local _, status, headers = http.head("https://short.url/abc", {
+    follow_redirects = false,
+})
+if status == 301 or status == 302 then
+    print("Redirects to: " .. (headers["Location"] or "?"))
+end
+</code></pre>
+
+        <h3>4.3 <code>http.post(url, body [, options])</code> → body, status, headers</h3>
+
+        <p>Perform an HTTP POST request.</p>
+
+        <p><strong>Parameters:</strong></p>
+        <ul>
+            <li><code>url</code> (string) — The target URL.</li>
+            <li><code>body</code> (string) — The request body (form data, JSON, etc.).</li>
+            <li><code>options</code> (table, optional) — Request options.</li>
+        </ul>
+
+        <p><strong>Returns:</strong></p>
+        <ul>
+            <li><code>body</code> (string) — Response body.</li>
+            <li><code>status</code> (number) — HTTP status code.</li>
+            <li><code>headers</code> (table) — Response headers.</li>
+        </ul>
+
+        <pre><code>lua
+-- POST form data
+local body, status = http.post(
+    "https://httpbin.org/post",
+    "username=admin&password=secret",
+    {
+        headers = {
+            ["Content-Type"] = "application/x-www-form-urlencoded",
+        },
+    }
+)
+print(status)  --> 200
+
+-- POST JSON
+local json_body = '{"name": "test", "value": 42}'
+local body, status = http.post(
+    "https://api.example.com/items",
+    json_body,
+    {
+        headers = {
+            ["Content-Type"]  = "application/json",
+            ["Authorization"] = "Bearer token123",
+        },
+        timeout = 10,
+    }
+)
+</code></pre>
+
+        <h3>4.4 <code>http.set_cookie(filepath)</code></h3>
+
+        <p>Set a file path for persistent cookie storage. All subsequent requests will read and write cookies from this file.</p>
+
+        <p><strong>Parameters:</strong></p>
+        <ul>
+            <li><code>filepath</code> (string) — Path to the cookie jar file.</li>
+        </ul>
+
+        <pre><code>lua
+http.set_cookie("cookies.txt")
+
+-- Cookies are now persisted across requests
+http.get("https://example.com/login")
+http.get("https://example.com/dashboard")  -- uses session cookies
+</code></pre>
+
+        <h3>4.5 <code>http.clear_cookies()</code></h3>
+
+        <p>Clear the cookie jar and last URL state.</p>
+
+        <pre><code>lua
+http.clear_cookies()
+</code></pre>
+
+        <h3>4.6 <code>http.get_last_url()</code> → string</h3>
+
+        <p>Get the last effective URL after all redirects from the most recent request.</p>
+
+        <p><strong>Returns:</strong></p>
+        <ul>
+            <li><code>url</code> (string) — The final URL, or empty string if no request was made.</li>
+        </ul>
+
+        <pre><code>lua
+http.get("https://github.com/user/repo/releases/latest")
+local final_url = http.get_last_url()
+print(final_url)  --> https://github.com/user/repo/releases/tag/v1.2.3
+</code></pre>
+
+        <h3>4.7 Options Table</h3>
+
+        <p>All HTTP request functions accept an optional <code>options</code> table:</p>
+
+        <table class="api-table">
+            <thead>
+                <tr>
+                    <th>Key</th>
+                    <th>Type</th>
+                    <th>Default</th>
+                    <th>Description</th>
+                </tr>
+            </thead>
+            <tbody>
+                <tr>
+                    <td><code>user_agent</code></td>
+                    <td>string</td>
+                    <td><code>"Mozilla/5.0 LUDO/1.0"</code></td>
+                    <td>User-Agent header</td>
+                </tr>
+                <tr>
+                    <td><code>follow_redirects</code></td>
+                    <td>boolean</td>
+                    <td><code>true</code></td>
+                    <td>Follow HTTP redirects (max 10)</td>
+                </tr>
+                <tr>
+                    <td><code>timeout</code></td>
+                    <td>number</td>
+                    <td>none</td>
+                    <td>Request timeout in seconds</td>
+                </tr>
+                <tr>
+                    <td><code>headers</code></td>
+                    <td>table</td>
+                    <td>none</td>
+                    <td>Custom headers as <code>{["Name"] = "value"}</code></td>
+                </tr>
+                <tr>
+                    <td><code>cookies</code></td>
+                    <td>string</td>
+                    <td>none</td>
+                    <td>Path to cookie jar file</td>
+                </tr>
+            </tbody>
+        </table>
+
+        <h3>4.8 <code>http.url_encode(str)</code> → string</h3>
+
+        <p>URL-encode a string (percent-encoding).</p>
+
+        <p><strong>Parameters:</strong></p>
+        <ul>
+            <li><code>str</code> (string) — The string to encode.</li>
+        </ul>
+
+        <p><strong>Returns:</strong></p>
+        <ul>
+            <li><code>encoded</code> (string) — URL-encoded string.</li>
+        </ul>
+
+        <pre><code>lua
+local encoded = http.url_encode("hello world & more")
+print(encoded)  --> hello%20world%20%26%20more
+</code></pre>
+
+        <h3>4.9 <code>http.url_decode(str)</code> → string</h3>
+
+        <p>Decode a URL-encoded string.</p>
+
+        <p><strong>Parameters:</strong></p>
+        <ul>
+            <li><code>str</code> (string) — The URL-encoded string.</li>
+        </ul>
+
+        <p><strong>Returns:</strong></p>
+        <ul>
+            <li><code>decoded</code> (string) — Decoded string.</li>
+        </ul>
+
+        <pre><code>lua
+local decoded = http.url_decode("hello%20world%20%26%20more")
+print(decoded)  --> hello world & more
+</code></pre>
+
+        <h3>4.10 <code>http.parse_url(url)</code> → table</h3>
+
+        <p>Parse a URL into its components.</p>
+
+        <p><strong>Parameters:</strong></p>
+        <ul>
+            <li><code>url</code> (string) — The URL to parse.</li>
+        </ul>
+
+        <p><strong>Returns:</strong></p>
+        <ul>
+            <li><code>parts</code> (table) — Table with fields: <code>scheme</code>, <code>host</code>, <code>port</code>, <code>path</code>, <code>query</code>.</li>
+        </ul>
+
+        <pre><code>lua
+local parts = http.parse_url("https://example.com:8080/api/data?key=value")
+print(parts.scheme)  --> https
+print(parts.host)    --> example.com
+print(parts.port)    --> 8080
+print(parts.path)    --> /api/data
+print(parts.query)   --> key=value
+</code></pre>
+
+        <h3>4.11 Complete HTTP Example</h3>
+
+        <pre><code>lua
+-- Download plugin: find the latest release of a GitHub repo
+local plugin = {}
+
+function plugin.validate(url)
+    return string.find(url, "github%.com/.+/releases") ~= nil
+end
+
+function plugin.process(url)
+    -- Follow redirects to find the actual release page
+    local body, status = http.get(url, {
+        user_agent = "Ludo-GitHub-Plugin/1.0",
+        timeout    = 30,
+    })
+    if status ~= 200 then
+        ludo.logError("Failed to fetch: " .. url)
+        return
+    end
+
+    -- Extract download links from the page
+    for link in string.gmatch(body, 'href="(/[^"]+/releases/download/[^"]+)"') do
+        local full_url = "https://github.com" .. link
+        ludo.logInfo("Found: " .. full_url)
+        ludo.newDownload(full_url)
+    end
+end
+
+return plugin
+</code></pre>
+
+        <h3>4.12 <code>http.read_cookie(filepath, name)</code> → string|nil</h3>
+
+        <p>Read a named cookie value from a Netscape-format cookie file.</p>
+
+        <p>This is useful for checking session state — for example reading a <code>csrftoken</code> or <code>sessionid</code> cookie after <code>http.set_cookie()</code> has been configured and requests have populated the cookie jar.</p>
+
+        <p><strong>Parameters:</strong></p>
+        <ul>
+            <li><code>filepath</code> (string) — Path to the Netscape cookie-jar file.</li>
+            <li><code>name</code> (string) — The cookie name to search for.</li>
+        </ul>
+
+        <p><strong>Returns:</strong></p>
+        <ul>
+            <li><code>value</code> (string) — The cookie value, or <code>nil</code> if the file cannot be opened or the cookie is not found.</li>
+        </ul>
+
+        <p><strong>Cookie file format</strong> (one cookie per line, TAB-separated fields):</p>
+        <pre><code>
+# Netscape HTTP Cookie File
+.instagram.com	TRUE	/	TRUE	0	csrftoken	abc123def456
+.instagram.com	TRUE	/	TRUE	0	sessionid	789xyz...
+</code></pre>
+
+        <p><strong>HttpOnly cookies:</strong> libcurl writes <code>HttpOnly</code> cookies with a <code>#HttpOnly_</code> prefix on the domain field (e.g. <code>#HttpOnly_.tiktok.com</code>). <code>http.read_cookie</code> recognises and strips this prefix automatically, so <code>tt_chain_token</code> and other <code>HttpOnly</code> cookies are returned correctly.</p>
+
+        <pre><code>lua
+-- Read csrftoken from the session cookie jar
+local csrf = http.read_cookie("instagram_session.txt", "csrftoken")
+if csrf then
+    ludo.logInfo("CSRF token found")
+end
+
+-- Check if user is authenticated
+local sid = http.read_cookie("instagram_cookies.txt", "sessionid")
+if sid then
+    ludo.logInfo("User session is available")
+end
+</code></pre>
+
+        <h3>4.13 <code>http.base64_encode(str)</code> → string</h3>
+
+        <p>Base64-encode a string (binary-safe).</p>
+
+        <p><strong>Parameters:</strong></p>
+        <ul>
+            <li><code>str</code> (string) — The string or binary data to encode.</li>
+        </ul>
+
+        <p><strong>Returns:</strong></p>
+        <ul>
+            <li><code>encoded</code> (string) — Base64-encoded string.</li>
+        </ul>
+
+        <pre><code>lua
+local b64 = http.base64_encode("hello world")
+print(b64)  --> aGVsbG8gd29ybGQ=
+</code></pre>
+
+        <h3>4.14 <code>http.base64_decode(str)</code> → string</h3>
+
+        <p>Decode a base64-encoded string (binary-safe).</p>
+
+        <p><strong>Parameters:</strong></p>
+        <ul>
+            <li><code>str</code> (string) — The base64-encoded string.</li>
+        </ul>
+
+        <p><strong>Returns:</strong></p>
+        <ul>
+            <li><code>decoded</code> (string) — Decoded string or binary data.</li>
+        </ul>
+
+        <pre><code>lua
+local raw = http.base64_decode("aGVsbG8gd29ybGQ=")
+print(raw)  --> hello world
+</code></pre>
+
+        <h3>4.15 <code>http.sha256(str)</code> → string</h3>
+
+        <p>Compute the SHA-256 digest of a string. Returns the raw 32-byte binary digest (NOT hex-encoded). Use <code>http.base64_encode</code> to convert to base64, or iterate bytes with <code>string.byte</code> to work with the raw digest.</p>
+
+        <p><strong>Parameters:</strong></p>
+        <ul>
+            <li><code>str</code> (string) — Any string or binary data to hash.</li>
+        </ul>
+
+        <p><strong>Returns:</strong></p>
+        <ul>
+            <li><code>digest</code> (string) — Raw 32-byte binary SHA-256 digest.</li>
+        </ul>
+
+        <pre><code>lua
+-- Verify a known SHA-256 hash
+local digest = http.sha256("hello")
+local hex = digest:gsub(".", function(c) return ("%02x"):format(c:byte()) end)
+-- hex == "2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b9824"
+
+-- Binary comparison (used in TikTok WAF challenge)
+local expected = http.base64_decode(v_c)  -- 32 bytes
+if http.sha256(prefix .. tostring(i)) == expected then ...
+
+-- Get base64 of digest
+local b64_digest = http.base64_encode(http.sha256(data))
+</code></pre>
+
+        <p><strong>Implementation note:</strong> Standalone FIPS 180-4 SHA-256; no external dependency.</p>
+
+        <div class="note">
+            <strong>Note on Compression Support</strong>
+            <p>Ludo's HTTP engine supports transparent decompression for responses with <code>Accept-Encoding: gzip, deflate, zstd, br</code> (brotli). Brotli is supported if built with brotli libraries.</p>
+        </div>
+
+        <h2 id="5-zip-library-zip">5. Zip Library (<code>zip</code>)</h2>
+
+        <p>The <code>zip</code> global provides a single function for creating standard ZIP archives (PKZIP 2.0 / Info-ZIP compatible) using <strong>zlib DEFLATE</strong> compression. No external dependency beyond the vendored <code>zlib-1.2.8</code> is required.</p>
+
+        <h3>5.1 <code>zip.create</code></h3>
+
+        <pre><code>lua
+-- Pack an explicit list of files (entries use the basename only):
+local status, errmsg = zip.create(output_path, { file1, file2, ... })
+
+-- Pack an entire directory tree (recursive):
+local status, errmsg = zip.create(output_path, directory)
+
+-- Pack a directory tree, including only files matching a glob pattern:
+local status, errmsg = zip.create(output_path, directory, glob_filter)
+</code></pre>
+
+        <p><strong>Parameters</strong></p>
+
+        <table class="api-table">
+            <thead>
+                <tr>
+                    <th>Parameter</th>
+                    <th>Type</th>
+                    <th>Description</th>
+                </tr>
+            </thead>
+            <tbody>
+                <tr>
+                    <td><code>output_path</code></td>
+                    <td>string</td>
+                    <td>Destination <code>.zip</code> file path. Created or overwritten.</td>
+                </tr>
+                <tr>
+                    <td><code>{ files }</code></td>
+                    <td>table</td>
+                    <td>Array of source file paths. Each file is stored using its <strong>basename</strong> only (no subdirectory).</td>
+                </tr>
+                <tr>
+                    <td><code>directory</code></td>
+                    <td>string</td>
+                    <td>Root directory to pack. All files are included recursively; entry names preserve the relative path under <code>directory</code>.</td>
+                </tr>
+                <tr>
+                    <td><code>glob_filter</code></td>
+                    <td>string</td>
+                    <td>Optional case-insensitive glob pattern (<code>*</code> = any sequence, <code>?</code> = any single char) applied to <strong>basenames</strong>. Example: <code>"*.mp4"</code>. Omit or pass <code>nil</code>/<code>""</code> to include every file.</td>
+                </tr>
+            </tbody>
+        </table>
+
+        <p><strong>Return values</strong></p>
+
+        <table class="api-table">
+            <thead>
+                <tr>
+                    <th>Value</th>
+                    <th>Type</th>
+                    <th>Meaning</th>
+                </tr>
+            </thead>
+            <tbody>
+                <tr>
+                    <td><code>status</code></td>
+                    <td>integer</td>
+                    <td><code>0</code> on success; <code>-1</code> on any failure.</td>
+                </tr>
+                <tr>
+                    <td><code>errmsg</code></td>
+                    <td>string</td>
+                    <td>Error description — present <strong>only</strong> when <code>status == -1</code>.</td>
+                </tr>
+            </tbody>
+        </table>
+
+        <h3>5.2 Examples</h3>
+
+        <pre><code>lua
+-- 1. Pack two downloaded files into a single archive
+local out = ludo.getOutputDirectory() .. "/bundle.zip"
+local status, err = zip.create(out, {
+    ludo.getOutputDirectory() .. "/video.mp4",
+    ludo.getOutputDirectory() .. "/cover.jpg",
+})
+if status ~= 0 then
+    ludo.logError("zip failed: " .. (err or "unknown error"))
+else
+    ludo.logSuccess("Created " .. out)
+end
+
+-- 2. Archive the entire downloads folder
+local status, err = zip.create(
+    ludo.getOutputDirectory() .. "/all.zip",
+    ludo.getOutputDirectory()
+)
+
+-- 3. Archive only MP4 files from the downloads folder
+local status, err = zip.create(
+    ludo.getOutputDirectory() .. "/videos.zip",
+    ludo.getOutputDirectory(),
+    "*.mp4"
+)
+if status ~= 0 then
+    ludo.logError("zip failed: " .. (err or "unknown"))
+end
+</code></pre>
+
+        <h3>5.3 Notes</h3>
+
+        <ul>
+            <li>Archives are written in <strong>PKZIP 2.0</strong> format; compatible with Windows Explorer, 7-Zip, unzip, and all standard ZIP tools.</li>
+            <li>All files are compressed with <strong>DEFLATE</strong> (<code>Z_DEFAULT_COMPRESSION</code>). The original file is not modified.</li>
+            <li>On <strong>Windows</strong> all paths are handled as <strong>UTF-8</strong> and converted to UTF-16 internally for Win32 API calls — filenames with non-ASCII characters work correctly.</li>
+            <li>Maximum entries per archive: <strong>4096</strong>.</li>
+            <li>Maximum in-archive path length: <strong>511 bytes</strong>.</li>
+            <li>ZIP64 (archives &gt; 4 GB or containing files &gt; 4 GB) is <strong>not</strong> supported.</li>
+        </ul>
+
+        <h2 id="6-ludo-library-ludo">6. Ludo Library (<code>ludo</code>)</h2>
+
+        <p>The <code>ludo</code> module provides download management and application logging. It is registered as a global table.</p>
+
+        <h3>6.1 <code>ludo.newDownload(url [, output_dir [, mode [, filename [, headers]]]])</code> -&gt; id, status, output_path</h3>
+
+        <p>Enqueue a new download.</p>
+
+        <p>This function returns three values: the assigned download ID, the HTTP status from the preflight HEAD request, and the resolved output path.</p>
+
+        <p><strong>Parameters:</strong></p>
+        <ul>
+            <li><code>url</code> (string) — The URL to download.</li>
+            <li><code>output_dir</code> (string, optional) — Destination directory. Defaults to the application's configured output directory.</li>
+            <li><code>mode</code> (number, optional) — Download mode constant. Defaults to <code>ludo.DOWNLOAD_NOW</code>.</li>
+            <li><code>filename</code> (string, optional) — Suggested output filename (basename). When provided, Ludo will use this as the filename during preflight and resolution; the final path may be adjusted to avoid collisions.</li>
+            <li><code>headers</code> (table, optional) — Extra HTTP headers sent with the actual CDN GET request (but <strong>not</strong> the preflight HEAD). Useful for sending <code>Referer</code>, <code>Cookie</code>, or other headers required by a CDN. Format: <code>{["Name"]="Value", ...}</code>. Multiple headers are supported.</li>
+        </ul>
+
+        <p><strong>Returns:</strong></p>
+        <ul>
+            <li><code>id</code> (number) - The assigned download ID for tracking.</li>
+            <li><code>status</code> (number) - The HTTP status code from the preflight HEAD request, or <code>0</code> if unavailable.</li>
+            <li><code>output_path</code> (string) - The full output path that will be used for the download.</li>
+        </ul>
+
+        <p><strong>Constants:</strong></p>
+        <ul>
+            <li><code>ludo.DOWNLOAD_NOW</code> - Start downloading immediately.</li>
+            <li><code>ludo.DOWNLOAD_QUEUE</code> - Add to queue, start when a slot is free.</li>
+        </ul>
+
+        <p><strong>Note on 403 from preflight HEAD:</strong> Some CDNs (e.g. TikTok) block unauthenticated HEAD probes but serve the content on authenticated GET. When the URL was freshly extracted from an authenticated page fetch, it is safe to queue on 403.</p>
+
+        <pre><code>lua
+-- Download immediately to default directory
+local id, status, output_path = ludo.newDownload("https://example.com/file.zip")
+print(id, status, output_path)
+
+-- Download to specific directory
+local id = ludo.newDownload("https://example.com/file.zip", "C:\\Downloads")
+
+-- Queue the download
+local id = ludo.newDownload("https://example.com/file.zip", nil, ludo.DOWNLOAD_QUEUE)
+
+-- Suggest an output filename (basename)
+local id, status, output_path = ludo.newDownload("https://example.com/stream", nil, ludo.DOWNLOAD_NOW, "my_show_episode1.mp4")
+print(output_path)  -- e.g. C:\\Downloads\\my_show_episode1.mp4
+
+-- Pass extra headers required by CDN (e.g. TikTok requires Referer + tt_chain_token)
+local tt_chain = http.read_cookie(cookie_path, "tt_chain_token")
+local _, dl_status, output = ludo.newDownload(
+    play_url, outdir, ludo.DOWNLOAD_NOW, "video.mp4", {
+        ["Referer"]  = "https://www.tiktok.com/",
+        ["Cookie"]   = "tt_chain_token=" .. (tt_chain or ""),
+    })
+if dl_status == 200 or dl_status == 206 or dl_status == 0 then
+    ludo.logSuccess("queued → " .. output)
+elseif dl_status == 403 then
+    ludo.logSuccess("queued (CDN probe blocked) → " .. output)
+else
+    ludo.logError("preflight HTTP " .. dl_status)
+end
+</code></pre>
+
+        <h3>6.2 <code>ludo.pauseDownload(id)</code></h3>
+
+        <p>Pause an active download.</p>
+
+        <p><strong>Parameters:</strong></p>
+        <ul>
+            <li><code>id</code> (number) — The download ID returned by <code>newDownload</code>.</li>
+        </ul>
+
+        <pre><code>lua
+local id = ludo.newDownload("https://example.com/large-file.zip")
+-- Later...
+ludo.pauseDownload(id)
+</code></pre>
+
+        <h3>6.3 <code>ludo.removeDownload(id)</code></h3>
+
+        <p>Remove a download from the manager (cancels if active).</p>
+
+        <p><strong>Parameters:</strong></p>
+        <ul>
+            <li><code>id</code> (number) — The download ID returned by <code>newDownload</code>.</li>
+        </ul>
+
+        <pre><code>lua
+ludo.removeDownload(id)
+</code></pre>
+
+        <h3>6.4 <code>ludo.logError(msg)</code></h3>
+
+        <p>Log an error message to the application's Activity Log panel.</p>
+
+        <p><strong>Parameters:</strong></p>
+        <ul>
+            <li><code>msg</code> (string) — The error message.</li>
+        </ul>
+
+        <pre><code>lua
+ludo.logError("Failed to parse response from API")
+</code></pre>
+
+        <h3>6.5 <code>ludo.logSuccess(msg)</code></h3>
+
+        <p>Log a success message to the Activity Log panel.</p>
+
+        <p><strong>Parameters:</strong></p>
+        <ul>
+            <li><code>msg</code> (string) — The success message.</li>
+        </ul>
+
+        <pre><code>lua
+ludo.logSuccess("Plugin loaded successfully")
+</code></pre>
+
+        <h3>6.6 <code>ludo.logInfo(msg)</code></h3>
+
+        <p>Log an informational message to the Activity Log panel.</p>
+
+        <p><strong>Parameters:</strong></p>
+        <ul>
+            <li><code>msg</code> (string) — The info message.</li>
+        </ul>
+
+        <pre><code>lua
+ludo.logInfo("Scanning page for download links...")
+</code></pre>
+
+        <h3>6.7 <code>ludo.setting</code></h3>
+
+        <p>Configuration values loaded from <code>config.ini</code> are exposed through <code>ludo.setting</code>.</p>
+
+        <pre><code>lua
+print(ludo.setting.maxDownloadRetry)
+print(ludo.setting.maxThread)
+print(ludo.setting.outputDir)
+</code></pre>
+
+        <h3>6.8 <code>ludo.getOutputDirectory()</code> - string</h3>
+
+        <p>Get the current default output directory.</p>
+
+        <p><strong>Returns:</strong></p>
+        <ul>
+            <li><code>dir</code> (string) — The configured output directory path.</li>
+        </ul>
+
+        <pre><code>lua
+local dir = ludo.getOutputDirectory()
+ludo.logInfo("Files will be saved to: " .. dir)
+</code></pre>
+
+        <h2 id="7-ui-library-ui">7. UI Library (<code>ui</code>)</h2>
+
+        <p>The <code>ui</code> module provides native GUI widget creation via libui-ng. It is registered as <code>require("ui")</code> or accessed via the global <code>ui</code> table. All widget constructors return an object with chainable methods.</p>
+
+        <blockquote>
+            <strong>Note:</strong> The Ludo main window uses its own UI. The <code>ui</code> library is intended for tool scripts and plugins that need to show their own dialog windows.
+            <br><br>
+            <strong>Tool scripts</strong> must NOT call <code>ui.Init()</code>, <code>ui.Main()</code>, or <code>ui.Uninit()</code>. Use <code>ui.MainStep(true)</code> in a loop instead. See §11 for the correct pattern.
+        </blockquote>
+
+        <h3>7.1 Application Lifecycle</h3>
+
+        <h4><code>ui.Init()</code> → string|nil</h4>
+
+        <p>Initialize the UI subsystem. Returns <code>nil</code> on success or an error string. (Tool scripts can ignore the error — it is expected when Ludo is already running.)</p>
+
+        <h4><code>ui.Uninit()</code></h4>
+
+        <p>Shut down the UI subsystem (standalone scripts only).</p>
+
+        <h4><code>ui.Main()</code></h4>
+
+        <p>Run the main event loop (standalone scripts only). Blocks until <code>ui.Quit()</code>.</p>
+
+        <h4><code>ui.MainStep(wait)</code> → number</h4>
+
+        <p>Process one iteration of the event loop.</p>
+
+        <ul>
+            <li><code>wait</code> (boolean) — Block until an event occurs if <code>true</code>.</li>
+            <li>Returns non-zero to continue, <code>0</code> to stop.</li>
+        </ul>
+
+        <pre><code>lua
+-- Tool-script event loop (preferred pattern)
+local win_open = true
+win:OnClosing(function(w) win_open = false; return 1 end, nil)
+win:Show()
+while win_open do
+    if ui.MainStep(true) == 0 then break end
+end
+</code></pre>
+
+        <h4><code>ui.Quit()</code></h4>
+
+        <p>Request the event loop to exit.</p>
+
+        <h3>7.2 Control Base Methods</h3>
+
+        <p>These functions operate on <strong>any</strong> control, regardless of type:</p>
+
+        <table class="api-table">
+            <thead>
+                <tr>
+                    <th>Function</th>
+                    <th>Description</th>
+                </tr>
+            </thead>
+            <tbody>
+                <tr>
+                    <td><code>ui.ControlShow(ctrl)</code></td>
+                    <td>Show the control</td>
+                </tr>
+                <tr>
+                    <td><code>ui.ControlHide(ctrl)</code></td>
+                    <td>Hide the control</td>
+                </tr>
+                <tr>
+                    <td><code>ui.ControlEnable(ctrl)</code></td>
+                    <td>Enable user interaction</td>
+                </tr>
+                <tr>
+                    <td><code>ui.ControlDisable(ctrl)</code></td>
+                    <td>Disable user interaction</td>
+                </tr>
+                <tr>
+                    <td><code>ui.ControlVisible(ctrl)</code> → bool</td>
+                    <td>Whether the control is visible</td>
+                </tr>
+                <tr>
+                    <td><code>ui.ControlEnabled(ctrl)</code> → bool</td>
+                    <td>Whether the control is enabled</td>
+                </tr>
+                <tr>
+                    <td><code>ui.ControlDestroy(ctrl)</code></td>
+                    <td>Destroy the control and free resources</td>
+                </tr>
+            </tbody>
+        </table>
+
+        <p>Additionally, <code>Window</code> objects expose <code>Show</code>, <code>Hide</code>, <code>Enable</code>, <code>Disable</code>, <code>Visible</code>, <code>Enabled</code>, and <code>Destroy</code> as methods directly.</p>
+
+        <h3>7.3 Window</h3>
+
+        <h4><code>ui.NewWindow(title, width, height, hasMenubar)</code> → Window</h4>
+
+        <p>Create a new top-level window.</p>
+
+        <pre><code>lua
+local win = ui.NewWindow("My Tool", 640, 480, false)
+win:SetMargined(1)
+win:Show()
+</code></pre>
+
+        <h4>Methods</h4>
+
+        <table class="api-table">
+            <thead>
+                <tr>
+                    <th>Method</th>
+                    <th>Description</th>
+                </tr>
+            </thead>
+            <tbody>
+                <tr>
+                    <td><code>win:Title()</code> → string</code></td>
+                    <td>Get the window title</td>
+                </tr>
+                <tr>
+                    <td><code>win:SetTitle(s)</code></td>
+                    <td>Set the window title</td>
+                </tr>
+                <tr>
+                    <td><code>win:Position()</code> → x, y</code></td>
+                    <td>Get window position (pixels)</td>
+                </tr>
+                <tr>
+                    <td><code>win:SetPosition(x, y)</code></td>
+                    <td>Move window</td>
+                </tr>
+                <tr>
+                    <td><code>win:ContentSize()</code> → w, h</code></td>
+                    <td>Get client area size (pixels)</td>
+                </tr>
+                <tr>
+                    <td><code>win:SetContentSize(w, h)</code></td>
+                    <td>Resize client area</td>
+                </tr>
+                <tr>
+                    <td><code>win:Fullscreen()</code> → bool</code></td>
+                    <td>Whether window is fullscreen</td>
+                </tr>
+                <tr>
+                    <td><code>win:SetFullscreen(bool)</code></td>
+                    <td>Set fullscreen state</td>
+                </tr>
+                <tr>
+                    <td><code>win:Borderless()</code> → bool</code></td>
+                    <td>Whether window has no border/titlebar</td>
+                </tr>
+                <tr>
+                    <td><code>win:SetBorderless(bool)</code></td>
+                    <td>Toggle borderless mode</td>
+                </tr>
+                <tr>
+                    <td><code>win:Resizeable()</code> → bool</code></td>
+                    <td>Whether the window can be resized</td>
+                </tr>
+                <tr>
+                    <td><code>win:SetResizeable(bool)</code></td>
+                    <td>Set resizeability</td>
+                </tr>
+                <tr>
+                    <td><code>win:Focused()</code> → bool</code></td>
+                    <td>Whether the window has keyboard focus</td>
+                </tr>
+                <tr>
+                    <td><code>win:Margined()</code> → number</code></td>
+                    <td>Margin state</td>
+                </tr>
+                <tr>
+                    <td><code>win:SetMargined(n)</code></td>
+                    <td>Enable/disable margins (1 or 0)</td>
+                </tr>
+                <tr>
+                    <td><code>win:SetChild(ctrl)</code></td>
+                    <td>Set child control (content)</td>
+                </tr>
+                <tr>
+                    <td><code>win:OnClosing(fn, data)</code></td>
+                    <td>Callback fired when user closes; return 1 to allow close</td>
+                </tr>
+                <tr>
+                    <td><code>win:Show()</code></td>
+                    <td>Show the window</td>
+                </tr>
+                <tr>
+                    <td><code>win:Hide()</code></td>
+                    <td>Hide the window</td>
+                </tr>
+                <tr>
+                    <td><code>win:Enable()</code> / <code>win:Disable()</code></td>
+                    <td>Enable/disable</td>
+                </tr>
+                <tr>
+                    <td><code>win:Visible()</code> / <code>win:Enabled()</code></td>
+                    <td>Query state</td>
+                </tr>
+                <tr>
+                    <td><code>win:Destroy()</code></td>
+                    <td>Destroy the window and free resources</td>
+                </tr>
+            </tbody>
+        </table>
+
+        <blockquote>
+            <strong>Programmatic close:</strong> <code>win:Close()</code> does <strong>not</strong> exist in libuilua. To close a window from code (e.g. a button callback), set <code>win_open = false</code> and call <code>win:Destroy()</code>. <code>win:OnClosing</code> only fires when the user clicks the title-bar X button — it is <strong>not</strong> triggered by <code>win:Destroy()</code>.
+        </blockquote>
+
+        <pre><code>lua
+-- Close handler (important for tool scripts)
+win:OnClosing(function(w, data)
+    win_open = false
+    return 1  -- 1 = allow close; 0 = prevent close
+end, nil)
+</code></pre>
+
+        <h3>7.4 Box (Layout Container)</h3>
+
+        <h4><code>ui.NewVerticalBox()</code> → Box</h4>
+        <h4><code>ui.NewHorizontalBox()</code> → Box</h4>
+
+        <pre><code>lua
+local vbox = ui.NewVerticalBox()
+vbox:SetPadded(1)
+</code></pre>
+
+        <h4>Methods</h4>
+
+        <table class="api-table">
+            <thead>
+                <tr>
+                    <th>Method</th>
+                    <th>Description</th>
+                </tr>
+            </thead>
+            <tbody>
+                <tr>
+                    <td><code>box:Append(child [, ...] [, stretchy])</code></td>
+                    <td>Add children; optional stretchy bool</td>
+                </tr>
+                <tr>
+                    <td><code>box:Delete(index)</code></td>
+                    <td>Remove child at 0-based index</td>
+                </tr>
+                <tr>
+                    <td><code>box:NumChildren()</code> → number</code></td>
+                    <td>Number of children</td>
+                </tr>
+                <tr>
+                    <td><code>box:Padded()</code> → number</code></td>
+                    <td>Get padding state</td>
+                </tr>
+                <tr>
+                    <td><code>box:SetPadded(n)</code></td>
+                    <td>Enable/disable padding</td>
+                </tr>
+            </tbody>
+        </table>
+
+        <pre><code>lua
+vbox:Append(ui.NewLabel("Name:"), false)
+vbox:Append(entry, true)  -- entry stretches
+</code></pre>
+
+        <h3>7.5 Button</h3>
+
+        <h4><code>ui.NewButton(text)</code> → Button</h4>
+
+        <pre><code>lua
+local btn = ui.NewButton("Download")
+btn:OnClicked(function(b, data)
+    ludo.logInfo("Clicked!")
+end, nil)
+</code></pre>
+
+        <h4>Methods</h4>
+
+        <table class="api-table">
+            <thead>
+                <tr>
+                    <th>Method</th>
+                    <th>Description</th>
+                </tr>
+            </thead>
+            <tbody>
+                <tr>
+                    <td><code>btn:Text()</code> → string</code></td>
+                    <td>Get button label</td>
+                </tr>
+                <tr>
+                    <td><code>btn:SetText(s)</code></td>
+                    <td>Set button label</td>
+                </tr>
+                <tr>
+                    <td><code>btn:OnClicked(fn, data)</code></td>
+                    <td>Click handler: <code>fn(button, data)</code></td>
+                </tr>
+            </tbody>
+        </table>
+
+        <h3>7.6 Label</h3>
+
+        <h4><code>ui.NewLabel(text)</code> → Label</h4>
+
+        <pre><code>lua
+local lbl = ui.NewLabel("Status: ready")
+</code></pre>
+
+        <table class="api-table">
+            <thead>
+                <tr>
+                    <th>Method</th>
+                    <th>Description</th>
+                </tr>
+            </thead>
+            <tbody>
+                <tr>
+                    <td><code>lbl:Text()</code> → string</code></td>
+                    <td>Get label text</td>
+                </tr>
+                <tr>
+                    <td><code>lbl:SetText(s)</code></td>
+                    <td>Set label text</td>
+                </tr>
+            </tbody>
+        </table>
+
+        <h3>7.7 Checkbox</h3>
+
+        <h4><code>ui.NewCheckbox(text)</code> → Checkbox</h4>
+
+        <pre><code>lua
+local cb = ui.NewCheckbox("Enable logging")
+</code></pre>
+
+        <table class="api-table">
+            <thead>
+                <tr>
+                    <th>Method</th>
+                    <th>Description</th>
+                </tr>
+            </thead>
+            <tbody>
+                <tr>
+                    <td><code>cb:SetText(s)</code></td>
+                    <td>Set label</td>
+                </tr>
+                <tr>
+                    <td><code>cb:Checked()</code> → number</code></td>
+                    <td><code>1</code> if checked, <code>0</code> otherwise</td>
+                </tr>
+                <tr>
+                    <td><code>cb:SetChecked(n)</code></td>
+                    <td>Set checked state (1/0)</td>
+                </tr>
+                <tr>
+                    <td><code>cb:OnToggled(fn, data)</code></td>
+                    <td>Toggle handler: <code>fn(checkbox, data)</code></td>
+                </tr>
+            </tbody>
+        </table>
+
+        <pre><code>lua
+if cb:Checked() == 1 then
+    ludo.logInfo("Logging enabled")
+end
+</code></pre>
+
+        <h3>7.8 Entry (Text Input)</h3>
+
+        <h4><code>ui.NewEntry()</code> → Entry</h4>
+        <h4><code>ui.NewPasswordEntry()</code> → Entry *(text is masked)*</h4>
+        <h4><code>ui.NewSearchEntry()</code> → Entry *(shows search decoration)*</h4>
+
+        <pre><code>lua
+local url_entry = ui.NewEntry()
+url_entry:SetText("https://example.com")
+</code></pre>
+
+        <table class="api-table">
+            <thead>
+                <tr>
+                    <th>Method</th>
+                    <th>Description</th>
+                </tr>
+            </thead>
+            <tbody>
+                <tr>
+                    <td><code>entry:Text()</code> → string</code></td>
+                    <td>Get text content</td>
+                </tr>
+                <tr>
+                    <td><code>entry:SetText(s)</code></td>
+                    <td>Set text content</td>
+                </tr>
+                <tr>
+                    <td><code>entry:ReadOnly()</code> → bool</code></td>
+                    <td>Whether entry is read-only</td>
+                </tr>
+                <tr>
+                    <td><code>entry:SetReadOnly(bool)</code></td>
+                    <td>Set read-only state</td>
+                </tr>
+                <tr>
+                    <td><code>entry:OnChanged(fn, data)</code></td>
+                    <td>Change handler: <code>fn(entry, data)</code></td>
+                </tr>
+            </tbody>
+        </table>
+
+        <h3>7.9 MultilineEntry (Text Area)</h3>
+
+        <h4><code>ui.NewMultilineEntry()</code> → MultilineEntry *(wrapping)*</h4>
+        <h4><code>ui.NewNonWrappingMultilineEntry()</code> → MultilineEntry *(no wrap)*</h4>
+
+        <pre><code>lua
+local log = ui.NewMultilineEntry()
+log:SetReadOnly(1)
+</code></pre>
+
+        <table class="api-table">
+            <thead>
+                <tr>
+                    <th>Method</th>
+                    <th>Description</th>
+                </tr>
+            </thead>
+            <tbody>
+                <tr>
+                    <td><code>mle:Text()</code> → string</code></td>
+                    <td>Get all text</td>
+                </tr>
+                <tr>
+                    <td><code>mle:SetText(s)</code></td>
+                    <td>Replace all text</td>
+                </tr>
+                <tr>
+                    <td><code>mle:Append(s)</code></td>
+                    <td>Append text at end</td>
+                </tr>
+                <tr>
+                    <td><code>mle:ReadOnly()</code> → number</code></td>
+                    <td><code>1</code> if read-only</td>
+                </tr>
+                <tr>
+                    <td><code>mle:SetReadOnly(n)</code></td>
+                    <td>Set read-only (1/0)</td>
+                </tr>
+                <tr>
+                    <td><code>mle:OnChanged(fn, data)</code></td>
+                    <td>Change handler: <code>fn(mle, data)</code></td>
+                </tr>
+            </tbody>
+        </table>
+
+        <h3>7.10 ProgressBar</h3>
+
+        <h4><code>ui.NewProgressBar()</code> → ProgressBar</h4>
+
+        <table class="api-table">
+            <thead>
+                <tr>
+                    <th>Method</th>
+                    <th>Description</th>
+                </tr>
+            </thead>
+            <tbody>
+                <tr>
+                    <td><code>pb:Value()</code> → number</code></td>
+                    <td>Get current value</td>
+                </tr>
+                <tr>
+                    <td><code>pb:SetValue(n)</code></td>
+                    <td>Set value (0–100); <code>-1</code> = indeterminate</td>
+                </tr>
+            </tbody>
+        </table>
+
+        <pre><code>lua
+pb:SetValue(-1)   -- pulsing
+pb:SetValue(75)
+</code></pre>
+
+        <h3>7.11 Slider</h3>
+
+        <h4><code>ui.NewSlider(min, max)</code> → Slider</h4>
+
+        <table class="api-table">
+            <thead>
+                <tr>
+                    <th>Method</th>
+                    <th>Description</th>
+                </tr>
+            </thead>
+            <tbody>
+                <tr>
+                    <td><code>s:Value()</code> → number</code></td>
+                    <td>Current value</td>
+                </tr>
+                <tr>
+                    <td><code>s:SetValue(n)</code></td>
+                    <td>Set value</td>
+                </tr>
+                <tr>
+                    <td><code>s:SetRange(min, max)</code></td>
+                    <td>Change range</td>
+                </tr>
+                <tr>
+                    <td><code>s:HasToolTip()</code> → bool</code></td>
+                    <td>Whether tooltip is shown</td>
+                </tr>
+                <tr>
+                    <td><code>s:SetHasToolTip(bool)</code></td>
+                    <td>Show/hide tooltip</td>
+                </tr>
+                <tr>
+                    <td><code>s:OnChanged(fn, data)</code></td>
+                    <td>Change handler (while dragging)</td>
+                </tr>
+                <tr>
+                    <td><code>s:OnReleased(fn, data)</code></td>
+                    <td>Released handler (on mouse-up)</td>
+                </tr>
+            </tbody>
+        </table>
+
+        <h3>7.12 Spinbox</h3>
+
+        <h4><code>ui.NewSpinbox(min, max)</code> → Spinbox</h4>
+
+        <table class="api-table">
+            <thead>
+                <tr>
+                    <th>Method</th>
+                    <th>Description</th>
+                </tr>
+            </thead>
+            <tbody>
+                <tr>
+                    <td><code>sp:Value()</code> → number</code></td>
+                    <td>Current integer value</td>
+                </tr>
+                <tr>
+                    <td><code>sp:SetValue(n)</code></td>
+                    <td>Set value</td>
+                </tr>
+                <tr>
+                    <td><code>sp:OnChanged(fn, data)</code></td>
+                    <td>Change handler: <code>fn(spinbox, data)</code></td>
+                </tr>
+            </tbody>
+        </table>
+
+        <h3>7.13 Combobox (Dropdown)</h3>
+
+        <h4><code>ui.NewCombobox()</code> → Combobox *(read-only dropdown)*</h4>
+
+        <table class="api-table">
+            <thead>
+                <tr>
+                    <th>Method</th>
+                    <th>Description</th>
+                </tr>
+            </thead>
+            <tbody>
+                <tr>
+                    <td><code>cb:Append(s [, ...])</code></td>
+                    <td>Add items</td>
+                </tr>
+                <tr>
+                    <td><code>cb:InsertAt(index, s)</code></td>
+                    <td>Insert item at 0-based index</td>
+                </tr>
+                <tr>
+                    <td><code>cb:Delete(index)</code></td>
+                    <td>Remove item at 0-based index</td>
+                </tr>
+                <tr>
+                    <td><code>cb:Clear()</code></td>
+                    <td>Remove all items</td>
+                </tr>
+                <tr>
+                    <td><code>cb:NumItems()</code> → number</code></td>
+                    <td>Item count</td>
+                </tr>
+                <tr>
+                    <td><code>cb:Selected()</code> → number</code></td>
+                    <td>0-based selected index (−1 = none)</td>
+                </tr>
+                <tr>
+                    <td><code>cb:SetSelected(n)</code></td>
+                    <td>Select by 0-based index</td>
+                </tr>
+                <tr>
+                    <td><code>cb:OnToggled(fn, data)</code></td>
+                    <td>Selection change handler</td>
+                </tr>
+            </tbody>
+        </table>
+
+        <pre><code>lua
+local combo = ui.NewCombobox()
+combo:Append("Option A", "Option B", "Option C")
+combo:SetSelected(0)
+combo:OnToggled(function(c, d)
+    print("Selected: " .. c:Selected())
+end, nil)
+</code></pre>
+
+        <h3>7.14 EditableCombobox</h3>
+
+        <h4><code>ui.NewEditableCombobox()</code> → EditableCombobox *(dropdown + free text)*</h4>
+
+        <table class="api-table">
+            <thead>
+                <tr>
+                    <th>Method</th>
+                    <th>Description</th>
+                </tr>
+            </thead>
+            <tbody>
+                <tr>
+                    <td><code>ec:Append(s [, ...])</code></td>
+                    <td>Add preset items</td>
+                </tr>
+                <tr>
+                    <td><code>ec:Text()</code> → string</code></td>
+                    <td>Get current text (typed or selected)</td>
+                </tr>
+                <tr>
+                    <td><code>ec:SetText(s)</code></td>
+                    <td>Set text</td>
+                </tr>
+                <tr>
+                    <td><code>ec:OnChanged(fn, data)</code></td>
+                    <td>Change handler: <code>fn(ec, data)</code></td>
+                </tr>
+            </tbody>
+        </table>
+
+        <h3>7.15 RadioButtons</h3>
+
+        <h4><code>ui.NewRadioButtons()</code> → RadioButtons</h4>
+
+        <table class="api-table">
+            <thead>
+                <tr>
+                    <th>Method</th>
+                    <th>Description</th>
+                </tr>
+            </thead>
+            <tbody>
+                <tr>
+                    <td><code>rb:Append(s [, ...])</code></td>
+                    <td>Add items</td>
+                </tr>
+                <tr>
+                    <td><code>rb:Selected()</code> → number</code></td>
+                    <td>0-based selected index (−1 = none)</td>
+                </tr>
+                <tr>
+                    <td><code>rb:SetSelected(n)</code></td>
+                    <td>Select by 0-based index</td>
+                </tr>
+                <tr>
+                    <td><code>rb:OnSelected(fn, data)</code></td>
+                    <td>Selection change handler</td>
+                </tr>
+            </tbody>
+        </table>
+
+        <pre><code>lua
+local rb = ui.NewRadioButtons()
+rb:Append("Small", "Medium", "Large")
+rb:SetSelected(1)  -- Medium
+</code></pre>
+
+        <h3>7.16 Group</h3>
+
+        <h4><code>ui.NewGroup(title)</code> → Group</h4>
+
+        <table class="api-table">
+            <thead>
+                <tr>
+                    <th>Method</th>
+                    <th>Description</th>
+                </tr>
+            </thead>
+            <tbody>
+                <tr>
+                    <td><code>g:Title()</code> → string</code></td>
+                    <td>Get title</td>
+                </tr>
+                <tr>
+                    <td><code>g:SetTitle(s)</code></td>
+                    <td>Set title</td>
+                </tr>
+                <tr>
+                    <td><code>g:SetChild(ctrl)</code></td>
+                    <td>Set single child control</td>
+                </tr>
+                <tr>
+                    <td><code>g:Margined()</code> → number</code></td>
+                    <td>Get margin state</td>
+                </tr>
+                <tr>
+                    <td><code>g:SetMargined(n)</code></td>
+                    <td>Enable/disable margins</td>
+                </tr>
+            </tbody>
+        </table>
+
+        <pre><code>lua
+local grp = ui.NewGroup("Options")
+grp:SetMargined(1)
+grp:SetChild(ui.NewVerticalBox())
+</code></pre>
+
+        <h3>7.17 Tab</h3>
+
+        <h4><code>ui.NewTab()</code> → Tab</h4>
+
+        <table class="api-table">
+            <thead>
+                <tr>
+                    <th>Method</th>
+                    <th>Description</th>
+                </tr>
+            </thead>
+            <tbody>
+                <tr>
+                    <td><code>t:Append(name, ctrl [, ...])</code></td>
+                    <td>Add tab(s) with label and content</td>
+                </tr>
+                <tr>
+                    <td><code>t:InsertAt(name, index, ctrl)</code></td>
+                    <td>Insert tab at 0-based index</td>
+                </tr>
+                <tr>
+                    <td><code>t:Delete(index)</code></td>
+                    <td>Remove tab at 0-based index</td>
+                </tr>
+                <tr>
+                    <td><code>t:NumPages()</code> → number</code></td>
+                    <td>Number of tabs</td>
+                </tr>
+                <tr>
+                    <td><code>t:Selected()</code> → number</code></td>
+                    <td>0-based active tab index</td>
+                </tr>
+                <tr>
+                    <td><code>t:SetSelected(n)</code></td>
+                    <td>Switch to tab by index</td>
+                </tr>
+                <tr>
+                    <td><code>t:Margined(index)</code> → bool</code></td>
+                    <td>Whether tab page has margins</td>
+                </tr>
+                <tr>
+                    <td><code>t:SetMargined(index, bool)</code></td>
+                    <td>Set margin for tab page</td>
+                </tr>
+            </tbody>
+        </table>
+
+        <pre><code>lua
+local tab = ui.NewTab()
+tab:Append("General", genBox, "Advanced", advBox)
+tab:SetSelected(0)
+</code></pre>
+
+        <h3>7.18 Separator</h3>
+
+        <h4><code>ui.NewHorizontalSeparator()</code> → Separator</h4>
+        <h4><code>ui.NewVerticalSeparator()</code> → Separator</h4>
+
+        <pre><code>lua
+vbox:Append(ui.NewHorizontalSeparator())
+hbox:Append(ui.NewVerticalSeparator())
+</code></pre>
+
+        <h3>7.19 Date/Time Pickers</h3>
+
+        <h4><code>ui.NewDateTimePicker()</code> → DateTimePicker</h4>
+        <h4><code>ui.NewDatePicker()</code> → DateTimePicker</h4>
+        <h4><code>ui.NewTimePicker()</code> → DateTimePicker</h4>
+
+        <table class="api-table">
+            <thead>
+                <tr>
+                    <th>Method</th>
+                    <th>Description</th>
+                </tr>
+            </thead>
+            <tbody>
+                <tr>
+                    <td><code>dt:Time()</code> → table</code></td>
+                    <td>Get time as <code>{year, month, day, hour, min, sec, wday}</code></td>
+                </tr>
+                <tr>
+                    <td><code>dt:SetTime(t)</code></td>
+                    <td>Set time from table with same fields</td>
+                </tr>
+                <tr>
+                    <td><code>dt:OnChanged(fn, data)</code></td>
+                    <td>Change handler: <code>fn(dt, data)</code></td>
+                </tr>
+            </tbody>
+        </table>
+
+        <p><code>month</code> is 1–12, <code>wday</code> is 0–6 (0 = Sunday).</p>
+
+        <pre><code>lua
+local d = ui.NewDatePicker()
+local t = d:Time()
+print(t.year .. "-" .. t.month .. "-" .. t.day)
+</code></pre>
+
+        <h3>7.20 ColorButton</h3>
+
+        <h4><code>ui.NewColorButton()</code> → ColorButton</h4>
+
+        <table class="api-table">
+            <thead>
+                <tr>
+                    <th>Method</th>
+                    <th>Description</th>
+                </tr>
+            </thead>
+            <tbody>
+                <tr>
+                    <td><code>cb:Color()</code> → r, g, b, a</code></td>
+                    <td>Get color as four floats (0–1)</td>
+                </tr>
+                <tr>
+                    <td><code>cb:SetColor(r, g, b, a)</code></td>
+                    <td>Set color (floats 0–1)</td>
+                </tr>
+                <tr>
+                    <td><code>cb:OnChanged(fn, data)</code></td>
+                    <td>Change handler: <code>fn(colorbutton, data)</code></td>
+                </tr>
+            </tbody>
+        </table>
+
+        <pre><code>lua
+local cb = ui.NewColorButton()
+cb:SetColor(1.0, 0.0, 0.0, 1.0)  -- red
+local r, g, b, a = cb:Color()
+</code></pre>
+
+        <h3>7.21 Form (Labeled Layout)</h3>
+
+        <h4><code>ui.NewForm()</code> → Form</h4>
+
+        <p>Form lays out <code>label: control</code> pairs vertically.</p>
+
+        <table class="api-table">
+            <thead>
+                <tr>
+                    <th>Method</th>
+                    <th>Description</th>
+                </tr>
+            </thead>
+            <tbody>
+                <tr>
+                    <td><code>f:Append(label, ctrl, stretchy)</code></td>
+                    <td>Add a labeled control row</td>
+                </tr>
+                <tr>
+                    <td><code>f:NumChildren()</code> → number</code></td>
+                    <td>Number of rows</td>
+                </tr>
+                <tr>
+                    <td><code>f:Delete(index)</code></td>
+                    <td>Remove row at 0-based index</td>
+                </tr>
+                <tr>
+                    <td><code>f:Padded()</code> → bool</code></td>
+                    <td>Get padding state</td>
+                </tr>
+                <tr>
+                    <td><code>f:SetPadded(bool)</code></td>
+                    <td>Enable/disable padding</td>
+                </tr>
+            </tbody>
+        </table>
+
+        <pre><code>lua
+local form = ui.NewForm()
+form:SetPadded(true)
+form:Append("URL:", ui.NewEntry(), false)
+form:Append("Output:", ui.NewEntry(), false)
+form:Append("Log:", ui.NewMultilineEntry(), true)
+</code></pre>
+
+        <h3>7.22 Grid (2D Layout)</h3>
+
+        <h4><code>ui.NewGrid()</code> → Grid</h4>
+
+        <p>Grid lays out controls on a 2-D cell grid.</p>
+
+        <table class="api-table">
+            <thead>
+                <tr>
+                    <th>Method</th>
+                    <th>Description</th>
+                </tr>
+            </thead>
+            <tbody>
+                <tr>
+                    <td><code>g:Append(ctrl, left, top [, xspan, yspan, hexpand, halign, vexpand, valign])</code></td>
+                    <td>Add a control</td>
+                </tr>
+                <tr>
+                    <td><code>g:Padded()</code> → bool</code></td>
+                    <td>Get padding state</td>
+                </tr>
+                <tr>
+                    <td><code>g:SetPadded(bool)</code></td>
+                    <td>Enable/disable padding</td>
+                </tr>
+            </tbody>
+        </table>
+
+        <p><strong>Align constants:</strong> <code>ui.AlignFill</code> (0), <code>ui.AlignStart</code> (1), <code>ui.AlignCenter</code> (2), <code>ui.AlignEnd</code> (3)</p>
+
+        <pre><code>lua
+local grid = ui.NewGrid()
+grid:SetPadded(true)
+-- left, top, xspan, yspan, hexpand, halign, vexpand, valign
+grid:Append(ui.NewLabel("Name:"), 0, 0, 1, 1, false, ui.AlignEnd, false, ui.AlignFill)
+grid:Append(ui.NewEntry(),        1, 0, 1, 1, true,  ui.AlignFill, false, ui.AlignFill)
+grid:Append(ui.NewLabel("URL:"),  0, 1, 1, 1, false, ui.AlignEnd, false, ui.AlignFill)
+grid:Append(ui.NewEntry(),        1, 1, 1, 1, true,  ui.AlignFill, false, ui.AlignFill)
+</code></pre>
+
+        <h3>7.23 Area (Custom Drawing)</h3>
+
+        <h4><code>ui.NewArea()</code> → Area</h4>
+
+        <table class="api-table">
+            <thead>
+                <tr>
+                    <th>Method</th>
+                    <th>Description</th>
+                </tr>
+            </thead>
+            <tbody>
+                <tr>
+                    <td><code>area:SetSize(w, h)</code></td>
+                    <td>Set drawing area size</td>
+                </tr>
+            </tbody>
+        </table>
+
+        <h3>7.24 Table</h3>
+
+        <p>Tables display data from a <code>TableModel</code> using a model-view pattern.</p>
+
+        <h4>Step 1 — Create a model handler table</h4>
+
+        <pre><code>lua
+local data = {
+    { "Alice", 25 },
+    { "Bob",   30 },
+}
+
+local handler = {
+    NumColumns = function(self, model) return 2 end,
+    ColumnType = function(self, model, col)
+        return col == 0 and ui.TableValueTypeString or ui.TableValueTypeInt
+    end,
+    NumRows    = function(self, model) return #data end,
+    CellValue  = function(self, model, row, col)
+        return col == 0 and data[row+1][1] or data[row+1][2]
+    end,
+    SetCellValue = function(self, model, row, col, val)
+        -- called when user edits a cell (if editable column)
+        data[row+1][col+1] = val
+    end,
+}
+</code></pre>
+
+        <h4>Step 2 — Create the TableModel</h4>
+
+        <pre><code>lua
+local model = ui.NewTableModel(handler)
+</code></pre>
+
+        <h4>Step 3 — Create the Table view</h4>
+
+        <pre><code>lua
+-- ui.NewTable(model [, rowBackgroundColorModelColumn])
+local tbl = ui.NewTable(model)
+</code></pre>
+
+        <h4>Step 4 — Append columns</h4>
+
+        <pre><code>lua
+-- AppendTextColumn(name, textModelCol, editableModelCol [, colorModelCol])
+tbl:AppendTextColumn("Name", 0, ui.TableModelColumnNeverEditable)
+-- AppendTextColumn with always-editable
+tbl:AppendTextColumn("Age",  1, ui.TableModelColumnAlwaysEditable)
+</code></pre>
+
+        <h4>Table methods</h4>
+
+        <table class="api-table">
+            <thead>
+                <tr>
+                    <th>Method</th>
+                    <th>Description</th>
+                </tr>
+            </thead>
+            <tbody>
+                <tr>
+                    <td><code>AppendTextColumn(name, textCol, editCol [, colorCol])</code></td>
+                    <td>Add text column</td>
+                </tr>
+                <tr>
+                    <td><code>AppendCheckboxColumn(name, checkCol, editCol)</code></td>
+                    <td>Add checkbox column</td>
+                </tr>
+                <tr>
+                    <td><code>AppendCheckboxTextColumn(name, checkCol, checkEditCol, textCol, textEditCol [, colorCol])</code></td>
+                    <td>Combined</td>
+                </tr>
+                <tr>
+                    <td><code>AppendProgressBarColumn(name, progressCol)</code></td>
+                    <td>Add progress bar column</td>
+                </tr>
+                <tr>
+                    <td><code>AppendButtonColumn(name, textCol, clickableCol)</code></td>
+                    <td>Add button column</td>
+                </tr>
+                <tr>
+                    <td><code>HeaderVisible()</code> → bool</code></td>
+                    <td>Header visibility</td>
+                </tr>
+                <tr>
+                    <td><code>HeaderSetVisible(bool)</code></td>
+                    <td>Show/hide header</td>
+                </tr>
+                <tr>
+                    <td><code>GetSelectionMode()</code> → number</code></td>
+                    <td>Current selection mode</td>
+                </tr>
+                <tr>
+                    <td><code>SetSelectionMode(mode)</code></td>
+                    <td>Set selection mode</td>
+                </tr>
+                <tr>
+                    <td><code>GetSelection()</code> → table</code></td>
+                    <td>Array of 0-based selected row indices</td>
+                </tr>
+                <tr>
+                    <td><code>SetSelection(t)</code></td>
+                    <td>Set selected rows from index array</td>
+                </tr>
+                <tr>
+                    <td><code>ColumnWidth(col)</code> → number</code></td>
+                    <td>Column width in pixels</td>
+                </tr>
+                <tr>
+                    <td><code>ColumnSetWidth(col, px)</code></td>
+                    <td>Set column width (−1 = auto)</td>
+                </tr>
+                <tr>
+                    <td><code>OnRowClicked(fn)</code></td>
+                    <td><code>fn(row)</code> on single click</td>
+                </tr>
+                <tr>
+                    <td><code>OnRowDoubleClicked(fn)</code></td>
+                    <td><code>fn(row)</code> on double click</td>
+                </tr>
+                <tr>
+                    <td><code>OnSelectionChanged(fn)</code></td>
+                    <td><code>fn()</code> when selection changes</td>
+                </tr>
+            </tbody>
+        </table>
+
+        <p><strong>Selection mode constants:</strong> <code>ui.TableSelectionModeNone</code>, <code>ui.TableSelectionModeZeroOrOne</code> (default), <code>ui.TableSelectionModeOne</code>, <code>ui.TableSelectionModeZeroOrMany</code></p>
+
+        <p><strong>TableValue type constants:</strong> <code>ui.TableValueTypeString</code> (0), <code>ui.TableValueTypeInt</code> (2), <code>ui.TableValueTypeColor</code> (3)</p>
+
+        <p><strong>Editability constants:</strong> <code>ui.TableModelColumnNeverEditable</code> (−1), <code>ui.TableModelColumnAlwaysEditable</code> (−2)</p>
+
+        <h4>Notify the model of data changes</h4>
+
+        <pre><code>lua
+model:RowInserted(newIndex)   -- after inserting a row
+model:RowChanged(index)       -- after modifying a row
+model:RowDeleted(oldIndex)    -- after deleting a row
+</code></pre>
+
+        <h4>CellValue return types</h4>
+
+        <table>
+            <thead>
+                <tr>
+                    <th>Lua type</th>
+                    <th>Becomes</th>
+                </tr>
+            </thead>
+            <tbody>
+                <tr>
+                    <td>string</td>
+                    <td><code>uiTableValueTypeString</code></td>
+                </tr>
+                <tr>
+                    <td>integer</td>
+                    <td><code>uiTableValueTypeInt</code></td>
+                </tr>
+                <tr>
+                    <td>boolean</td>
+                    <td><code>uiTableValueTypeInt</code> (true→1, false→0)</td>
+                </tr>
+                <tr>
+                    <td><code>{r=, g=, b=, a=}</code> table</td>
+                    <td><code>uiTableValueTypeColor</code></td>
+                </tr>
+                <tr>
+                    <td>nil</td>
+                    <td>NULL (accepted by some column types)</td>
+                </tr>
+            </tbody>
+        </table>
+
+        <h4>Full Table example</h4>
+
+        <pre><code>lua
+local items = { "Apple", "Banana", "Cherry" }
+local checks = { false, true, false }
+
+local handler = {
+    NumColumns   = function(s, m) return 2 end,
+    ColumnType   = function(s, m, col)
+        return col == 0 and ui.TableValueTypeString or ui.TableValueTypeInt
+    end,
+    NumRows      = function(s, m) return #items end,
+    CellValue    = function(s, m, row, col)
+        if col == 0 then return items[row+1]
+        else return checks[row+1] and 1 or 0 end
+    end,
+    SetCellValue = function(s, m, row, col, val)
+        if col == 1 then checks[row+1] = (val == 1) end
+    end,
+}
+
+local model = ui.NewTableModel(handler)
+local tbl   = ui.NewTable(model)
+tbl:AppendTextColumn("Fruit", 0, ui.TableModelColumnNeverEditable)
+tbl:AppendCheckboxColumn("Pick", 1, ui.TableModelColumnAlwaysEditable)
+tbl:SetSelectionMode(ui.TableSelectionModeZeroOrMany)
+tbl:OnRowClicked(function(row)
+    ludo.logInfo("Clicked row " .. row)
+end)
+</code></pre>
+
+        <h3>7.25 Dialogs</h3>
+
+        <p>These functions display native OS dialogs. All require a parent <code>Window</code>.</p>
+
+        <table class="api-table">
+            <thead>
+                <tr>
+                    <th>Function</th>
+                    <th>Description</th>
+                </tr>
+            </thead>
+            <tbody>
+                <tr>
+                    <td><code>ui.OpenFile(win)</code> → string\|nil</code></td>
+                    <td>Show "Open File" dialog; returns path or nil</td>
+                </tr>
+                <tr>
+                    <td><code>ui.OpenFolder(win)</code> → string\|nil</code></td>
+                    <td>Show "Browse Folder" dialog</td>
+                </tr>
+                <tr>
+                    <td><code>ui.SaveFile(win)</code> → string\|nil</code></td>
+                    <td>Show "Save File" dialog</td>
+                </tr>
+                <tr>
+                    <td><code>ui.MsgBox(win, title, desc)</code></td>
+                    <td>Show information message box</td>
+                </tr>
+                <tr>
+                    <td><code>ui.MsgBoxError(win, title, desc)</code></td>
+                    <td>Show error message box</td>
+                </tr>
+            </tbody>
+        </table>
+
+        <pre><code>lua
+local path = ui.OpenFile(win)
+if path then
+    ludo.logInfo("Selected: " .. path)
+end
+
+local folder = ui.SaveFile(win)
+
+ui.MsgBox(win, "Done", "Download complete!")
+ui.MsgBoxError(win, "Error", "Failed to connect.")
+</code></pre>
+
+        <h3>7.26 Complete Tool Script Example</h3>
+
+        <pre><code>lua
+-- Example tool script (tools/my_tool.lua)
+-- Does NOT call ui.Init()/ui.Main()/ui.Uninit()
+
+local win = ui.NewWindow("My Tool", 500, 350, false)
+win:SetMargined(1)
+
+local vbox = ui.NewVerticalBox()
+vbox:SetPadded(1)
+
+-- Form layout
+local form = ui.NewForm()
+form:SetPadded(true)
+local url_entry = ui.NewEntry()
+form:Append("URL:", url_entry, false)
+vbox:Append(form, false)
+
+vbox:Append(ui.NewHorizontalSeparator(), false)
+
+-- Log area
+local log = ui.NewMultilineEntry()
+log:SetReadOnly(1)
+vbox:Append(log, true)
+
+-- Buttons
+local hbox = ui.NewHorizontalBox()
+hbox:SetPadded(1)
+local go_btn = ui.NewButton("Download")
+go_btn:OnClicked(function(b, d)
+    local url = url_entry:Text()
+    if url == "" then
+        ui.MsgBoxError(win, "Error", "Please enter a URL.")
+        return
+    end
+    local id, status, path = ludo.newDownload(url, ludo.getOutputDirectory(), ludo.DOWNLOAD_NOW)
+    log:Append("Queued: " .. url .. " (" .. tostring(status) .. ")\n")
+end, nil)
+hbox:Append(go_btn, true)
+vbox:Append(hbox, false)
+
+win:SetChild(vbox)
+
+-- Tool-script event loop
+local win_open = true
+win:OnClosing(function(w, data)
+    win_open = false
+    return 1
+end, nil)
+win:Show()
+while win_open do
+    if ui.MainStep(true) == 0 then break end
+end
+</code></pre>
+
+        <h3>7.27 Table Tool Example</h3>
+
+        <pre><code>lua
+-- tools/download_list.lua
+-- Shows a Table of completed downloads
+
+local downloads = {}
+-- populate from ludo API if available...
+
+local handler = {
+    NumColumns = function(s, m) return 3 end,
+    ColumnType = function(s, m, col)
+        if col == 2 then return ui.TableValueTypeInt end
+        return ui.TableValueTypeString
+    end,
+    NumRows    = function(s, m) return #downloads end,
+    CellValue  = function(s, m, row, col)
+        local d = downloads[row+1]
+        if not d then return "" end
+        -- return fields by column index...
+        if col == 0 then return d.name
+        elseif col == 1 then return d.url
+        else return d.progress end
+    end,
+    SetCellValue = function(s, m, row, col, val) end,  -- read-only
+}
+
+local model = ui.NewTableModel(handler)
+local tbl   = ui.NewTable(model)
+tbl:AppendTextColumn("Filename", 0, ui.TableModelColumnNeverEditable)
+tbl:AppendTextColumn("URL",      1, ui.TableModelColumnNeverEditable)
+tbl:AppendProgressBarColumn("Progress", 2)
+tbl:ColumnSetWidth(0, 200)
+
+local win = ui.NewWindow("Downloads", 700, 400, false)
+win:SetMargined(1)
+win:SetChild(tbl)
+
+local win_open = true
+win:OnClosing(function(w, d) win_open = false; return 1 end, nil)
+win:Show()
+while win_open do
+    if ui.MainStep(true) == 0 then break end
+end
+</code></pre>
+
+        <h2 id="8-plugin-system">8. Plugin System</h2>
+
+        <h3>8.1 Plugin Structure</h3>
+
+        <p>Each plugin is a <code>.lua</code> file placed in the <code>plugins/</code> directory. It must return a table with two functions:</p>
+
+        <pre><code>lua
+local plugin = {}
+
+function plugin.validate(url)
+    -- Return true if this plugin handles the given URL
+    return string.find(url, "example%.com") ~= nil
+end
+
+function plugin.process(url)
+    -- Process the URL: fetch pages, extract links, enqueue downloads
+    ludo.logInfo("Processing: " .. url)
+    ludo.newDownload(url) -- enqueue using resolved filename
+    -- Optionally pass a filename hint (basename):
+    -- ludo.newDownload(url, nil, nil, "suggested-filename.ext")
+end
+
+return plugin
+</code></pre>
+
+        <h3>8.2 Plugin Lifecycle</h3>
+
+        <ol>
+            <li><strong>Load</strong> — On startup (or when the user selects a plugin directory), Ludo scans for <code>*.lua</code> files and verifies each has <code>validate</code> and <code>process</code> functions.</li>
+            <li><strong>Validate</strong> — When a URL is submitted, each plugin's <code>validate(url)</code> is called in order. The first plugin that returns <code>true</code> wins.</li>
+            <li><strong>Process</strong> — The matching plugin's <code>process(url)</code> is called. It should call <code>ludo.newDownload()</code> to enqueue files.</li>
+            <li><strong>Fallback</strong> — If no plugin matches, Ludo downloads the URL directly.</li>
+        </ol>
+
+        <h3>8.3 Example: GitHub Release Plugin</h3>
+
+        <pre><code>lua
+-- plugins/github_release.lua
+local plugin = {}
+
+function plugin.validate(url)
+    return string.find(url, "github%.com/.+/releases") ~= nil
+end
+
+function plugin.process(url)
+    ludo.logInfo("Fetching GitHub release page...")
+
+    local body, status = http.get(url, {
+        user_agent = "Ludo-GitHub-Plugin/1.0",
+        timeout    = 30,
+    })
+
+    if status ~= 200 then
+        ludo.logError("HTTP " .. status .. " for " .. url)
+        return
+    end
+
+    local count = 0
+    for link in string.gmatch(body, 'href="(/[^"]+/releases/download/[^"]+)"') do
+        local full_url = "https://github.com" .. link
+        ludo.logInfo("Queuing: " .. full_url)
+        ludo.newDownload(full_url)
+        count = count + 1
+    end
+
+    if count == 0 then
+        ludo.logError("No download links found on the release page")
+    else
+        ludo.logSuccess("Found " .. count .. " file(s) to download")
+    end
+end
+
+return plugin
+</code></pre>
+
+        <h3>8.4 Example: Direct File Plugin</h3>
+
+        <pre><code>lua
+-- plugins/direct_file.lua
+local plugin = {}
+
+local extensions = { ".zip", ".tar.gz", ".exe", ".msi", ".dmg", ".AppImage" }
+
+function plugin.validate(url)
+    local lower = string.lower(url)
+    for _, ext in ipairs(extensions) do
+        if string.sub(lower, -#ext) == ext then
+            return true
+        end
+    end
+    return false
+end
+
+function plugin.process(url)
+    ludo.logInfo("Direct download: " .. url)
+    ludo.newDownload(url, ludo.getOutputDirectory(), ludo.DOWNLOAD_NOW)
+end
+
+return plugin
+</code></pre>
+
+        <h3>8.5 Example: Batch URL Plugin</h3>
+
+        <pre><code>lua
+-- plugins/batch_url.lua
+local plugin = {}
+
+function plugin.validate(url)
+    -- Handle text files containing one URL per line
+    return string.sub(url, -4) == ".txt" and
+           (string.sub(url, 1, 7) == "http://" or
+            string.sub(url, 1, 8) == "https://")
+end
+
+function plugin.process(url)
+    ludo.logInfo("Fetching URL list from: " .. url)
+
+    local body, status = http.get(url)
+    if status ~= 200 then
+        ludo.logError("Failed to fetch URL list: HTTP " .. status)
+        return
+    end
+
+    local count = 0
+    for line in string.gmatch(body, "[^\r\n]+") do
+        line = string.match(line, "^%s*(.-)%s*$")  -- trim
+        if string.sub(line, 1, 4) == "http" then
+            ludo.newDownload(line, nil, ludo.DOWNLOAD_QUEUE)
+            count = count + 1
+        end
+    end
+
+    ludo.logSuccess("Queued " .. count .. " download(s) from list")
+end
+
+return plugin
+</code></pre>
+
+        <h3>8.6 Example: Plugin with UI Dialog</h3>
+
+        <pre><code>lua
+-- plugins/custom_dialog.lua
+local ui = require("ui")
+local plugin = {}
+
+function plugin.validate(url)
+    return string.find(url, "chooser%.example%.com") ~= nil
+end
+
+function plugin.process(url)
+    ludo.logInfo("Fetching options from: " .. url)
+
+    local body, status = http.get(url)
+    if status ~= 200 then
+        ludo.logError("Failed: HTTP " .. status)
+        return
+    end
+
+    -- Parse available files
+    local files = {}
+    for name, link in string.gmatch(body, '<a href="([^"]+)">([^<]+)</a>') do
+        table.insert(files, { name = name, url = link })
+    end
+
+    -- Show a selection dialog
+    ui.Init()
+    local win = ui.NewWindow("Select Files", 300, 200, false)
+    win:SetMargined(1)
+
+    local vbox = ui.NewVerticalBox()
+    vbox:SetPadded(1)
+    vbox:Append(ui.NewLabel("Found " .. #files .. " file(s):"))
+
+    for _, file in ipairs(files) do
+        local btn = ui.NewButton(file.name)
+        btn:OnClicked(function(b, data)
+            ludo.newDownload(data)
+            ludo.logSuccess("Queued: " .. data)
+        end, file.url)
+        vbox:Append(btn)
+    end
+
+    local closeBtn = ui.NewButton("Close")
+    closeBtn:OnClicked(function() ui.Quit() end, nil)
+    vbox:Append(closeBtn)
+
+    win:SetChild(vbox)
+    win:Show()
+    ui.Main()
+    ui.Uninit()
+end
+
+return plugin
+</code></pre>
+
+        <h2 id="9-converting-yt-dlp-extractors-to-ludo-plugins">9. Converting yt-dlp Extractors to Ludo Plugins</h2>
+
+        <p><a href="https://github.com/yt-dlp/yt-dlp">yt-dlp</a> is a Python video downloader whose <em>extractors</em> (one per site) are the de-facto reference for scraping media from social-media and video-hosting sites. A Ludo plugin serves the same purpose but is written in Lua. This section provides a systematic translation guide.</p>
+
+        <h3>9.1 Architecture Mapping</h3>
+
+        <table>
+            <thead>
+                <tr>
+                    <th>yt-dlp concept</th>
+                    <th>Ludo equivalent</th>
+                    <th>Notes</th>
+                </tr>
+            </thead>
+            <tbody>
+                <tr>
+                    <td><code>InfoExtractor</code> class</td>
+                    <td><code>plugin</code> table returned by the <code>.lua</code> file</td>
+                    <td>One class → one file</td>
+                </tr>
+                <tr>
+                    <td><code>_VALID_URL</code> (regex)</td>
+                    <td><code>plugin.validate(url)</code> (Lua patterns)</td>
+                    <td>See <a href="#95-regex-to-lua-pattern-cheat-sheet">Python→Lua pattern table</a></td>
+                </tr>
+                <tr>
+                    <td><code>_real_extract(self, url)</code></td>
+                    <td><code>plugin.process(url)</code></td>
+                    <td>Must call <code>ludo.newDownload()</code></td>
+                </tr>
+                <tr>
+                    <td><code>self._download_webpage(url, ...)</code></td>
+                    <td><code>http.get(url, opts)</code></td>
+                    <td>Returns <code>body, status, headers</code></td>
+                </tr>
+                <tr>
+                    <td><code>self._download_json(url, ...)</code></td>
+                    <td><code>http.get()</code> + <code>json.decode()</code></td>
+                    <td>Combine two calls</td>
+                </tr>
+                <tr>
+                    <td><code>self._search_regex(pattern, ...)</code></td>
+                    <td><code>string.match(text, pattern)</code></td>
+                    <td>Translate regex to Lua pattern</td>
+                </tr>
+                <tr>
+                    <td><code>self._search_json(pattern, ...)</code></td>
+                    <td><code>extract_json_object(text, pattern)</code></td>
+                    <td>Write a JSON brace-matcher (see §9.6)</td>
+                </tr>
+                <tr>
+                    <td><code>traverse_obj(data, path)</code></td>
+                    <td>Nested table indexing with nil-checks</td>
+                    <td><code>data and data.key1 and data.key1.key2</code></td>
+                </tr>
+                <tr>
+                    <td><code>self.report_warning(msg)</code></td>
+                    <td><code>ludo.logError(msg)</code> or <code>ludo.logInfo(msg)</code></td>
+                    <td></td>
+                </tr>
+                <tr>
+                    <td><code>self.raise_login_required(msg)</code></td>
+                    <td><code>ludo.logError(msg); return nil</code></td>
+                    <td></td>
+                </tr>
+                <tr>
+                    <td><code>self._get_cookies(url)</code></td>
+                    <td><code>http.read_cookie(filepath, name)</code></td>
+                    <td>Reads Netscape cookie jar</td>
+                </tr>
+                <tr>
+                    <td><code>url_or_none(val)</code></td>
+                    <td><code>if val and val ~= "" then ... end</code></td>
+                    <td></td>
+                </tr>
+                <tr>
+                    <td><code>int_or_none(val)</code></td>
+                    <td><code>tonumber(val)</code></td>
+                    <td>Returns <code>nil</code> on failure</td>
+                </tr>
+                <tr>
+                    <td><code>str_or_none(val)</code></td>
+                    <td><code>if type(val) == "string" then ... end</code></td>
+                    <td></td>
+                </tr>
+                <tr>
+                    <td><code>json.dumps(obj)</code></td>
+                    <td><code>json.encode(obj)</code></td>
+                    <td>Lua CJSON</td>
+                </tr>
+                <tr>
+                    <td><code>json.loads(text)</code></td>
+                    <td><code>json.decode(text)</code></td>
+                    <td>Wrap in <code>pcall()</code></td>
+                </tr>
+                <tr>
+                    <td><code>urllib.parse.quote(s)</code></td>
+                    <td><code>http.url_encode(s)</code></td>
+                    <td></td>
+                </tr>
+                <tr>
+                    <td><code>urllib.parse.unquote(s)</code></td>
+                    <td><code>http.url_decode(s)</code></td>
+                    <td></td>
+                </tr>
+                <tr>
+                    <td><code>urllib.parse.urlparse(url)</code></td>
+                    <td><code>http.parse_url(url)</code></td>
+                    <td>Returns table with <code>.scheme</code>, <code>.host</code>, etc.</td>
+                </tr>
+                <tr>
+                    <td><code>base64.b64encode(s)</code></td>
+                    <td><code>http.base64_encode(s)</code></td>
+                    <td></td>
+                </tr>
+                <tr>
+                    <td><code>base64.b64decode(s)</code></td>
+                    <td><code>http.base64_decode(s)</code></td>
+                    <td></td>
+                </tr>
+                <tr>
+                    <td><code>hashlib.sha256(s).digest()</code></td>
+                    <td><code>http.sha256(s)</code></td>
+                    <td>Returns raw 32-byte binary, not hex</td>
+                </tr>
+                <tr>
+                    <td><code>hashlib.sha256(a).copy().update(b).digest()</code></td>
+                    <td><code>http.sha256(a .. b)</code></td>
+                    <td>Concatenate inputs</td>
+                </tr>
+                <tr>
+                    <td><code>re.search(r'...', text)</code></td>
+                    <td><code>text:match("...")</code></td>
+                    <td></td>
+                </tr>
+                <tr>
+                    <td><code>re.findall(r'...', text)</code></td>
+                    <td>Loop with <code>text:gmatch("...")</code></td>
+                    <td></td>
+                </tr>
+                <tr>
+                    <td><code>re.sub(r'...', repl, text)</code></td>
+                    <td><code>text:gsub("...", repl)</code></td>
+                    <td></td>
+                </tr>
+                <tr>
+                    <td><code>hashlib.md5/sha1</code></td>
+                    <td>(not built-in)</td>
+                    <td>See §9.7</td>
+                </tr>
+                <tr>
+                    <td>MPD/DASH manifest parsing</td>
+                    <td>Not built-in</td>
+                    <td>Extract the best video URL from JSON instead</td>
+                </tr>
+                <tr>
+                    <td>Signature deciphering</td>
+                    <td>Not supported</td>
+                    <td>Target unauthenticated/API routes</td>
+                </tr>
+                <tr>
+                    <td>Subtitle extraction</td>
+                    <td>Not applicable</td>
+                    <td>Ludo downloads files, not metadata</td>
+                </tr>
+                <tr>
+                    <td>Proxy / SOCKS support</td>
+                    <td>Not exposed in <code>http</code> module yet</td>
+                    <td></td>
+                </tr>
+                <tr>
+                    <td><code>--cookies-from-browser</code></td>
+                    <td>Export cookies with a browser extension and place in output dir</td>
+                    <td></td>
+                </tr>
+            </tbody>
+        </table>
+
+        <h3>9.2 Step-by-Step Conversion Process</h3>
+
+        <ol>
+            <li><strong>Study <code>_VALID_URL</code></strong> — note the URL patterns the extractor handles. Convert the Python regex to one or more <code>string.match()</code> / <code>string.find()</code> calls in <code>plugin.validate(url)</code>.</li>
+            <li><strong>Study <code>_real_extract()</code></strong> — identify the extraction strategies in order (API calls, GraphQL, HTML scraping, embed page fallbacks).</li>
+            <li><strong>Map HTTP requests</strong> — every <code>self._download_webpage</code> / <code>_download_json</code> maps to <code>http.get()</code> or <code>http.post()</code>. Set headers, user agent, cookies via the <code>options</code> table.</li>
+            <li><strong>Map JSON parsing</strong> — replace <code>self._search_json(pattern, webpage, ...)</code> with a combination of <code>string.match()</code> to find the JSON region and <code>json.decode()</code> to parse it.</li>
+            <li><strong>Map regex searches</strong> — translate Python regex in <code>_search_regex(...)</code> to Lua patterns. When Lua patterns are insufficient (alternation, look-ahead), use multiple <code>match()</code> calls with <code>or</code>.</li>
+            <li><strong>Handle output</strong> — instead of returning an info dict, call <code>ludo.newDownload(video_url, dir, mode, filename)</code> for each media URL found.</li>
+            <li><strong>Handle authentication</strong> — if the extractor checks for <code>sessionid</code> or other cookies, use <code>http.set_cookie(filepath)</code> + <code>http.read_cookie()</code>.</li>
+        </ol>
+
+        <h3>9.3 Common Python → Lua Translations</h3>
+
+        <h4>Downloading and parsing a web page</h4>
+
+        <pre><code>python
+# yt-dlp (Python)
+webpage = self._download_webpage(url, video_id)
+</code></pre>
+
+        <pre><code>lua
+-- Ludo (Lua)
+local body, status = http.get(url, {
+    user_agent = "Mozilla/5.0 ...",
+    timeout    = 20,
+})
+if status ~= 200 then
+    ludo.logError("HTTP " .. status)
+    return nil
+end
+</code></pre>
+
+        <h4>Downloading and parsing JSON</h4>
+
+        <pre><code>python
+# yt-dlp (Python)
+data = self._download_json(api_url, video_id, headers=headers)
+</code></pre>
+
+        <pre><code>lua
+-- Ludo (Lua)
+local body, status = http.get(api_url, {
+    user_agent = UA,
+    timeout    = 20,
+    headers    = {
+        ["X-Custom-Header"] = "value",
+    },
+})
+if status ~= 200 then return nil end
+local ok, data = pcall(json.decode, body)
+if not ok then
+    ludo.logError("JSON parse error: " .. tostring(data))
+    return nil
+end
+</code></pre>
+
+        <h4>POSTing JSON to an API</h4>
+
+        <pre><code>python
+# yt-dlp (Python)
+data = self._download_json(
+    api_url, video_id,
+    data=json.dumps(payload).encode(),
+    headers={'Content-Type': 'application/json'})
+</code></pre>
+
+        <pre><code>lua
+-- Ludo (Lua)
+local payload = json.encode({
+    videoId = video_id,
+    context = { client = { hl = "en" } },
+})
+local body, status = http.post(api_url, payload, {
+    headers = { ["Content-Type"] = "application/json" },
+})
+local ok, data = pcall(json.decode, body)
+</code></pre>
+
+        <h4>Extracting a value from HTML with regex</h4>
+
+        <pre><code>python
+# yt-dlp
+video_url = self._search_regex(
+    r'"video_url"\s*:\s*"([^"]+)"', webpage, 'video url', default=None)
+</code></pre>
+
+        <pre><code>lua
+-- Ludo
+local video_url = body:match('"video_url"%s*:%s*"([^"]+)"')
+</code></pre>
+
+        <h4><code>traverse_obj</code> → nested table access</h4>
+
+        <pre><code>python
+# yt-dlp
+username = traverse_obj(media, ('owner', 'username'))
+edges = traverse_obj(media, ('edge_sidecar_to_children', 'edges', ..., 'node'))
+</code></pre>
+
+        <pre><code>lua
+-- Ludo: safe nested access
+local username = media and media.owner and media.owner.username
+
+-- For arrays: iterate edges
+local edges = media
+    and media.edge_sidecar_to_children
+    and media.edge_sidecar_to_children.edges
+if edges then
+    for _, edge in ipairs(edges) do
+        local node = edge.node
+        -- process node
+    end
+end
+</code></pre>
+
+        <h4>Cookie / session management</h4>
+
+        <pre><code>python
+# yt-dlp
+if self._get_cookies(url).get('sessionid'):
+    # authenticated path
+</code></pre>
+
+        <pre><code>lua
+-- Ludo
+http.set_cookie("session.txt")
+local sid = http.read_cookie("cookies.txt", "sessionid")
+if sid then
+    -- authenticated path
+end
+</code></pre>
+
+        <h3>9.4 Plugin Template (Site Extractor)</h3>
+
+        <p>Use this as a starting point when converting any yt-dlp extractor:</p>
+
+        <pre><code>lua
+-- plugins/sitename.lua
+local plugin = {
+    name    = "SiteName",
+    version = "20260405",
+    creator = "Your Name",
+}
+
+local json = json or require("json")
+
+local SITE_HOME   = "https://www.example.com"
+local API_BASE    = "https://api.example.com/v1"
+local DESKTOP_UA  = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+    .. "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/136.0.0.0 Safari/537.36"
+local TIMEOUT     = 20
+
+-- ── helpers ──────────────────────────────────────────────────────────
+
+local function extract_id(url)
+    -- Translate _VALID_URL regex to Lua pattern(s)
+    return url:match("/video/(%d+)")
+        or url:match("/v/([%w%-_]+)")
+end
+
+local function safe_filename(s)
+    if not s then return "video" end
+    return s:gsub("[^%w%-_]", "_"):sub(1, 80)
+end
+
+-- ── validate ─────────────────────────────────────────────────────────
+
+function plugin.validate(url)
+    if not url:match("^https?://") then return false end
+    local host = (url:match("^https?://([^/?#]+)") or ""):lower()
+    if host ~= "www.example.com" and host ~= "example.com" then
+        return false
+    end
+    return extract_id(url) ~= nil
+end
+
+-- ── process ──────────────────────────────────────────────────────────
+
+function plugin.process(url)
+    local video_id = extract_id(url)
+    if not video_id then
+        ludo.logError("SiteName: could not extract video ID from " .. url)
+        return nil
+    end
+
+    ludo.logInfo("SiteName: processing video " .. video_id)
+
+    -- Strategy 1: API
+    local api_url = API_BASE .. "/media/" .. video_id .. "/info/"
+    local body, status = http.get(api_url, {
+        user_agent = DESKTOP_UA,
+        timeout    = TIMEOUT,
+        headers    = { ["Accept"] = "application/json" },
+    })
+
+    if status == 200 then
+        local ok, data = pcall(json.decode, body)
+        if ok and data then
+            local video_url = data.video_url
+                or (data.formats and data.formats[1] and data.formats[1].url)
+            if video_url then
+                local title = data.title or ("video_" .. video_id)
+                local filename = safe_filename(title) .. ".mp4"
+                ludo.newDownload(video_url, ludo.getOutputDirectory(),
+                                ludo.DOWNLOAD_NOW, filename)
+                ludo.logSuccess("SiteName: queued → " .. filename)
+                return
+            end
+        end
+    end
+
+    -- Strategy 2: HTML scraping fallback
+    local page, pstatus = http.get(url, {
+        user_agent = DESKTOP_UA,
+        timeout    = TIMEOUT,
+    })
+    if pstatus == 200 then
+        local video_url = page:match('"video_url"%s*:%s*"([^"]+)"')
+            or page:match('<video[^>]+src="([^"]+)"')
+        if video_url then
+            ludo.newDownload(video_url, ludo.getOutputDirectory(),
+                            ludo.DOWNLOAD_NOW, "video_" .. video_id .. ".mp4")
+            ludo.logSuccess("SiteName: queued (HTML fallback)")
+            return
+        end
+    end
+
+    ludo.logError("SiteName: all strategies failed for " .. url)
+end
+
+return plugin
+</code></pre>
+
+        <h3>9.5 Regex to Lua Pattern Cheat Sheet</h3>
+
+        <table>
+            <thead>
+                <tr>
+                    <th>Python regex</th>
+                    <th>Lua pattern</th>
+                    <th>Notes</th>
+                </tr>
+            </thead>
+            <tbody>
+                <tr>
+                    <td><code>\d+</code></td>
+                    <td><code>%d+</code></td>
+                    <td></td>
+                </tr>
+                <tr>
+                    <td><code>\w+</code></td>
+                    <td><code>[%w_]+</code></td>
+                    <td>Lua <code>%w</code> excludes <code>_</code></td>
+                </tr>
+                <tr>
+                    <td><code>\s+</code></td>
+                    <td><code>%s+</code></td>
+                    <td></td>
+                </tr>
+                <tr>
+                    <td><code>[^"]+</code></td>
+                    <td><code>[^"]+</code></td>
+                    <td>Same syntax</td>
+                </tr>
+                <tr>
+                    <td><code>[^/]+</code></td>
+                    <td><code>[^/]+</code></td>
+                    <td>Same syntax</td>
+                </tr>
+                <tr>
+                    <td><code>\.</code></td>
+                    <td><code>%.</code></td>
+                    <td>Escape with <code>%</code> not <code>\</code></td>
+                </tr>
+                <tr>
+                    <td><code>\-</code></td>
+                    <td><code>%-</code></td>
+                    <td>Dash is a quantifier in Lua</td>
+                </tr>
+                <tr>
+                    <td><code>.*?</code></td>
+                    <td><code>.-</code></td>
+                    <td>Lazy quantifier uses <code>-</code></td>
+                </tr>
+                <tr>
+                    <td><code>.+?</code></td>
+                    <td><code>.+</code> with <code>-</code></td>
+                    <td>Use <code>(.-)</code> for lazy</td>
+                </tr>
+                <tr>
+                    <td><code>(?:...)</code></td>
+                    <td>(not available)</td>
+                    <td>All <code>()</code> capture in Lua</td>
+                </tr>
+                <tr>
+                    <td><code>re.IGNORECASE</code></td>
+                    <td>(not available)</td>
+                    <td>Use <code>[Aa]</code> or <code>string.lower()</code> first</td>
+                </tr>
+                <tr>
+                    <td><code>|</code> (alternation)</td>
+                    <td>(not available)</td>
+                    <td>Use multiple <code>match()</code> calls</td>
+                </tr>
+                <tr>
+                    <td><code>{3,5}</code></td>
+                    <td>(not available)</td>
+                    <td>Manually expand or use loops</td>
+                </tr>
+            </tbody>
+        </table>
+
+        <h3>9.6 Extracting JSON from HTML</h3>
+
+        <p>Many yt-dlp extractors use <code>_search_json()</code> to find a JSON blob embedded in JavaScript. In Lua, write a brace-matching helper:</p>
+
+        <pre><code>lua
+-- Find the first '{' after a pattern match, then walk the string tracking
+-- brace depth and string escaping to locate the matching '}'.
+-- Returns the parsed Lua table, or nil.
+local function extract_json_object(text, pattern)
+    local _, pe = text:find(pattern)
+    if not pe then return nil end
+    local start = text:find("{", pe + 1)
+    if not start then return nil end
+
+    local depth, in_str, escaped = 0, false, false
+    for i = start, #text do
+        local c = text:sub(i, i)
+        if escaped then
+            escaped = false
+        elseif c == "\\" and in_str then
+            escaped = true
+        elseif c == '"' then
+            in_str = not in_str
+        elseif not in_str then
+            if c == "{" then depth = depth + 1
+            elseif c == "}" then
+                depth = depth - 1
+                if depth == 0 then
+                    local ok, val = pcall(json.decode, text:sub(start, i))
+                    if ok then return val end
+                    return nil
+                end
+            end
+        end
+    end
+    return nil
+end
+
+-- Usage (matches yt-dlp's _search_json):
+-- Python: self._search_json(r'window\._sharedData\s*=', webpage, 'shared data', video_id)
+-- Lua:
+local shared = extract_json_object(body, "window%._sharedData%s*=")
+</code></pre>
+
+        <h3>9.7 Things yt-dlp Has That Ludo Does Not</h3>
+
+        <table>
+            <thead>
+                <tr>
+                    <th>yt-dlp feature</th>
+                    <th>Workaround in Ludo</th>
+                </tr>
+            </thead>
+            <tbody>
+                <tr>
+                    <td>Regex alternation <code>a\|b</code></td>
+                    <td>Use multiple <code>match()</code> calls: <code>url:match(pat1) or url:match(pat2)</code></td>
+                </tr>
+                <tr>
+                    <td>Named capture groups</td>
+                    <td>Use positional captures</td>
+                </tr>
+                <tr>
+                    <td><code>hashlib.md5/sha1</code></td>
+                    <td>Implement in Lua with <code>bit32</code>, or skip if not essential</td>
+                </tr>
+                <tr>
+                    <td>MPD/DASH manifest parsing</td>
+                    <td>Not built-in; extract the best video URL from JSON instead</td>
+                </tr>
+                <tr>
+                    <td>Signature deciphering</td>
+                    <td>Not supported; target unauthenticated/API routes</td>
+                </tr>
+                <tr>
+                    <td>Subtitle extraction</td>
+                    <td>Not applicable — Ludo downloads files, not metadata</td>
+                </tr>
+                <tr>
+                    <td>Proxy / SOCKS support</td>
+                    <td>Not exposed in <code>http</code> module yet</td>
+                </tr>
+                <tr>
+                    <td><code>--cookies-from-browser</code></td>
+                    <td>Export cookies with a browser extension and place in output dir</td>
+                </tr>
+            </tbody>
+        </table>
+
+        <h3>9.8 Real-World Example: Instagram</h3>
+
+        <p>The <code>plugins/instagram.lua</code> file is a complete example of converting yt-dlp's <code>instagram.py</code> extractor into a Ludo plugin. Key techniques used:</p>
+
+        <ol>
+            <li><strong><code>_VALID_URL</code> → <code>validate()</code></strong> with four <code>url:match()</code> calls joined by <code>or</code>.</li>
+            <li><strong>base-64 shortcode→PK conversion</strong> → big-integer arithmetic with <code>bigint_muladd()</code> (Lua 5.2 doubles lose precision for 18-digit IDs).</li>
+            <li><strong>Three extraction strategies</strong> tried in order: REST API (<code>/media/{pk}/info/</code>) — requires <code>sessionid</code> cookie. GraphQL query (<code>doc_id=8845758582119845</code>) — works for public posts. Embed page scraping (<code>/p/{id}/embed/</code>) — unauthenticated fallback.</li>
+            <li><strong>Cookie management</strong> — <code>http.set_cookie()</code> + <code>http.read_cookie()</code> to check <code>csrftoken</code> and seed session from a user-exported cookie file.</li>
+            <li><strong>Carousel support</strong> — iterates <code>edge_sidecar_to_children.edges</code> or <code>carousel_media</code> to queue multiple video downloads from one post.</li>
+        </ol>
+
+        <h2 id="10-testing-and-debugging-plugins">10. Testing and Debugging Plugins</h2>
+
+        <h3>10.1 Prerequisites</h3>
+
+        <p>Build Ludo in Debug configuration to get <code>ludo-debug.exe</code>:</p>
+
+        <pre><code>bash
+cd build
+cmake --build . --config Debug
+</code></pre>
+
+        <p>The debug build writes verbose curl logs and Lua output to <code>ludo.log</code> in the current working directory.</p>
+
+        <h3>10.2 Running a Plugin Script</h3>
+
+        <p>Use the <code>-s</code> (or <code>--script</code>) flag to execute a standalone Lua script:</p>
+
+        <pre><code>bash
+cd build
+./ludo-debug.exe -s test_myplugin.lua
+</code></pre>
+
+        <p>The <code>-s</code> flag runs the script inside the full Ludo Lua environment — all built-in modules (<code>http</code>, <code>ludo</code>, <code>json</code>, <code>ui</code>) are available.</p>
+
+        <h3>10.3 Writing a Test Script</h3>
+
+        <p>A test script loads a plugin with <code>dofile()</code>, tests <code>validate()</code> with known URLs, and then calls <code>process()</code> on a live URL.</p>
+
+        <pre><code>lua
+-- build/test_myplugin.lua
+ludo.logInfo("=== MyPlugin test ===")
+
+-- 1. Load the plugin
+local ok, plugin = pcall(dofile, "plugins/myplugin.lua")
+if not ok then
+    ludo.logError("Failed to load plugin: " .. tostring(plugin))
+    return
+end
+ludo.logInfo("Loaded: " .. (plugin.name or "?"))
+
+-- 2. Test validate()
+local cases = {
+    { url = "https://www.example.com/video/12345",  expect = true  },
+    { url = "https://www.example.com/user/profile",  expect = false },
+    { url = "https://www.youtube.com/watch?v=abc",   expect = false },
+}
+
+local pass, fail = 0, 0
+for _, c in ipairs(cases) do
+    local result = plugin.validate(c.url)
+    if (result and true or false) == c.expect then
+        pass = pass + 1
+        ludo.logInfo("  PASS validate(" .. c.url .. ")")
+    else
+        fail = fail + 1
+        ludo.logError("  FAIL validate(" .. c.url .. "): got "
+            .. tostring(result) .. ", want " .. tostring(c.expect))
+    end
+end
+ludo.logInfo("validate: " .. pass .. " passed, " .. fail .. " failed")
+
+-- 3. Live test process()
+local test_url = "https://www.example.com/video/12345"
+ludo.logInfo("--- process(" .. test_url .. ")")
+local ok2, err2 = pcall(plugin.process, test_url)
+if not ok2 then
+    ludo.logError("process() error: " .. tostring(err2))
+else
+    ludo.logInfo("process() completed")
+end
+
+ludo.logInfo("=== test done ===")
+</code></pre>
+
+        <h3>10.4 Checking the Log</h3>
+
+        <p>After running the script, inspect <code>ludo.log</code> in the build directory:</p>
+
+        <pre><code>bash
+# Show only your plugin's log lines
+grep "MyPlugin\|PASS\|FAIL\|error\|ERROR\|SUCCESS" build/ludo.log
+
+# Show the most recent test run (last N lines)
+tail -40 build/ludo.log
+
+# Show curl request/response details (debug build only)
+grep "\[curl\]" build/ludo.log | tail -20
+</code></pre>
+
+        <h3>10.5 Log Message Format</h3>
+
+        <pre><code>
+[HH:MM:SS] [LEVEL] message
+</code></pre>
+
+        <p>Log levels:</p>
+        <ul>
+            <li><code>[INFO]</code> — from <code>ludo.logInfo()</code> — general progress messages.</li>
+            <li><code>[SUCCESS]</code> — from <code>ludo.logSuccess()</code> — download queued successfully.</li>
+            <li><code>[ERROR]</code> — from <code>ludo.logError()</code> — failures and warnings.</li>
+            <li><code>[curl ...]</code> — debug-build only curl trace: request headers, response headers, DNS resolution, TLS handshake, connection reuse.</li>
+            <li><code>[add]</code> — download manager adding a new URL.</li>
+            <li><code>[perform_download]</code> — download starting with resolved filename.</li>
+        </ul>
+
+        <h3>10.6 Typical Workflow</h3>
+
+        <pre><code>
+1.  Write/edit plugins/myplugin.lua  (in the project root plugins/ dir)
+2.  Copy to build:   cp plugins/myplugin.lua build/plugins/
+3.  Write a test:     build/test_myplugin.lua
+4.  Run:              cd build && ./ludo-debug.exe -s test_myplugin.lua
+5.  Check output:     grep "MyPlugin\|PASS\|FAIL" ludo.log
+6.  Iterate:          fix plugin → copy → re-run → check log
+</code></pre>
+
+        <blockquote>
+            <strong>Tip:</strong> Plugins in <code>build/plugins/</code> are copies. Always edit the canonical source in the project root <code>plugins/</code> directory and copy to <code>build/plugins/</code> before testing. The CMake build copies plugins during the configure step, but manual copies are faster during development.
+        </blockquote>
+
+        <h3>10.7 Debugging Tips</h3>
+
+        <ul>
+            <li><strong>Lua errors</strong> are caught by <code>pcall()</code> in the test script and logged. If the script itself has a syntax error, <code>ludo-debug.exe</code> will print the Lua error to <code>ludo.log</code> and exit silently (exit code 0).</li>
+            <li><strong>HTTP failures</strong> — check <code>ludo.log</code> for <code>[curl]</code> lines showing the exact request URL, response status, and headers. Common issues: <code>403 Forbidden</code> — site requires cookies or specific headers. <code>429 Too Many Requests</code> — rate-limited; wait before retrying. <code>301/302</code> — check <code>http.get_last_url()</code> for the final redirect target.</li>
+            <li><strong>JSON parse errors</strong> — always wrap <code>json.decode()</code> in <code>pcall()</code>. Log the raw body (or a prefix of it) to see what the server actually returned: <pre><code>lua
+if not ok then
+    ludo.logError("JSON error: " .. tostring(data))
+    ludo.logError("Body prefix: " .. body:sub(1, 200))
+end
+</code></pre></li>
+            <li><strong>Cookie issues</strong> — check that <code>http.set_cookie()</code> is called before any HTTP requests, and verify the cookie file exists and has the expected format using <code>http.read_cookie()</code>.</li>
+            <li><strong>Pattern mismatches</strong> — test patterns interactively: <pre><code>lua
+local test = "https://www.instagram.com/reel/ABC123/"
+local id = test:match("/reels?/([%w%-_]+)")
+ludo.logInfo("Matched: " .. tostring(id))  -- should print "ABC123"
+</code></pre></li>
+        </ul>
+
+        <h2 id="11-tools-menu">11. Tools Menu</h2>
+
+        <p>The <strong>Tools</strong> menu automatically lists every <code>.lua</code> file found in the <code>tools/</code> directory (next to the executable). Clicking a tool entry runs that script in a fresh Lua state with the full Ludo API available.</p>
+
+        <h3>11.1 Tool Script Discovery</h3>
+
+        <p>On startup, Ludo scans the <code>tools/</code> directory and adds one menu item per <code>.lua</code> file. The menu label is the filename without the <code>.lua</code> extension.</p>
+
+        <pre><code>
+tools/
+  PlayStation Games Downloader.lua   → Tools → PlayStation Games Downloader
+  my_tool.lua                        → Tools → my_tool
+</code></pre>
+
+        <h3>11.2 Tool Script Environment</h3>
+
+        <p>Tool scripts run inside the already-running Ludo process via <code>lua_engine_run_script</code>:</p>
+
+        <ul>
+            <li>A <strong>fresh Lua state</strong> is created for each run — globals do not persist between runs.</li>
+            <li><code>lualib/</code> directories is prepended to <code>package.path</code> so <code>require("ftcsv")</code> finds <code>lualib/ftcsv.lua</code> and <code>require("sibling")</code> finds other files in <code>tools/</code>.</li>
+            <li>All Ludo APIs are available: <code>http</code>, <code>ludo</code>, <code>ui</code>, <code>zip</code>, <code>json</code>.</li>
+            <li>Unlike plugins, tool scripts do <strong>not</strong> need <code>validate</code>/<code>process</code> functions — they are executed as top-level scripts.</li>
+            <li><strong>Do NOT call <code>ui.Init()</code>, <code>ui.Main()</code>, or <code>ui.Uninit()</code></strong> — Ludo's UI is already initialised. Use <code>ui.MainStep(true)</code> in a loop instead. See §11.3.</li>
+        </ul>
+
+        <h3>11.3 Shared Lua Libraries (<code>lualib/</code>)</h3>
+
+        <p>The <code>lualib/</code> directory contains Lua modules available to <strong>all</strong> scripts (tool scripts and plugins) via <code>require()</code>. The directory is prepended to <code>package.path</code> when any Lua state is created.</p>
+
+        <pre><code>
+lualib/
+  ftcsv.lua    -- CSV/TSV parser (ftcsv 1.5.0)
+</code></pre>
+
+        <p><strong>Usage:</strong></p>
+        <pre><code>lua
+local ftcsv = require("ftcsv")
+
+-- Parse a TSV file with named-header columns
+local ok, data = pcall(ftcsv.parse, "path/to/file.tsv", "\t")
+if ok then
+    for _, row in ipairs(data) do
+        local name = row["Name"]      -- access by header name
+        local size = row["File Size"]
+        -- ...
+    end
+end
+</code></pre>
+
+        <p><strong><code>ftcsv</code> API summary:</strong></p>
+
+        <table class="api-table">
+            <thead>
+                <tr>
+                    <th>Function</th>
+                    <th>Description</th>
+                </tr>
+            </thead>
+            <tbody>
+                <tr>
+                    <td><code>ftcsv.parse(file, delim [, opts])</code></td>
+                    <td>Parse entire file; returns <code>rows, headers</code></td>
+                </tr>
+                <tr>
+                    <td><code>ftcsv.parseLine(file, delim [, opts])</code></td>
+                    <td>Iterator; returns one row at a time</td>
+                </tr>
+                <tr>
+                    <td><code>ftcsv.encode(table, delim [, opts])</code></td>
+                    <td>Encode table array to CSV string</td>
+                </tr>
+            </tbody>
+        </table>
+
+        <p>Common options: <code>{ headers=true, loadFromString=false, rename={...}, fieldsToKeep={...} }</code></p>
+
+        <h3>11.4 Tool Script Template</h3>
+
+        <pre><code>lua
+-- tools/my_tool.lua
+local ui = require("ui")
+
+-- Do NOT call ui.Init() — Ludo already called it.
+
+local win = ui.NewWindow("My Tool", 400, 300, false)
+win:SetMargined(1)
+
+local vbox = ui.NewVerticalBox()
+vbox:SetPadded(1)
+vbox:Append(ui.NewLabel("Hello from My Tool!"))
+
+local win_open = true
+local btn = ui.NewButton("Close")
+btn:OnClicked(function(b, data)
+    -- Programmatic close: win:Close() does NOT exist in libuilua.
+    -- Set win_open=false to exit the MainStep loop, then destroy the window.
+    win_open = false
+    win:Destroy()
+end, nil)
+vbox:Append(btn)
+win:SetChild(vbox)
+
+-- User-initiated close (title-bar X button): allow close, exit the loop.
+-- win:OnClosing is NOT triggered by win:Destroy() — only by the X button.
+win:OnClosing(function(w, data)
+    win_open = false
+    return 1  -- 1 = allow close; 0 = prevent close
+end, nil)
+win:Show()
+
+-- Drive a nested event loop until the window is closed.
+-- Do NOT call ui.Main() or ui.Uninit().
+while win_open do
+    if ui.MainStep(true) == 0 then break end
+end
+</code></pre>
+
+        <h3>11.5 Table-Based Tool Example (PlayStation Games Downloader)</h3>
+
+        <p>The built-in <strong>PlayStation Games Downloader</strong> (<code>tools/PlayStation Games Downloader.lua</code>) demonstrates the model-view Table pattern in a tool script:</p>
+
+        <pre><code>lua
+local ui    = require("ui")
+local ftcsv = require("ftcsv")  -- from lualib/ftcsv.lua
+
+-- Build the table model backed by a Lua results array
+local search_results = {}
+
+local handler = {
+    NumColumns = function(m) return 6 end,
+    ColumnType = function(m, col) return ui.TableValueTypeString end,
+    NumRows    = function(m) return #search_results end,
+    CellValue  = function(m, row, col)
+        local r = search_results[row + 1]  -- 0-based → 1-based
+        if not r then return "" end
+        -- return fields by column index...
+        if col == 0 then return tostring(row + 1)  -- "#"
+        elseif col == 1 then return r.platform
+        elseif col == 2 then return r.id
+        -- ...
+        end
+        return ""
+    end,
+    SetCellValue = function(s, m, row, col, val) end,  -- read-only
+}
+
+local model = ui.NewTableModel(handler)
+local tbl   = ui.NewTable(model)
+tbl:AppendTextColumn("#",        0, ui.TableModelColumnNeverEditable)
+tbl:AppendTextColumn("Platform", 1, ui.TableModelColumnNeverEditable)
+tbl:AppendTextColumn("Title ID", 2, ui.TableModelColumnNeverEditable)
+tbl:SetSelectionMode(ui.TableSelectionModeZeroOrOne)
+tbl:ColumnSetWidth(0, 40)
+
+-- React to row selection
+tbl:OnSelectionChanged(function()
+    local sel = tbl:GetSelection()   -- returns {0-based index, ...}
+    if sel and #sel > 0 then
+        local r = search_results[sel[1] + 1]
+        -- update detail labels from r ...
+    end
+end)
+
+-- After replacing search_results: notify the model
+-- Step 1 — delete old rows from last to first
+for i = old_count, 1, -1 do
+    table.remove(search_results, i)
+    model:RowDeleted(i - 1)
+end
+-- Step 2 — add new data and notify insertions
+for _, hit in ipairs(new_data) do
+    table.insert(search_results, hit)
+end
+for i = 1, #search_results do
+    model:RowInserted(i - 1)
+end
+</code></pre>
+
+        <h2>Appendix: Quick Reference</h2>
+
+        <h3>HTTP Functions</h3>
+
+        <table class="api-table">
+            <thead>
+                <tr>
+                    <th>Function</th>
+                    <th>Signature</th>
+                    <th>Returns</th>
+                </tr>
+            </thead>
+            <tbody>
+                <tr>
+                    <td><code>http.get</code></td>
+                    <td><code>(url [, opts])</code></td>
+                    <td><code>body, status, headers</code></td>
+                </tr>
+                <tr>
+                    <td><code>http.head</code></td>
+                    <td><code>(url [, opts])</code></td>
+                    <td><code>body, status, headers</code></td>
+                </tr>
+                <tr>
+                    <td><code>http.post</code></td>
+                    <td><code>(url, body [, opts])</code></td>
+                    <td><code>body, status, headers</code></td>
+                </tr>
+                <tr>
+                    <td><code>http.set_cookie</code></td>
+                    <td><code>(filepath)</code></td>
+                    <td>—</td>
+                </tr>
+                <tr>
+                    <td><code>http.clear_cookies</code></td>
+                    <td><code>()</code></td>
+                    <td>—</td>
+                </tr>
+                <tr>
+                    <td><code>http.get_last_url</code></td>
+                    <td><code>()</code></td>
+                    <td><code>url</code></td>
+                </tr>
+                <tr>
+                    <td><code>http.url_encode</code></td>
+                    <td><code>(str)</code></td>
+                    <td><code>encoded</code></td>
+                </tr>
+                <tr>
+                    <td><code>http.url_decode</code></td>
+                    <td><code>(str)</code></td>
+                    <td><code>decoded</code></td>
+                </tr>
+                <tr>
+                    <td><code>http.parse_url</code></td>
+                    <td><code>(url)</code></td>
+                    <td><code>{scheme, host, port, path, query}</code></td>
+                </tr>
+                <tr>
+                    <td><code>http.read_cookie</code></td>
+                    <td><code>(filepath, name)</code></td>
+                    <td><code>value</code> or <code>nil</code> (HttpOnly cookies supported)</td>
+                </tr>
+                <tr>
+                    <td><code>http.base64_encode</code></td>
+                    <td><code>(str)</code></td>
+                    <td><code>encoded</code></td>
+                </tr>
+                <tr>
+                    <td><code>http.base64_decode</code></td>
+                    <td><code>(str)</code></td>
+                    <td><code>decoded</code></td>
+                </tr>
+                <tr>
+                    <td><code>http.sha256</code></td>
+                    <td><code>(str)</code></td>
+                    <td><code>32-byte raw binary digest</code></td>
+                </tr>
+            </tbody>
+        </table>
+
+        <h3>Ludo Functions</h3>
+
+        <table class="api-table">
+            <thead>
+                <tr>
+                    <th>Function</th>
+                    <th>Signature</th>
+                    <th>Returns</th>
+                </tr>
+            </thead>
+            <tbody>
+                <tr>
+                    <td><code>ludo.newDownload</code></td>
+                    <td><code>(url [, dir [, mode [, filename [, headers]]]])</code></td>
+                    <td><code>id, status, output_path</code></td>
+                </tr>
+                <tr>
+                    <td><code>ludo.pauseDownload</code></td>
+                    <td><code>(id)</code></td>
+                    <td>—</td>
+                </tr>
+                <tr>
+                    <td><code>ludo.removeDownload</code></td>
+                    <td><code>(id)</code></td>
+                    <td>—</td>
+                </tr>
+                <tr>
+                    <td><code>ludo.logError</code></td>
+                    <td><code>(msg)</code></td>
+                    <td>—</td>
+                </tr>
+                <tr>
+                    <td><code>ludo.logSuccess</code></td>
+                    <td><code>(msg)</code></td>
+                    <td>—</td>
+                </tr>
+                <tr>
+                    <td><code>ludo.logInfo</code></td>
+                    <td><code>(msg)</code></td>
+                    <td>—</td>
+                </tr>
+                <tr>
+                    <td><code>ludo.getOutputDirectory</code></td>
+                    <td><code>()</code></td>
+                    <td><code>dir</code></td>
+                </tr>
+                <tr>
+                    <td><code>ludo.setting</code></td>
+                    <td><code>.maxDownloadRetry</code>, <code>.maxThread</code>, ...</td>
+                    <td>config values</td>
+                </tr>
+            </tbody>
+        </table>
+
+        <h3>Ludo Constants</h3>
+
+        <table class="api-table">
+            <thead>
+                <tr>
+                    <th>Constant</th>
+                    <th>Value</th>
+                    <th>Description</th>
+                </tr>
+            </thead>
+            <tbody>
+                <tr>
+                    <td><code>ludo.DOWNLOAD_NOW</code></td>
+                    <td>0</td>
+                    <td>Start downloading immediately</td>
+                </tr>
+                <tr>
+                    <td><code>ludo.DOWNLOAD_QUEUE</code></td>
+                    <td>1</td>
+                    <td>Add to download queue</td>
+                </tr>
+            </tbody>
+        </table>
+
+        <h3>UI Functions</h3>
+
+        <table class="api-table">
+            <thead>
+                <tr>
+                    <th>Function</th>
+                    <th>Signature</th>
+                    <th>Returns</th>
+                </tr>
+            </thead>
+            <tbody>
+                <tr>
+                    <td><code>ui.Init</code></td>
+                    <td><code>()</code></td>
+                    <td><code>err</code> or <code>nil</code></td>
+                </tr>
+                <tr>
+                    <td><code>ui.Uninit</code></td>
+                    <td><code>()</code></td>
+                    <td>—</td>
+                </tr>
+                <tr>
+                    <td><code>ui.Main</code></td>
+                    <td><code>()</code></td>
+                    <td>—</td>
+                </tr>
+                <tr>
+                    <td><code>ui.MainStep</code></td>
+                    <td><code>(wait)</code></td>
+                    <td><code>result</code></td>
+                </tr>
+                <tr>
+                    <td><code>ui.Quit</code></td>
+                    <td><code>()</code></td>
+                    <td>—</td>
+                </tr>
+                <tr>
+                    <td><code>ui.NewWindow</code></td>
+                    <td><code>(title, w, h, hasMenubar)</code></td>
+                    <td><code>Window</code></td>
+                </tr>
+                <tr>
+                    <td><code>ui.NewVerticalBox</code></td>
+                    <td><code>()</code></td>
+                    <td><code>Box</code></td>
+                </tr>
+                <tr>
+                    <td><code>ui.NewHorizontalBox</code></td>
+                    <td><code>()</code></td>
+                    <td><code>Box</code></td>
+                </tr>
+                <tr>
+                    <td><code>ui.NewButton</code></td>
+                    <td><code>(text)</code></td>
+                    <td><code>Button</code></td>
+                </tr>
+                <tr>
+                    <td><code>ui.NewLabel</code></td>
+                    <td><code>(text)</code></td>
+                    <td><code>Label</code></td>
+                </tr>
+                <tr>
+                    <td><code>ui.NewCheckbox</code></td>
+                    <td><code>(text)</code></td>
+                    <td><code>Checkbox</code></td>
+                </tr>
+                <tr>
+                    <td><code>ui.NewCombobox</code></td>
+                    <td><code>()</code></td>
+                    <td><code>Combobox</code></td>
+                </tr>
+                <tr>
+                    <td><code>ui.NewEditableCombobox</code></td>
+                    <td><code>()</code></td>
+                    <td><code>Combobox</code></td>
+                </tr>
+                <tr>
+                    <td><code>ui.NewProgressBar</code></td>
+                    <td><code>()</code></td>
+                    <td><code>ProgressBar</code></td>
+                </tr>
+                <tr>
+                    <td><code>ui.NewSlider</code></td>
+                    <td><code>(min, max)</code></td>
+                    <td><code>Slider</code></td>
+                </tr>
+                <tr>
+                    <td><code>ui.NewSpinbox</code></td>
+                    <td><code>(min, max)</code></td>
+                    <td><code>Spinbox</code></td>
+                </tr>
+                <tr>
+                    <td><code>ui.NewRadioButtons</code></td>
+                    <td><code>()</code></td>
+                    <td><code>RadioButtons</code></td>
+                </tr>
+                <tr>
+                    <td><code>ui.NewGroup</code></td>
+                    <td><code>(title)</code></td>
+                    <td><code>Group</code></td>
+                </tr>
+                <tr>
+                    <td><code>ui.NewTab</code></td>
+                    <td><code>()</code></td>
+                    <td><code>Tab</code></td>
+                </tr>
+                <tr>
+                    <td><code>ui.NewHorizontalSeparator</code></td>
+                    <td><code>()</code></td>
+                    <td><code>Separator</code></td>
+                </tr>
+                <tr>
+                    <td><code>ui.NewDateTimePicker</code></td>
+                    <td><code>()</code></td>
+                    <td><code>DateTimePicker</code></td>
+                </tr>
+                <tr>
+                    <td><code>ui.NewDatePicker</code></td>
+                    <td><code>()</code></td>
+                    <td><code>DateTimePicker</code></td>
+                </tr>
+                <tr>
+                    <td><code>ui.NewTimePicker</code></td>
+                    <td><code>()</code></td>
+                    <td><code>DateTimePicker</code></td>
+                </tr>
+                <tr>
+                    <td><code>ui.NewArea</code></td>
+                    <td><code>()</code></td>
+                    <td><code>Area</code></td>
+                </tr>
+            </tbody>
+        </table>
+    </div>
+</body>
+</html></content>
+<parameter name="filePath">c:\Projects\ludo\ludo_scripting.htm

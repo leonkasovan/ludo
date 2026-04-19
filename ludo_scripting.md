@@ -2736,23 +2736,21 @@ Tool scripts run inside the already-running Ludo process via `lua_engine_run_scr
 
 - A **fresh Lua state** is created for each run — globals do not persist
   between runs.
-- Both `tools/` and `lib/` directories are prepended to `package.path` so
-  `require("ftcsv")` finds `lib/ftcsv.lua` and `require("sibling")` finds
-  other files in `tools/`.
+- `lualib/` directories is prepended to `package.path` so `require("ftcsv")` finds `lualib/ftcsv.lua`.
 - All Ludo APIs are available: `http`, `ludo`, `ui`, `zip`, `json`.
 - Unlike plugins, tool scripts do **not** need `validate`/`process` functions —
   they are executed as top-level scripts.
 - **Do NOT call `ui.Init()`, `ui.Uninit()`, or `ui.Main()`** — Ludo's UI is
   already initialised. Use a `ui.MainStep()` loop instead (see §11.3).
 
-### 11.3 Shared Lua Libraries (`lib/`)
+### 11.3 Shared Lua Libraries (`lualib/`)
 
-The `lib/` directory contains Lua modules available to **all** scripts (tool
+The `lualib/` directory contains Lua modules available to **all** scripts (tool
 scripts and plugins) via `require()`. The directory is prepended to
 `package.path` when any Lua state is created.
 
 ```
-lib/
+lualib/
   ftcsv.lua    -- CSV/TSV parser (ftcsv 1.5.0)
 ```
 
@@ -2829,7 +2827,7 @@ Downloader.lua`) demonstrates the model-view Table pattern in a tool script:
 
 ```lua
 local ui    = require("ui")
-local ftcsv = require("ftcsv")  -- from lib/ftcsv.lua
+local ftcsv = require("ftcsv")  -- from lualib/ftcsv.lua
 
 -- Build the table model backed by a Lua results array
 local search_results = {}
