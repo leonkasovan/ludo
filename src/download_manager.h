@@ -91,7 +91,7 @@ typedef void (*progress_callback_t)(const ProgressUpdate *update, void *user_dat
 
 /* Initialise with a number of concurrent worker threads.
    output_dir is the default download destination. */
-void download_manager_init(int num_workers, const char *output_dir);
+int  download_manager_init(int num_workers, const char *output_dir);
 void download_manager_prepare_for_shutdown(void);
 void download_manager_shutdown(void);
 

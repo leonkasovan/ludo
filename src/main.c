@@ -94,8 +94,15 @@ int main(int argc, char *argv[])
             return 1;
         }
 
-        download_manager_init(cfg ? cfg->max_thread : 2,
-                              cfg ? cfg->output_dir : "downloads/");
+        if (!download_manager_init(cfg ? cfg->max_thread : 2,
+                                   cfg ? cfg->output_dir : "downloads/")) {
+            fprintf(stderr, "Failed to initialise download manager\n");
+            task_queue_shutdown(&g_url_queue);
+            task_queue_destroy(&g_url_queue);
+            free(script_path);
+            ludo_config_shutdown();
+            return 1;
+        }
 
         lua_engine_init();
         lua_engine_load_plugins(cfg ? cfg->plugin_dir : "plugins");
@@ -144,8 +151,15 @@ int main(int argc, char *argv[])
     /* -------------------------------------------------------------- */
     /* 3. Initialise the download manager (2 concurrent downloads)     */
     /* -------------------------------------------------------------- */
-    download_manager_init(cfg ? cfg->max_thread : 2,
-                          cfg ? cfg->output_dir : "downloads/");
+    if (!download_manager_init(cfg ? cfg->max_thread : 2,
+                               cfg ? cfg->output_dir : "downloads/")) {
+        fprintf(stderr, "Failed to initialise download manager\n");
+        task_queue_shutdown(&g_url_queue);
+        task_queue_destroy(&g_url_queue);
+        uiUninit();
+        ludo_config_shutdown();
+        return 1;
+    }
 
     /* -------------------------------------------------------------- */
     /* 4. Initialise the Lua plugin engine and load plugins             */
@@ -196,6 +210,7 @@ int main(int argc, char *argv[])
     download_manager_shutdown();
     lua_engine_shutdown();
     task_queue_destroy(&g_url_queue);
+    gui_cleanup();
     ludo_config_shutdown();
     uiUninit();
     // dm_log_close();

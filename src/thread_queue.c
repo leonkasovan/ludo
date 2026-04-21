@@ -12,6 +12,11 @@
 
 /* ---- Windows implementation ---- */
 
+typedef struct {
+    void *(*fn)(void *);
+    void *arg;
+} ludo_thread_start_t;
+
 void ludo_mutex_init(ludo_mutex_t *m) {
     InitializeCriticalSection(&m->cs);
 }
@@ -20,19 +25,19 @@ void ludo_mutex_lock(ludo_mutex_t *m)    { EnterCriticalSection(&m->cs); }
 void ludo_mutex_unlock(ludo_mutex_t *m)  { LeaveCriticalSection(&m->cs); }
 
 static DWORD WINAPI thread_trampoline(LPVOID arg) {
-    void **pack = (void **)arg;
-    void *(*fn)(void *) = pack[0];
-    void *fnarg          = pack[1];
+    ludo_thread_start_t *pack = (ludo_thread_start_t *)arg;
+    void *(*fn)(void *) = pack->fn;
+    void *fnarg = pack->arg;
     free(pack);
     fn(fnarg);
     return 0;
 }
 
 int ludo_thread_create(ludo_thread_t *t, void *(*fn)(void *), void *arg) {
-    void **pack = malloc(2 * sizeof(void *));
+    ludo_thread_start_t *pack = (ludo_thread_start_t *)malloc(sizeof(*pack));
     if (!pack) return -1;
-    pack[0] = (void *)(uintptr_t)fn;
-    pack[1] = arg;
+    pack->fn = fn;
+    pack->arg = arg;
     *t = CreateThread(NULL, 0, thread_trampoline, pack, 0, NULL);
     if (*t == NULL) {
         free(pack);

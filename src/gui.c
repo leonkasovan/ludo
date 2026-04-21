@@ -1581,6 +1581,14 @@ void gui_shutdown(void) {
     g_gui.url_worker_started = 0;
 }
 
+void gui_cleanup(void) {
+    if (g_downloads_model) {
+        uiFreeTableModel(g_downloads_model);
+        g_downloads_model = NULL;
+    }
+    g_downloads_table = NULL;
+}
+
 int gui_is_shutdown_requested(void) {
     return g_gui.shutdown_requested;
 }

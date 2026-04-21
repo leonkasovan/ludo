@@ -23,6 +23,12 @@ void gui_create(void);
  */
 void gui_shutdown(void);
 
+/*
+ * Release GUI-owned resources after the main window has been destroyed.
+ * Must be called after uiMain() returns and before uiUninit().
+ */
+void gui_cleanup(void);
+
 /* Return non-zero if shutdown has been requested */
 int gui_is_shutdown_requested(void);
 

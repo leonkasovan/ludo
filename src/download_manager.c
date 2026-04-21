@@ -1328,14 +1328,15 @@ static void *worker_thread(void *arg) {
 /* Public API                                                           */
 /* ------------------------------------------------------------------ */
 
-void download_manager_init(int num_workers, const char *output_dir) {
+int download_manager_init(int num_workers, const char *output_dir) {
     const LudoConfig *cfg = ludo_config_get();
+    CURLcode curl_init_res;
+
     dm_log_init();
     dm_log("[init] num_workers=%d  output_dir=%s",
            num_workers, output_dir ? output_dir : "(null -> ./downloads/)");
 
     memset(&g_mgr, 0, sizeof(g_mgr));
-    g_mgr.initialized  = 1;
     g_mgr.next_id     = 1;
     g_mgr.num_workers = num_workers;
     g_mgr.running     = 1;
@@ -1344,9 +1345,24 @@ void download_manager_init(int num_workers, const char *output_dir) {
             sizeof(g_mgr.output_dir) - 1);
 
     ludo_mutex_init(&g_mgr.list_mutex);
-    task_queue_init(&g_mgr.queue, cfg ? cfg->download_queue_capacity : 256);
+    if (task_queue_init(&g_mgr.queue, cfg ? cfg->download_queue_capacity : 256) != 0) {
+        dm_log("[init] failed to initialise download queue");
+        ludo_mutex_destroy(&g_mgr.list_mutex);
+        memset(&g_mgr, 0, sizeof(g_mgr));
+        dm_log_close();
+        return 0;
+    }
 
-    curl_global_init(CURL_GLOBAL_DEFAULT);
+    curl_init_res = curl_global_init(CURL_GLOBAL_DEFAULT);
+    if (curl_init_res != CURLE_OK) {
+        dm_log("[init] curl_global_init failed: %s", curl_easy_strerror(curl_init_res));
+        task_queue_destroy(&g_mgr.queue);
+        ludo_mutex_destroy(&g_mgr.list_mutex);
+        memset(&g_mgr, 0, sizeof(g_mgr));
+        dm_log_close();
+        return 0;
+    }
+    g_mgr.initialized  = 1;
     {
         const curl_version_info_data *vi = curl_version_info(CURLVERSION_NOW);
         dm_log("[init] curl encodings: zlib=%s zstd=%s brotli=%s",
@@ -1377,7 +1393,7 @@ void download_manager_init(int num_workers, const char *output_dir) {
     if (!g_mgr.workers) {
         g_mgr.num_workers = 0;
         dm_log("[init] failed to allocate worker handles");
-        return;
+        return 1;
     }
     for (int i = 0; i < num_workers; i++) {
         if (ludo_thread_create(&g_mgr.workers[i], worker_thread, NULL) != 0) {
@@ -1386,6 +1402,7 @@ void download_manager_init(int num_workers, const char *output_dir) {
             break;
         }
     }
+    return 1;
 }
 
 void download_manager_prepare_for_shutdown(void) {
