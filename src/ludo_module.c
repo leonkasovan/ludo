@@ -50,7 +50,7 @@ static int lua_ludo_new_download(lua_State *L) {
     original_url = lua_tostring(L, -1);
     memset(&result, 0, sizeof(result));
     int id = download_manager_add(url, output_dir, (DownloadMode)mode, original_url,
-                                  hint_filename, extra_headers, &result);
+                                  hint_filename, extra_headers, NULL, &result);
     lua_pop(L, 1);
     if (id < 0) result.id = id;
     lua_pushinteger(L, (lua_Integer)result.id);

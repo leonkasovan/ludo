@@ -98,6 +98,8 @@ void dm_log_close(void) {
     fclose(g_log_fp);
     g_log_fp = NULL;
     ludo_mutex_unlock(&g_log_mutex);
+    ludo_mutex_destroy(&g_log_mutex);
+    g_log_mutex_init = 0;
 }
 
 /* ------------------------------------------------------------------ */
@@ -887,6 +889,12 @@ static void perform_download(Download *d) {
             curl_easy_setopt(curl, CURLOPT_RANGE, "0-");
         }
 
+        if (d->post_data[0] != '\0') {
+            curl_easy_setopt(curl, CURLOPT_POST, 1L);
+            curl_easy_setopt(curl, CURLOPT_POSTFIELDS, d->post_data);
+            curl_easy_setopt(curl, CURLOPT_POSTFIELDSIZE, (long)strlen(d->post_data));
+        }
+
         /* Apply any plugin-supplied extra headers */
         struct curl_slist *extra_hdrs = NULL;
         if (d->extra_headers[0] != '\0') {
@@ -1477,7 +1485,7 @@ void download_manager_shutdown(void) {
 
 int download_manager_add(const char *url, const char *output_dir, DownloadMode mode,
                          const char *original_url, const char *hint_filename,
-                         const char *extra_headers,
+                         const char *extra_headers, const char *post_data,
                          DownloadAddResult *result)
 {
     (void)mode; /* DOWNLOAD_NOW vs DOWNLOAD_QUEUE handled via queue order */
@@ -1522,6 +1530,8 @@ int download_manager_add(const char *url, const char *output_dir, DownloadMode m
     d->status.filename[sizeof(d->status.filename) - 1] = '\0';
     if (extra_headers && extra_headers[0] != '\0')
         strncpy(d->extra_headers, extra_headers, sizeof(d->extra_headers) - 1);
+    if (post_data && post_data[0] != '\0')
+        strncpy(d->post_data, post_data, sizeof(d->post_data) - 1);
     d->status.state = DOWNLOAD_STATE_QUEUED;
     d->status.start_time = time(NULL);
     d->next = g_mgr.list;

@@ -58,6 +58,7 @@ struct Download {
     volatile int     stop_requested;
     int              marked_for_removal;
     char             extra_headers[4096]; /* optional "Name: Value\n" pairs appended to GET request */
+    char             post_data[4096];     /* optional POST body for intercepted browser downloads */
     Download        *next;
 };
 
@@ -98,10 +99,12 @@ void download_manager_shutdown(void);
 /* Queue a new download. Returns the assigned download ID (>0) or -1 on error.
    hint_filename: optional base filename (without directory) to use instead of
                   the URL-derived name. Pass NULL to keep the default behaviour.
+   post_data: optional HTTP request body; when non-empty the transfer is sent as
+              a POST instead of a GET.
    When result is non-NULL, fills it with preflight status/output-path data. */
 int  download_manager_add(const char *url, const char *output_dir, DownloadMode mode,
                           const char *original_url, const char *hint_filename,
-                          const char *extra_headers,
+                          const char *extra_headers, const char *post_data,
                           DownloadAddResult *result);
 
 /* Pause / resume / remove — may be called from the GUI thread */

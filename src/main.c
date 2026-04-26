@@ -2,6 +2,7 @@
 #include "lua_engine.h"
 #include "download_manager.h"
 #include "config.h"
+#include "ipc/ludo_native_messaging.h"
 #include "thread_queue.h"
 #include "ui.h"
 
@@ -166,6 +167,7 @@ int main(int argc, char *argv[])
     /* -------------------------------------------------------------- */
     lua_engine_init();
     lua_engine_load_plugins(cfg ? cfg->plugin_dir : "plugins");
+    ludo_native_messaging_start();
 
     /* --------------------------------------------------------------------- */
     /* 5. Build, display the GUI and sync it with the download manager state */
@@ -205,6 +207,7 @@ int main(int argc, char *argv[])
     /* -------------------------------------------------------------- */
     /* 7. Tear down (in reverse order)                                  */
     /* -------------------------------------------------------------- */
+    ludo_native_messaging_stop();
     task_queue_shutdown(&g_url_queue);
     if (!gui_is_shutdown_requested()) gui_shutdown();
     download_manager_shutdown();
