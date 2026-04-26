@@ -371,6 +371,9 @@ set(LUDO_SOURCES
     src/zip_module.c
     src/download_manager.c
     src/thread_queue.c
+    src/ipc/ipc_abstraction.c
+    src/ipc/ludo_native_messaging.c
+    third_party/cJSON/cJSON.c
 )
 
 if(WIN32)
@@ -513,3 +516,18 @@ install(DIRECTORY snippets/ DESTINATION bin/snippets)
 install(DIRECTORY res/ DESTINATION bin/res)
 install(DIRECTORY tools/ DESTINATION bin/tools)
 install(DIRECTORY lualib/ DESTINATION bin/lualib)
+
+set(WENATIVEHOST_SOURCES
+    src/ipc/wenativehost.c
+    src/ipc/ipc_abstraction.c
+    third_party/cJSON/cJSON.c
+)
+
+add_executable(wenativehost ${WENATIVEHOST_SOURCES})
+target_include_directories(wenativehost PRIVATE
+    ${CMAKE_SOURCE_DIR}/src
+)
+target_link_libraries(wenativehost PRIVATE Threads::Threads)
+if(WIN32)
+    target_link_libraries(wenativehost PRIVATE user32)
+endif()
