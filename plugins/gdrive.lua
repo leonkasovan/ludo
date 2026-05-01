@@ -30,7 +30,8 @@ function plugin.process(url)
 	
 	-- Step 3:
 	id, status, output = nil, nil, nil
-	if string.sub(headers["Content-Type"],1, 4) == "text" then -- over 100MB
+	local ct = (headers or {})["content-type"] or (headers or {})["Content-Type"] or ""
+	if ct:sub(1, 4) == "text" then -- over 100MB
 		local content
 		content, status, headers = http.get(real_url)
 		local uuid = string.match(content, '"uuid" value="([%w_%-]+)"></form>')
