@@ -3,15 +3,30 @@
 This file is for AI agents working in this codebase. Read it before writing any
 code, plugins, or documentation.
 
+1. Do not silently guess. State your assumptions clearly. If anything is ambiguous, ask instead of choosing one interpretation silently. If a simpler solution exists, recommend it before implementing.
+2. Solve the requested problem with the minimum necessary code. Do not add features that were not asked for. Do not introduce abstractions for one-time use. Prefer simple, readable code over clever code.
+3. Only change what the task requires. Do not refactor unrelated code. Do not rewrite comments, formatting, or naming unless necessary. Match the existing style and conventions of the codebase.
+4. Keep edits local, focused, and easy to review. Touch as few files as possible. Change as little code as necessary. Avoid broad rewrites when a targeted fix is enough.
+5. Do not treat 'done' as a guess. Turn requests into clear success criteria. Prefer tests, existing checks, or concrete validation over verbal confidence.
+6. Understand the surrounding code before editing it. Read enough nearby code to understand how the target piece fits in. Identify the local conventions before introducing new patterns.
+7. Do not accidentally erase meaning while making changes. Preserve comments unless they are clearly outdated. Preserve public interfaces unless changing them is necessary.
+8. Do not continue blindly when the risk is high. Pause and ask if: the request is ambiguous, the codebase contains conflicting patterns, or the task requires an architectural decision.
+9. Before considering the task complete, confirm: the request was actually addressed, the change is no larger than necessary, and the final result matches the requested scope.
+
 ---
 
 ## 1. Project Overview
 
 **Ludo** is a desktop download manager written in C (C11, MinGW64/GCC 14) on
-Windows. It embeds **Lua 5.2** as a plugin engine and exposes three C-backed
-modules to scripts: `http` (libcurl), `ludo` (download manager), and `ui`
-(libui-ng native widgets). Plugins are `.lua` files in `plugins/` that
-return a table with `validate(url)` and `process(url)`.
+Windows. It embeds **Lua 5.2** as a plugin engine and exposes modules to
+scripts: `http` (libcurl), `ludo` (download manager), `ui` (libui-ng native
+widgets — GUI build only), and `aes128_cbc_decrypt` (console and GUI builds).
+Plugins are `.lua` files in `plugins/` that return a table with
+`validate(url)` and `process(url)`.
+
+The project produces two executable targets:
+- **`ludo`** — GUI downloader with libui-ng (links `libui_static` + `libuilua_static`)
+- **`ludocon`** — Pure console CLI (`BUILD_CONSOLE`), no GUI dependencies
 
 ---
 
@@ -21,22 +36,36 @@ return a table with `validate(url)` and `process(url)`.
 |------|---------|
 | `CMakeLists.txt` | Root CMake build (CMake ≥ 3.16) |
 | `build/` | Out-of-source build directory |
-| `build/ludo-debug.exe` | Debug executable |
-| `build/ludo.exe` | Release executable (when built) |
+| `build/ludo-debug.exe` / `build/ludo-debug` | Debug executable (GUI) |
+| `build/ludo.exe` / `build/ludo` | Release GUI executable |
+| `build/ludocon-debug.exe` / `build/ludocon-debug` | Debug console executable |
+| `build/ludocon.exe` / `build/ludocon` | Release console executable |
 | `build/plugins/` | Runtime plugin directory (auto-copied at build) |
 | `build/ludo.log` | Runtime log — always check here after test runs |
 
 ### Build Commands
 
+in VSCode open w64devkit terminal and then follow this command
 ```bash
 # Configure + build (full)
-cmake -B build . && cmake --build build --config Debug
+cmake -B build . && cmake --build build --parallel
 
 # Incremental build only
-cmake --build build --config Debug
+cmake --build build --parallel
 
-# Via tasks (VS Code)
-# Run task: "Build (Configure + Build)"
+# Build ludocon only (no GUI dependencies)
+cmake -B build . -DBUILD_GUI=OFF
+cmake --build build --target ludocon --parallel
+```
+
+### Linux Build Prerequisites
+
+On Linux, the build compiles curl, zlib, brotli, and zstd from bundled
+source. You need the following system packages:
+
+```bash
+# Ubuntu / Debian
+sudo apt install cmake gcc g++ libgtk-3-dev libgnutls28-dev pkg-config
 ```
 
 CMake automatically copies `plugins/*.lua`, `res/`, `snippets/`, and
@@ -117,6 +146,14 @@ local status [, errmsg] = zip.create(output_path, directory [, glob_filter])
 -- JSON (global)
 local ok, data = pcall(json.decode, body)
 local s = json.encode(table)
+
+-- M3U8 (shared module: dofile("plugins/m3u8.lua"))
+local m3u8 = dofile("plugins/m3u8.lua")
+local ok, path_or_err = m3u8.download(m3u8_url, output_dir, "file.mp4" [, headers])
+-- headers is an optional table: { ["Name"] = "Value", ... } (e.g. Referer)
+local is_master = m3u8.is_master(playlist_text)
+local variants = m3u8.parse_master(text, base_url)  -- array of {url, bandwidth, resolution}
+local best = m3u8.pick_best(variants)  -- highest bandwidth variant
 ```
 
 ### 3.3 Common Patterns
@@ -189,6 +226,22 @@ if ck then ck:close(); http.set_cookie(cookie_path) end
 | `mediafire.lua` | HTML scrape `a.popsok` href | No |
 | `dropbox.lua` | Redirect `?dl=0` → `?dl=1` | No |
 | `gdrive.lua` | Google Drive direct download URL | No (public) |
+| `bluesky.lua` | AT Protocol: resolveHandle → getPostThread → getBlob | No (public) |
+| `twitch.lua` | GraphQL persisted queries for clips (ShareClipRenderStatus); VODs/streams via usher HLS + m3u8 module | No (public) |
+| `baidu.lua` | REST API (xqinfo/xqsingle) → episode list → queue each URL | No (public) |
+| `bigo.lua` | POST API (getInternalStudioInfo) → HLS stream download via m3u8 module | No (public) |
+| `m3u8.lua` | Pure Lua HLS/m3u8 playlist parser + segment downloader (shared module, not a plugin) | No (public m3u8) |
+| `bilibili.lua` | Webpage scrape → __INITIAL_STATE__ → playinfo API → DASH/durl download | No (public) |
+| `dailymotion.lua` | REST API (player metadata endpoint) → direct MP4 or HLS via m3u8 module | No (public) |
+| `telegram.lua` | HTML scrape embed page → `<video src>` → direct MP4 download | No (public) |
+| `tube8.lua` | Flashvars JSON extraction → quality_NNNp direct MP4 URLs | No (public) |
+| `vidio.lua` | REST API (videos/{id}) → HLS playlist → m3u8 module download | No (public) |
+| `pinterest.lua` | Pinterest API (PinResource) → video_list or story_pin_data → MP4/HLS | No (public) |
+| `douyu.lua` | Webpage scrape → $DATA JSON → VOD metadata (stream URLs require JS signing) | No (public VOD metadata) |
+| `xiaohongshu.lua` | Webpage scrape → __INITIAL_STATE__ → direct MP4 URLs (SPA anti-bot blocks non-JS) | No (public, but CAPTCHA blocks) |
+| `youku.lua` | REST API (ups.get.json) with cna/utid → HLS streams → m3u8 module download | No (public) |
+| `iqiyi.lua` | MD5-signed API (tmts) → HLS stream download via m3u8 module | No (public) |
+| `tencent.lua` | AES-CBC-whitespace signed API (getvinfo) → HLS via m3u8 module | No (public) |
 
 ---
 
@@ -249,6 +302,22 @@ ludo.logInfo("=== MyPlugin test done ===")
 | `build/test_instagram.lua` | instagram.lua |
 | `build/test_tiktok.lua` | tiktok.lua |
 | `build/test_facebook.lua` | facebook.lua |
+| `build/test_bluesky.lua` | bluesky.lua |
+| `build/test_twitch.lua` | twitch.lua |
+| `build/test_baidu.lua` | baidu.lua |
+| `build/test_bigo.lua` | bigo.lua |
+| `build/test_m3u8.lua` | m3u8.lua |
+| `build/test_bilibili.lua` | bilibili.lua |
+| `build/test_dailymotion.lua` | dailymotion.lua |
+| `build/test_telegram.lua` | telegram.lua |
+| `build/test_tube8.lua` | tube8.lua |
+| `build/test_vidio.lua` | vidio.lua |
+| `build/test_pinterest.lua` | pinterest.lua |
+| `build/test_douyu.lua` | douyu.lua |
+| `build/test_xiaohongshu.lua` | xiaohongshu.lua |
+| `build/test_youku.lua` | youku.lua |
+| `build/test_iqiyi.lua` | iqiyi.lua |
+| `build/test_tencent.lua` | tencent.lua |
 
 ### 4.4 Test runner notes
 
@@ -263,12 +332,13 @@ ludo.logInfo("=== MyPlugin test done ===")
 | Path | Role |
 |------|------|
 | `src/http_module.c` | C implementation of `http` global (libcurl) |
-| `src/lua_engine.c` | Loads and manages Lua state, plugin loader |
+| `src/lua_engine.c` | Loads and manages Lua state, plugin loader; sorts `generic.lua` last |
 | `src/ludo_module.c` | C implementation of `ludo` global |
 | `src/download_manager.c` | Threaded download queue |
 | `src/main.c` | Entry point; `-s scriptfile.lua` runs standalone |
 | `ludo_scripting.md` | Full scripting API reference (read this for detailed docs) |
 | `build/ludo.log` | Runtime log — all `ludo.log*()` calls write here |
+| `third_party/curl-8.19.0/lib/curl_config_linux.h` | curl config for Linux (brotli, zstd, GnuTLS enabled) |
 
 ---
 
@@ -305,6 +375,7 @@ See `ludo_scripting.md` §7 for the full guide. Summary:
 - Lua doubles lose precision for integers > 2^53; use string arithmetic for
   large IDs (see `bigint_muladd` in `instagram.lua`)
 - `string.match` returns `nil` on no-match, not `false`
+- `[%a-]` in character classes may not parse correctly — `-` after `%a`/`%w` can be misparsed. Prefer splitting on `,` and parsing each `KEY=VALUE` pair individually (see `parse_attrs` in `m3u8.lua`).
 - All plugins share the same Lua state (globals persist between plugin calls)
 
 ---
@@ -314,9 +385,19 @@ See `ludo_scripting.md` §7 for the full guide. Summary:
 - CMake configure step logs a non-fatal `Permission denied` error for
   `ninja restat` — this is benign and can be ignored.
 - `ludo-debug.exe --help` hangs (it is a GUI app, not a CLI tool).
-- After editing a plugin, just rebuild (`cmake --build build --config Debug`);
+- `ludocon-debug.exe --help` works (it is a console app, use `ludocon` for CLI tasks).
+- After editing a plugin, just rebuild (`cmake --build build --parallel`);
   CMake's custom command copies all `plugins/*.lua` to `build/plugins/`
   automatically.
+- **Linux:** On older distros (e.g. Ubuntu 20.04) the system curl (7.68)
+  lacks brotli/zstd support. The CMake build now builds brotli and zstd
+  from bundled source as static libraries for potential future use by
+  a custom curl build. At runtime, http_module.c detects which content
+  encodings curl supports and only advertises those (dynamic Accept-
+  Encoding). Brotli and zstd static libs (`libbrotli*.a`, `libzstd.a`)
+  are produced in the build output.
+- **Linux build requirements:** cmake, gcc, libgtk-3-dev (for GUI),
+  pkg-config. No extra TLS libraries needed — the system curl is used.
   
 ## 9. Plugin Reference from yt-dlp
 

@@ -893,6 +893,39 @@ local b64_digest = http.base64_encode(http.sha256(data))
 
 **Implementation note:** Standalone FIPS 180-4 SHA-256; no external dependency.
 
+### 4.16 `http.aes128_cbc_decrypt(data, key, iv)` → string
+
+Decrypt AES-128-CBC encrypted data and strip PKCS7 padding.
+
+**Parameters:**
+- `data` (string) — Encrypted binary data (length must be a multiple of 16).
+- `key` (string) — 16-byte AES-128 key.
+- `iv` (string) — 16-byte initialization vector.
+
+**Returns:**
+- `plaintext` (string) — Decrypted data with PKCS7 padding removed.
+
+```lua
+-- Decrypt an HLS segment
+local key = http.get(key_url)  -- 16-byte key
+local iv  = "\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0"  -- or derived from seq number
+local decrypted = http.aes128_cbc_decrypt(encrypted_segment, key, iv)
+```
+
+**Implementation note:** Standalone AES-128; no external dependency.
+
+### 4.17 `http.aes128_cbc_encrypt(data, key, iv)` → string
+
+Encrypt data with AES-128-CBC and add PKCS7 padding.
+
+**Parameters:**
+- `data` (string) — Plaintext data (any length).
+- `key` (string) — 16-byte AES-128 key.
+- `iv` (string) — 16-byte initialization vector.
+
+**Returns:**
+- `ciphertext` (string) — Encrypted data (padded to multiple of 16 bytes).
+
 ---
 
 #### Note on Compression Support
@@ -2117,6 +2150,8 @@ return plugin
 | `http.base64_encode` | `(str)` | `encoded` |
 | `http.base64_decode` | `(str)` | `decoded` |
 | `http.sha256` | `(str)` | `32-byte raw binary digest` |
+| `http.aes128_cbc_decrypt` | `(data, key, iv)` | `decrypted data with PKCS7 padding stripped` |
+| `http.aes128_cbc_encrypt` | `(data, key, iv)` | `encrypted data with PKCS7 padding added` |
 
 ### Ludo Functions
 

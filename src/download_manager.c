@@ -17,7 +17,11 @@
 #endif
 
 #include <curl/curl.h>
+#ifdef BUILD_CONSOLE
+#include "console_log.h"
+#else
 #include "ui.h"
+#endif
 #include "gui.h"
 
 /* Path constants for persistence */
@@ -871,7 +875,20 @@ static void perform_download(Download *d) {
         curl_easy_setopt(curl, CURLOPT_NOPROGRESS, 0L);
         curl_easy_setopt(curl, CURLOPT_FOLLOWLOCATION, 1L);
         curl_easy_setopt(curl, CURLOPT_MAXREDIRS, (long)(cfg ? cfg->max_redirect : 10));
-        curl_easy_setopt(curl, CURLOPT_ACCEPT_ENCODING, "gzip, deflate, zstd, br");
+        {
+            char ae[64];
+            const curl_version_info_data *vi = curl_version_info(CURLVERSION_NOW);
+            int n = snprintf(ae, sizeof(ae), "gzip, deflate");
+#ifdef CURL_VERSION_BROTLI
+            if (vi && (vi->features & CURL_VERSION_BROTLI))
+                n += snprintf(ae + n, sizeof(ae) - n, ", br");
+#endif
+#ifdef CURL_VERSION_ZSTD
+            if (vi && (vi->features & CURL_VERSION_ZSTD))
+                n += snprintf(ae + n, sizeof(ae) - n, ", zstd");
+#endif
+            curl_easy_setopt(curl, CURLOPT_ACCEPT_ENCODING, ae);
+        }
         curl_easy_setopt(curl, CURLOPT_USERAGENT,
                          "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/146.0.0.0 Safari/537.36 Edg/146.0.0.0");
         curl_easy_setopt(curl, CURLOPT_HEADERFUNCTION, header_cb);
@@ -1375,8 +1392,16 @@ int download_manager_init(int num_workers, const char *output_dir) {
         const curl_version_info_data *vi = curl_version_info(CURLVERSION_NOW);
         dm_log("[init] curl encodings: zlib=%s zstd=%s brotli=%s",
                (vi && (vi->features & CURL_VERSION_LIBZ)) ? "on" : "off",
+#ifdef CURL_VERSION_ZSTD
                (vi && (vi->features & CURL_VERSION_ZSTD)) ? "on" : "off",
+#else
+               "N/A",
+#endif
+#ifdef CURL_VERSION_BROTLI
                (vi && (vi->features & CURL_VERSION_BROTLI)) ? "on" : "off");
+#else
+               "N/A");
+#endif
     }
 
     /* Restore previous session */

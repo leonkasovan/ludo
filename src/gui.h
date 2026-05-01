@@ -3,6 +3,7 @@
 
 #include "download_manager.h"
 
+#ifndef BUILD_CONSOLE
 /* Log message severity */
 typedef enum {
     LOG_INFO    = 0,
@@ -43,5 +44,7 @@ void gui_log(LogLevel level, const char *fmt, ...);
  * Called on the GUI thread via uiQueueMain.
  */
 void gui_on_progress(const ProgressUpdate *update, void *user_data);
+
+#endif /* !BUILD_CONSOLE */
 
 #endif /* LUDO_GUI_H */

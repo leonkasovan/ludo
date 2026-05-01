@@ -420,7 +420,21 @@ static int http_request(lua_State *L, int method) {
     curl_easy_setopt(curl, CURLOPT_HEADERDATA,     &headers_buf);
     curl_easy_setopt(curl, CURLOPT_FOLLOWLOCATION, 1L);
     curl_easy_setopt(curl, CURLOPT_MAXREDIRS,      10L);
-    curl_easy_setopt(curl, CURLOPT_ACCEPT_ENCODING, "gzip, deflate, zstd, br");
+    /* Only advertise encodings curl can actually decode */
+    {
+        char ae[64];
+        const curl_version_info_data *vi = curl_version_info(CURLVERSION_NOW);
+        int n = snprintf(ae, sizeof(ae), "gzip, deflate");
+#ifdef CURL_VERSION_BROTLI
+        if (vi && (vi->features & CURL_VERSION_BROTLI))
+            n += snprintf(ae + n, sizeof(ae) - n, ", br");
+#endif
+#ifdef CURL_VERSION_ZSTD
+        if (vi && (vi->features & CURL_VERSION_ZSTD))
+            n += snprintf(ae + n, sizeof(ae) - n, ", zstd");
+#endif
+        curl_easy_setopt(curl, CURLOPT_ACCEPT_ENCODING, ae);
+    }
     curl_easy_setopt(curl, CURLOPT_USERAGENT,
                      "Mozilla/5.0 LUDO/1.0");
     /* Always enable cookie engine */

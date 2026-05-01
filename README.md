@@ -3,16 +3,19 @@
 LUDO is a lightweight, cross-platform download manager with:
 
 - Native GUI built with `libui-ng`
+- **Console-only CLI** (`ludocon`) with no GUI dependency
 - Download engine in C using `libcurl`
 - Extensible URL extraction via Lua plugins
 
-The application lets you paste URLs in the GUI, then resolves and downloads them through a Lua-driven plugin pipeline.
+The application lets you paste URLs in the GUI (or pass them as command-line arguments to `ludocon`), then resolves and downloads them through a Lua-driven plugin pipeline.
 
 ## Features
 
-- GUI downloader app (`libui-ng`)
+- GUI downloader app (`libui-ng`) or **console-only CLI** (`ludocon`)
 - Static Lua runtime (`lua-5.2.4` from source)
 - HTTP module exposed to Lua (`http.get`, `http.head`, `http.post`, cookies, URL tools)
+- AES-128-CBC encryption/decryption exposed to Lua (`http.aes128_cbc_{en,de}crypt`)
+- HLS/m3u8 playlist parsing and segment download (`plugins/m3u8.lua`)
 - Host module exposed to Lua (`ludo.newDownload`, logging, output-dir helpers)
 - Plugin-based URL extraction (`plugins/*.lua`)
 - Worker-threaded download processing and GUI progress updates
@@ -52,6 +55,13 @@ pacman -S --needed \
 ```
 
 > This project builds `libui-ng` from source via CMake; Meson is not required.
+
+CMake builds two executables:
+
+| Target | Description | Debug name | Release name |
+|--------|-------------|------------|--------------|
+| `ludo` | GUI downloader (requires libui-ng) | `ludo-debug.exe` | `ludo.exe` |
+| `ludocon` | Console-only CLI (no GUI) | `ludocon-debug.exe` | `ludocon.exe` |
 
 ## Build
 
@@ -94,16 +104,26 @@ or remove it before switching generators. Using a separate directory like `build
 
 ## Run
 
-From repository root:
+### GUI (ludo)
 
 ```bash
-./build/ludo.exe
+./build/ludo-debug.exe
 ```
 
-Or from inside `build/`:
+### Console (ludocon)
 
 ```bash
-./ludo.exe
+# Download a single URL
+./build/ludocon-debug.exe https://www.dailymotion.com/video/x5kesuj
+
+# Download multiple URLs
+./build/ludocon-debug.exe https://t.me/mychannel/123 https://www.youtube.com/watch?v=abc123
+
+# Read URLs from file
+./build/ludocon-debug.exe --file urls.txt
+
+# Show help
+./build/ludocon-debug.exe --help
 ```
 
 ## Configuration

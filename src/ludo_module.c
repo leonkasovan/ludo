@@ -2,7 +2,17 @@
 #include "config.h"
 #include "download_manager.h"
 #include "gui.h"
+#include <stdlib.h>
+#ifdef BUILD_CONSOLE
+#include "console_log.h"
+/* Forward-declare for Tester stubs (never called in console mode) */
+typedef struct uiMultilineEntry uiMultilineEntry;
+static void uiFreeText(char *t) { (void)free(t); }
+static char *uiMultilineEntryText(uiMultilineEntry *e) { (void)e; return NULL; }
+static void uiMultilineEntryAppend(uiMultilineEntry *e, const char *t) { (void)e; (void)t; }
+#else
 #include "ui.h"
+#endif
 
 #include <lauxlib.h>
 #include <lualib.h>

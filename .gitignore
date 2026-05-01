@@ -2,3 +2,6 @@
 /build*
 /ludo_startup.log
 /.claude
+*.tsv
+*.exe
+src/ipc/extension/**

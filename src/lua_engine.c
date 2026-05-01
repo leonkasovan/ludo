@@ -2,8 +2,13 @@
 #include "http_module.h"
 #include "ludo_module.h"
 #include "zip_module.h"
+#include "aes128.h"
+#ifdef BUILD_CONSOLE
+#include "console_log.h"
+#else
 #include "libuilua.h"
 #include "gui.h"
+#endif
 #include "thread_queue.h"
 
 #include <lua.h>
@@ -150,10 +155,13 @@ static lua_State *create_lua_state(void) {
     http_module_register(L);
     ludo_module_register(L);
     zip_module_register(L);
+    aes128_module_register(L);
     ludo_module_set_current_source_url(L, NULL);
 
     /* Register libui Lua bindings as "ui" */
+#ifndef BUILD_CONSOLE
     luaL_requiref(L, "ui", luaopen_libuilua, 1);
+#endif
     lua_pop(L, 1);
 
     return L;
@@ -301,6 +309,24 @@ void lua_engine_load_plugins(const char *plugin_dir) {
     }
     closedir(dir);
 #endif
+    /* Move generic.lua to the end so specific hoster plugins get first chance */
+    ludo_mutex_lock(&g_engine.mutex);
+    if (g_engine.count > 1) {
+        int generic_idx = -1;
+        for (int i = 0; i < g_engine.count; i++) {
+            if (strstr(g_engine.plugins[i].path, "generic.lua")) {
+                generic_idx = i;
+                break;
+            }
+        }
+        if (generic_idx >= 0 && generic_idx < g_engine.count - 1) {
+            PluginEntry tmp = g_engine.plugins[generic_idx];
+            memmove(&g_engine.plugins[generic_idx], &g_engine.plugins[generic_idx + 1],
+                    (size_t)(g_engine.count - generic_idx - 1) * sizeof(PluginEntry));
+            g_engine.plugins[g_engine.count - 1] = tmp;
+        }
+    }
+    ludo_mutex_unlock(&g_engine.mutex);
 }
 
 int lua_engine_process_url(const char *url) {
