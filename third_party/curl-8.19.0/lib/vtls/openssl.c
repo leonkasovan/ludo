@@ -119,8 +119,8 @@
 #    error "LibreSSL 2.9.1 or later required"
 #  endif
 #elif !defined(HAVE_BORINGSSL_LIKE)
-#  ifndef HAVE_OPENSSL3 /* 2021-09-07 */
-#    error "OpenSSL 3.0.0 or later required"
+#  if OPENSSL_VERSION_NUMBER < 0x10101000L /* 1.1.1+ */
+#    error "OpenSSL 1.1.1 or later required"
 #  endif
 #endif
 
@@ -5377,7 +5377,7 @@ size_t Curl_ossl_version(char *buffer, size_t size)
                         OSSL_PACKAGE, AWSLC_VERSION_NUMBER_STRING);
 #else /* OpenSSL 3+ */
   return curl_msnprintf(buffer, size, "%s/%s",
-                        OSSL_PACKAGE, OpenSSL_version(OPENSSL_VERSION_STRING));
+                        OSSL_PACKAGE, OpenSSL_version(OPENSSL_VERSION_NUMBER));
 #endif
 }
 

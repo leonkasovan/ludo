@@ -65,7 +65,7 @@ source. You need the following system packages:
 
 ```bash
 # Ubuntu / Debian
-sudo apt install cmake gcc g++ libgtk-3-dev libgnutls28-dev pkg-config
+sudo apt install cmake gcc g++ libgtk-3-dev libssl-dev pkg-config
 ```
 
 CMake automatically copies `plugins/*.lua`, `res/`, `snippets/`, and
@@ -242,6 +242,7 @@ if ck then ck:close(); http.set_cookie(cookie_path) end
 | `youku.lua` | REST API (ups.get.json) with cna/utid → HLS streams → m3u8 module download | No (public) |
 | `iqiyi.lua` | MD5-signed API (tmts) → HLS stream download via m3u8 module | No (public) |
 | `tencent.lua` | AES-CBC-whitespace signed API (getvinfo) → HLS via m3u8 module | No (public) |
+| `bitchute.lua` | REST API (video/media + video + channel) → direct MP4 + seed host fallback | No (public) |
 
 ---
 
@@ -318,6 +319,7 @@ ludo.logInfo("=== MyPlugin test done ===")
 | `build/test_youku.lua` | youku.lua |
 | `build/test_iqiyi.lua` | iqiyi.lua |
 | `build/test_tencent.lua` | tencent.lua |
+| `build/test_bitchute.lua` | bitchute.lua |
 
 ### 4.4 Test runner notes
 
@@ -338,7 +340,10 @@ ludo.logInfo("=== MyPlugin test done ===")
 | `src/main.c` | Entry point; `-s scriptfile.lua` runs standalone |
 | `ludo_scripting.md` | Full scripting API reference (read this for detailed docs) |
 | `build/ludo.log` | Runtime log — all `ludo.log*()` calls write here |
-| `third_party/curl-8.19.0/lib/curl_config_linux.h` | curl config for Linux (brotli, zstd, GnuTLS enabled) |
+| `third_party/curl-8.19.0/` | curl 8.19.0 for Windows build (static, Schannel) |
+| `third_party/curl-8.18.0/` | curl 8.18.0 for Linux build (static, GnuTLS, brotli, zstd) |
+| `third_party/curl-8.18.0/lib/curl_config_linux.h` | curl config for Linux (brotli, zstd, GnuTLS enabled) |
+| `third_party/curl-8.18.0/lib/vtls/gtls.c` | Patched: early-data version check raised to 0x030700 for GnuTLS 3.6.x compat |
 
 ---
 
@@ -389,15 +394,14 @@ See `ludo_scripting.md` §7 for the full guide. Summary:
 - After editing a plugin, just rebuild (`cmake --build build --parallel`);
   CMake's custom command copies all `plugins/*.lua` to `build/plugins/`
   automatically.
-- **Linux:** On older distros (e.g. Ubuntu 20.04) the system curl (7.68)
-  lacks brotli/zstd support. The CMake build now builds brotli and zstd
-  from bundled source as static libraries for potential future use by
-  a custom curl build. At runtime, http_module.c detects which content
-  encodings curl supports and only advertises those (dynamic Accept-
-  Encoding). Brotli and zstd static libs (`libbrotli*.a`, `libzstd.a`)
-  are produced in the build output.
+- **Linux/Synology:** The build uses system libcurl (via `find_package(CURL)`).
+  Bundled brotli and zstd are built from source as static libraries for
+  potential future use. At runtime, http_module.c and download_manager.c
+  detect which content encodings curl supports via `curl_version_info()`
+  and only advertise those (dynamic Accept-Encoding). On systems where
+  curl lacks brotli/zstd, the binary falls back gracefully to gzip/deflate.
 - **Linux build requirements:** cmake, gcc, libgtk-3-dev (for GUI),
-  pkg-config. No extra TLS libraries needed — the system curl is used.
+  libcurl4-openssl-dev. The system curl installation is used as-is.
   
 ## 9. Plugin Reference from yt-dlp
 

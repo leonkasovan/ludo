@@ -109,6 +109,7 @@ set(ZLIB_SOURCES
 
 add_library(zlib_static STATIC ${ZLIB_SOURCES})
 target_include_directories(zlib_static PUBLIC ${ZLIB_SRC_DIR})
+target_compile_definitions(zlib_static PRIVATE _POSIX_C_SOURCE=200809L)
 set_static_archive_output(zlib_static)
 set_target_properties(zlib_static PROPERTIES
     OUTPUT_NAME zlibstatic
@@ -186,7 +187,7 @@ set_static_archive_output(zstd_static)
 set_target_properties(zstd_static PROPERTIES OUTPUT_NAME zstd)
 
 # ------------------------------------------------------------
-# 4) curl-8.19.0 (built from source, static)
+# 4) curl (built from source, static)
 # ------------------------------------------------------------
 set(CURL_SRC_DIR ${CMAKE_SOURCE_DIR}/third_party/curl-8.19.0)
 file(GLOB_RECURSE CURL_SOURCES "${CURL_SRC_DIR}/lib/*.c")
@@ -253,9 +254,70 @@ if(WIN32)
         endif()
     endif()
 else()
-    find_package(CURL REQUIRED)
-    add_library(libcurl_static INTERFACE)
-    target_link_libraries(libcurl_static INTERFACE CURL::libcurl)
+    find_package(OpenSSL REQUIRED)
+    configure_file(${CURL_SRC_DIR}/lib/curl_config_linux.h ${CMAKE_BINARY_DIR}/generated/curl_config.h COPYONLY)
+
+    list(FILTER CURL_SOURCES EXCLUDE REGEX "[/\\\\]vtls[/\\\\]schannel")
+    list(FILTER CURL_SOURCES EXCLUDE REGEX "[/\\\\]vtls[/\\\\]rustls")
+    list(FILTER CURL_SOURCES EXCLUDE REGEX "[/\\\\]vtls[/\\\\]gtls")
+    list(FILTER CURL_SOURCES EXCLUDE REGEX "sspi")
+    list(FILTER CURL_SOURCES EXCLUDE REGEX "krb5_gssapi")
+    list(FILTER CURL_SOURCES EXCLUDE REGEX "[/\\\\]vtls[/\\\\]apple")
+
+    add_library(libcurl_static STATIC ${CURL_SOURCES})
+    target_include_directories(libcurl_static
+        PUBLIC
+            ${CURL_SRC_DIR}/include
+        PRIVATE
+            ${CURL_SRC_DIR}/lib
+            ${CMAKE_BINARY_DIR}/generated
+            ${BROTLI_SRC_DIR}/c/include
+            ${ZSTD_SRC_DIR}/lib
+            ${ZLIB_SRC_DIR}
+            ${OPENSSL_INCLUDE_DIR}
+    )
+
+    target_compile_definitions(libcurl_static PRIVATE
+        BUILDING_LIBCURL
+        CURL_STATICLIB
+        HAVE_CONFIG_H
+        CURL_DISABLE_ALTSVC
+        CURL_DISABLE_DICT
+        CURL_DISABLE_FILE
+        CURL_DISABLE_FTP
+        CURL_DISABLE_GOPHER
+        CURL_DISABLE_IMAP
+        CURL_DISABLE_IPFS
+        CURL_DISABLE_LDAP
+        CURL_DISABLE_LDAPS
+        CURL_DISABLE_MQTT
+        CURL_DISABLE_NEGOTIATE_AUTH
+        CURL_DISABLE_POP3
+        CURL_DISABLE_RTSP
+        CURL_DISABLE_SMB
+        CURL_DISABLE_SMTP
+        CURL_DISABLE_TELNET
+        CURL_DISABLE_TFTP
+    )
+
+    target_link_libraries(libcurl_static PUBLIC
+        zlib_static
+        brotlidec_static
+        brotlienc_static
+        brotlicommon_static
+        zstd_static
+        OpenSSL::SSL
+        OpenSSL::Crypto
+        Threads::Threads
+    )
+
+    set_static_archive_output(libcurl_static)
+    set_target_properties(libcurl_static PROPERTIES OUTPUT_NAME curl)
+
+    if(TARGET libcurl_static)
+        target_compile_options(libcurl_static PRIVATE $<$<CONFIG:Release>:-ffunction-sections> $<$<CONFIG:Release>:-fdata-sections> $<$<CONFIG:Release>:-O3>)
+        target_link_options(libcurl_static PRIVATE $<$<CONFIG:Release>:-Wl,--gc-sections> $<$<CONFIG:Release>:-s>)
+    endif()
 endif()
 
 # Helper: enable sectioning/stripping for a target in Release builds
