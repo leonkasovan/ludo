@@ -1,5 +1,11 @@
 #include "http_module.h"
 #include "dm_log.h"
+#include "thread_queue.h"
+
+#ifndef BUILD_CONSOLE
+#include "gui.h"
+#include "ui.h"
+#endif
 
 #include <stdlib.h>
 #include <string.h>
@@ -691,11 +697,296 @@ static int lua_http_read_cookie(lua_State *L) {
 }
 
 /* ------------------------------------------------------------------ */
+/* Async HTTP (GUI-only, worker thread + uiQueueMain)                   */
+/* ------------------------------------------------------------------ */
+
+#ifndef BUILD_CONSOLE
+
+#define ASYNC_HTTP_QUEUE_CAP 64
+
+typedef struct {
+    char   url[4096];
+    char   user_agent[256];
+    char   cookie_file[512];
+    long   timeout;
+    int    callback_ref;
+    lua_State *main_L;
+    int    header_count;
+    char   header_keys[16][256];
+    char   header_vals[16][1024];
+} AsyncHttpTask;
+
+typedef struct {
+    char       *body;
+    size_t      body_len;
+    long        status;
+    char       *header_data;
+    int         callback_ref;
+    lua_State   *main_L;
+} AsyncHttpResult;
+
+static struct {
+    AsyncHttpTask  *ring;
+    int             cap;
+    int             head;
+    int             tail;
+    int             count;
+    int             shutdown;
+    ludo_mutex_t    mutex;
+    ludo_cond_t     not_empty;
+    ludo_cond_t     not_full;
+    ludo_thread_t   thread;
+    int             running;
+} g_async;
+
+static void async_http_queue_push(AsyncHttpTask *task) {
+    ludo_mutex_lock(&g_async.mutex);
+    while (g_async.count == g_async.cap && !g_async.shutdown) {
+        ludo_cond_wait(&g_async.not_full, &g_async.mutex);
+        ludo_cond_reset(&g_async.not_full);
+    }
+    if (!g_async.shutdown) {
+        g_async.ring[g_async.tail] = *task;
+        g_async.tail = (g_async.tail + 1) % g_async.cap;
+        g_async.count++;
+        ludo_cond_broadcast(&g_async.not_empty);
+    }
+    ludo_mutex_unlock(&g_async.mutex);
+}
+
+static int async_http_queue_pop(AsyncHttpTask *out) {
+    ludo_mutex_lock(&g_async.mutex);
+    while (g_async.count == 0 && !g_async.shutdown) {
+        ludo_cond_reset(&g_async.not_empty);
+        ludo_cond_wait(&g_async.not_empty, &g_async.mutex);
+    }
+    if (g_async.shutdown && g_async.count == 0) {
+        ludo_mutex_unlock(&g_async.mutex);
+        return 0;
+    }
+    *out = g_async.ring[g_async.head];
+    g_async.head = (g_async.head + 1) % g_async.cap;
+    g_async.count--;
+    ludo_cond_broadcast(&g_async.not_full);
+    ludo_mutex_unlock(&g_async.mutex);
+    return 1;
+}
+
+static void async_http_on_main(void *data) {
+    AsyncHttpResult *r = (AsyncHttpResult *)data;
+    lua_State *L = r->main_L;
+
+    lua_rawgeti(L, LUA_REGISTRYINDEX, r->callback_ref);
+    luaL_unref(L, LUA_REGISTRYINDEX, r->callback_ref);
+
+    if (!lua_isfunction(L, -1)) {
+        lua_pop(L, 1);
+        free(r->body);
+        free(r->header_data);
+        free(r);
+        return;
+    }
+
+    lua_pushlstring(L, r->body ? r->body : "", r->body_len);
+    lua_pushinteger(L, r->status);
+    push_headers_table(L, r->header_data ? r->header_data : "");
+
+    if (lua_pcall(L, 3, 0, 0) != LUA_OK) {
+        const char *err = lua_tostring(L, -1);
+        if (err) gui_log(LOG_ERROR, "[async_http] callback error: %s", err);
+        lua_pop(L, 1);
+    }
+
+    free(r->body);
+    free(r->header_data);
+    free(r);
+}
+
+static void *async_http_worker(void *arg) {
+    (void)arg;
+    AsyncHttpTask task;
+    while (async_http_queue_pop(&task)) {
+        CURL *curl = curl_easy_init();
+        if (!curl) continue;
+
+        StrBuf body_buf    = {0};
+        StrBuf headers_buf = {0};
+
+        curl_easy_setopt(curl, CURLOPT_URL,            task.url);
+        curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION,  curl_write_body);
+        curl_easy_setopt(curl, CURLOPT_WRITEDATA,      &body_buf);
+        curl_easy_setopt(curl, CURLOPT_HEADERFUNCTION, curl_write_headers);
+        curl_easy_setopt(curl, CURLOPT_HEADERDATA,     &headers_buf);
+        curl_easy_setopt(curl, CURLOPT_FOLLOWLOCATION, 1L);
+        curl_easy_setopt(curl, CURLOPT_MAXREDIRS,      10L);
+        {
+            char ae[64];
+            const curl_version_info_data *vi = curl_version_info(CURLVERSION_NOW);
+            int n = snprintf(ae, sizeof(ae), "gzip, deflate");
+#ifdef CURL_VERSION_BROTLI
+            if (vi && (vi->features & CURL_VERSION_BROTLI))
+                n += snprintf(ae + n, sizeof(ae) - n, ", br");
+#endif
+#ifdef CURL_VERSION_ZSTD
+            if (vi && (vi->features & CURL_VERSION_ZSTD))
+                n += snprintf(ae + n, sizeof(ae) - n, ", zstd");
+#endif
+            curl_easy_setopt(curl, CURLOPT_ACCEPT_ENCODING, ae);
+        }
+        curl_easy_setopt(curl, CURLOPT_USERAGENT,
+                         task.user_agent[0] ? task.user_agent
+                                            : "Mozilla/5.0 LUDO/1.0");
+
+        curl_easy_setopt(curl, CURLOPT_COOKIEFILE, ""); /* activate in-memory jar */
+        if (task.cookie_file[0]) {
+            curl_easy_setopt(curl, CURLOPT_COOKIEFILE, task.cookie_file);
+            curl_easy_setopt(curl, CURLOPT_COOKIEJAR,  task.cookie_file);
+        }
+
+        if (task.timeout > 0)
+            curl_easy_setopt(curl, CURLOPT_TIMEOUT, task.timeout);
+
+        struct curl_slist *headers = NULL;
+        for (int i = 0; i < task.header_count; i++) {
+            char hdr[1280];
+            snprintf(hdr, sizeof(hdr), "%s: %s",
+                     task.header_keys[i], task.header_vals[i]);
+            headers = curl_slist_append(headers, hdr);
+        }
+        if (headers)
+            curl_easy_setopt(curl, CURLOPT_HTTPHEADER, headers);
+
+#ifdef DEBUG
+        curl_easy_setopt(curl, CURLOPT_VERBOSE, 1L);
+        curl_easy_setopt(curl, CURLOPT_DEBUGFUNCTION, http_curl_debug_cb);
+        curl_easy_setopt(curl, CURLOPT_DEBUGDATA, NULL);
+        dm_log("[async_http] %s", task.url);
+#endif
+
+        CURLcode res = curl_easy_perform(curl);
+
+        long http_status = 0;
+        curl_easy_getinfo(curl, CURLINFO_RESPONSE_CODE, &http_status);
+
+        AsyncHttpResult *result = (AsyncHttpResult *)malloc(sizeof(AsyncHttpResult));
+        if (result) {
+            result->body_len    = body_buf.len;
+            result->body        = body_buf.data;
+            result->status      = (res == CURLE_OK) ? http_status : 0;
+            result->header_data = headers_buf.data;
+            result->callback_ref = task.callback_ref;
+            result->main_L      = task.main_L;
+            uiQueueMain(async_http_on_main, result);
+        } else {
+            strbuf_free(&body_buf);
+            strbuf_free(&headers_buf);
+        }
+
+        curl_slist_free_all(headers);
+        curl_easy_cleanup(curl);
+    }
+    return NULL;
+}
+
+void async_http_init(void) {
+    memset(&g_async, 0, sizeof(g_async));
+    g_async.cap = ASYNC_HTTP_QUEUE_CAP;
+    g_async.ring = (AsyncHttpTask *)malloc(
+        (size_t)g_async.cap * sizeof(AsyncHttpTask));
+    if (!g_async.ring) return;
+    ludo_mutex_init(&g_async.mutex);
+    ludo_cond_init(&g_async.not_empty);
+    ludo_cond_init(&g_async.not_full);
+    if (ludo_thread_create(&g_async.thread, async_http_worker, NULL) == 0)
+        g_async.running = 1;
+}
+
+void async_http_shutdown(void) {
+    if (!g_async.running) return;
+    ludo_mutex_lock(&g_async.mutex);
+    g_async.shutdown = 1;
+    ludo_cond_broadcast(&g_async.not_empty);
+    ludo_cond_broadcast(&g_async.not_full);
+    ludo_mutex_unlock(&g_async.mutex);
+    ludo_thread_join(g_async.thread);
+    g_async.running = 0;
+
+    ludo_cond_destroy(&g_async.not_empty);
+    ludo_cond_destroy(&g_async.not_full);
+    ludo_mutex_destroy(&g_async.mutex);
+    free(g_async.ring);
+    memset(&g_async, 0, sizeof(g_async));
+}
+
+static int lua_http_get_async(lua_State *L) {
+    const char *url = luaL_checkstring(L, 1);
+    int opts_idx = lua_istable(L, 2) ? 2 : 0;
+    luaL_checktype(L, 3, LUA_TFUNCTION);
+
+    lua_pushvalue(L, 3);
+    int cb_ref = luaL_ref(L, LUA_REGISTRYINDEX);
+
+    AsyncHttpTask task;
+    memset(&task, 0, sizeof(task));
+    strncpy(task.url, url, sizeof(task.url) - 1);
+    task.callback_ref = cb_ref;
+    task.main_L = L;
+    task.timeout = 30;
+
+    if (opts_idx) {
+        lua_getfield(L, opts_idx, "user_agent");
+        if (lua_isstring(L, -1))
+            strncpy(task.user_agent, lua_tostring(L, -1), sizeof(task.user_agent) - 1);
+        lua_pop(L, 1);
+
+        lua_getfield(L, opts_idx, "timeout");
+        if (lua_isnumber(L, -1))
+            task.timeout = lua_tointeger(L, -1);
+        lua_pop(L, 1);
+
+        lua_getfield(L, opts_idx, "headers");
+        if (lua_istable(L, -1)) {
+            lua_pushnil(L);
+            while (lua_next(L, -2) && task.header_count < 16) {
+                const char *k = lua_tostring(L, -2);
+                const char *v = lua_tostring(L, -1);
+                if (k && v) {
+                    strncpy(task.header_keys[task.header_count], k, 255);
+                    strncpy(task.header_vals[task.header_count], v, 1023);
+                    task.header_count++;
+                }
+                lua_pop(L, 1);
+            }
+        }
+        lua_pop(L, 1);
+    }
+
+    HttpSession *s = get_session(L);
+    if (s && s->cookie_file[0])
+        strncpy(task.cookie_file, s->cookie_file, sizeof(task.cookie_file) - 1);
+
+    async_http_queue_push(&task);
+    return 0;
+}
+
+#else /* BUILD_CONSOLE */
+
+static int lua_http_get_async(lua_State *L) {
+    (void)L;
+    lua_pushnil(L);
+    lua_pushstring(L, "http.get_async requires GUI build");
+    return 2;
+}
+
+#endif /* BUILD_CONSOLE */
+
+/* ------------------------------------------------------------------ */
 /* Module registration                                                  */
 /* ------------------------------------------------------------------ */
 
 static const luaL_Reg http_funcs[] = {
     { "get",          lua_http_get         },
+    { "get_async",    lua_http_get_async   },
     { "head",         lua_http_head        },
     { "post",         lua_http_post        },
     { "set_cookie",   lua_http_set_cookie  },

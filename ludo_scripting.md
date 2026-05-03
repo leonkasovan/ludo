@@ -592,7 +592,78 @@ if status == 200 then
 end
 ```
 
-### 4.2 `http.head(url [, options])` → body, status, headers
+### 4.2 `http.get_async(url, options, callback)` → nothing
+
+Perform an asynchronous HTTP GET request. The request runs on a background
+worker thread so the GUI stays responsive. The callback fires on the main
+thread when the response arrives.
+
+> **Available in GUI builds only.** Console builds (`ludocon`) return `nil, "http.get_async requires GUI build"`.
+> The callback is **one-shot** — it fires exactly once and is automatically unregistered.
+> The Lua state that calls `http.get_async` must remain alive until the callback fires (i.e. while `ui.Main()` is running).
+
+**Parameters:**
+- `url` (string) — The URL to fetch.
+- `options` (table) — Request options (see [Options Table](#47-options-table)).
+- `callback` (function) — Called as `callback(body, status, headers)`.
+
+**Callback arguments:**
+- `body` (string) — Response body (empty string on error).
+- `status` (number) — HTTP status code (0 on network error).
+- `headers` (table) — Response headers as key-value pairs.
+
+```lua
+http.get_async("https://myserver.com/image.png",
+    { user_agent = "Ludo/1.0", timeout = 10 },
+    function(body, status, headers)
+        if status == 200 then
+            local img = ui.LoadImageFromMemory(body)
+            -- update table model, etc.
+        else
+            ludo.logError("Image load failed: HTTP " .. status)
+        end
+    end)
+```
+
+## Loading images on-the-fly with `http.get_async` + `ui.LoadImageFromMemory`
+
+```lua
+local images = {}  -- keeps uiImage objects alive for table model
+
+local handler = {
+    NumColumns = function(m) return 2 end,
+    ColumnType = function(m, col)
+        if col == 0 then return ui.TableValueTypeString end
+        return ui.TableValueTypeImage
+    end,
+    NumRows = function(m) return #urls end,
+    CellValue = function(m, row, col)
+        if col == 0 then return urls[row + 1].title end
+        return images[row + 1]  -- nil until loaded
+    end,
+    SetCellValue = function(m, row, col, val) end,
+}
+
+local model = ui.NewTableModel(handler)
+local tbl   = ui.NewTable(model)
+tbl:AppendTextColumn("Title", 0, ui.TableModelColumnNeverEditable)
+tbl:AppendImageColumn("Thumb", 1)
+
+tbl:OnSelectionChanged(function(t)
+    local row = tbl:Selection()
+    if row and row >= 0 and not images[row + 1] then
+        http.get_async(urls[row + 1].img_url, { timeout = 10 },
+            function(body, status)
+                if status == 200 and body and #body > 0 then
+                    images[row + 1] = ui.LoadImageFromMemory(body)
+                    model:RowChanged(row)
+                end
+            end)
+    end
+end)
+```
+
+### 4.3 `http.head(url [, options])` → body, status, headers
 
 Perform an HTTP HEAD request (no response body).
 
@@ -621,7 +692,7 @@ if status == 301 or status == 302 then
 end
 ```
 
-### 4.3 `http.post(url, body [, options])` → body, status, headers
+### 4.4 `http.post(url, body [, options])` → body, status, headers
 
 Perform an HTTP POST request.
 
@@ -663,7 +734,7 @@ local body, status = http.post(
 )
 ```
 
-### 4.4 `http.set_cookie(filepath)`
+### 4.5 `http.set_cookie(filepath)`
 
 Set a file path for persistent cookie storage. All subsequent requests will
 read and write cookies from this file.
@@ -679,7 +750,7 @@ http.get("https://example.com/login")
 http.get("https://example.com/dashboard")  -- uses session cookies
 ```
 
-### 4.5 `http.clear_cookies()`
+### 4.6 `http.clear_cookies()`
 
 Clear the cookie jar and last URL state.
 
@@ -687,7 +758,7 @@ Clear the cookie jar and last URL state.
 http.clear_cookies()
 ```
 
-### 4.6 `http.get_last_url()` → string
+### 4.7 `http.get_last_url()` → string
 
 Get the last effective URL after all redirects from the most recent request.
 
@@ -700,7 +771,7 @@ local final_url = http.get_last_url()
 print(final_url)  --> https://github.com/user/repo/releases/tag/v1.2.3
 ```
 
-### 4.7 Options Table
+### 4.8 Options Table
 
 All HTTP request functions accept an optional `options` table:
 
@@ -712,7 +783,7 @@ All HTTP request functions accept an optional `options` table:
 | `headers` | table | none | Custom headers as `{["Name"] = "value"}` |
 | `cookies` | string | none | Path to cookie jar file |
 
-### 4.8 `http.url_encode(str)` → string
+### 4.9 `http.url_encode(str)` → string
 
 URL-encode a string (percent-encoding).
 
@@ -727,7 +798,7 @@ local encoded = http.url_encode("hello world & more")
 print(encoded)  --> hello%20world%20%26%20more
 ```
 
-### 4.9 `http.url_decode(str)` → string
+### 4.10 `http.url_decode(str)` → string
 
 Decode a URL-encoded string.
 
@@ -742,7 +813,7 @@ local decoded = http.url_decode("hello%20world%20%26%20more")
 print(decoded)  --> hello world & more
 ```
 
-### 4.10 `http.parse_url(url)` → table
+### 4.11 `http.parse_url(url)` → table
 
 Parse a URL into its components.
 
@@ -761,7 +832,7 @@ print(parts.path)    --> /api/data
 print(parts.query)   --> key=value
 ```
 
-### 4.11 Complete HTTP Example
+### 4.12 Complete HTTP Example
 
 ```lua
 -- Download plugin: find the latest release of a GitHub repo
@@ -793,7 +864,7 @@ end
 return plugin
 ```
 
-### 4.12 `http.read_cookie(filepath, name)` → string|nil
+### 4.13 `http.read_cookie(filepath, name)` → string|nil
 
 Read a named cookie value from a Netscape-format cookie file.
 
@@ -835,7 +906,7 @@ if sid then
 end
 ```
 
-### 4.13 `http.base64_encode(str)` → string
+### 4.14 `http.base64_encode(str)` → string
 
 Base64-encode a string (binary-safe).
 
@@ -850,7 +921,7 @@ local b64 = http.base64_encode("hello world")
 print(b64)  --> aGVsbG8gd29ybGQ=
 ```
 
-### 4.14 `http.base64_decode(str)` → string
+### 4.15 `http.base64_decode(str)` → string
 
 Decode a base64-encoded string (binary-safe).
 
@@ -865,7 +936,7 @@ local raw = http.base64_decode("aGVsbG8gd29ybGQ=")
 print(raw)  --> hello world
 ```
 
-### 4.15 `http.sha256(str)` → string
+### 4.16 `http.sha256(str)` → string
 
 Compute the SHA-256 digest of a string. Returns the raw 32-byte binary digest
 (NOT hex-encoded). Use `http.base64_encode` to convert to base64, or iterate
@@ -893,7 +964,7 @@ local b64_digest = http.base64_encode(http.sha256(data))
 
 **Implementation note:** Standalone FIPS 180-4 SHA-256; no external dependency.
 
-### 4.16 `http.aes128_cbc_decrypt(data, key, iv)` → string
+### 4.17 `http.aes128_cbc_decrypt(data, key, iv)` → string
 
 Decrypt AES-128-CBC encrypted data and strip PKCS7 padding.
 
@@ -914,7 +985,7 @@ local decrypted = http.aes128_cbc_decrypt(encrypted_segment, key, iv)
 
 **Implementation note:** Standalone AES-128; no external dependency.
 
-### 4.17 `http.aes128_cbc_encrypt(data, key, iv)` → string
+### 4.18 `http.aes128_cbc_encrypt(data, key, iv)` → string
 
 Encrypt data with AES-128-CBC and add PKCS7 padding.
 
@@ -2138,6 +2209,7 @@ return plugin
 | Function | Signature | Returns |
 |----------|-----------|---------|
 | `http.get` | `(url [, opts])` | `body, status, headers` |
+| `http.get_async` | `(url, opts, callback)` | — (callback receives `body, status, headers`) |
 | `http.head` | `(url [, opts])` | `body, status, headers` |
 | `http.post` | `(url, body [, opts])` | `body, status, headers` |
 | `http.set_cookie` | `(filepath)` | — |

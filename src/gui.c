@@ -1578,6 +1578,7 @@ static void begin_app_shutdown(void) {
 void gui_shutdown(void) {
     if (!g_gui.url_worker_started) return;
 
+    async_http_shutdown();
     ludo_thread_join(g_gui.url_worker);
     g_gui.url_worker_started = 0;
 }
@@ -2208,6 +2209,8 @@ void gui_create(void) {
     }
     /* We intentionally don't join this thread — it exits when the queue
        is shut down during download_manager_shutdown(). */
+
+    async_http_init();
     
     {
         char msg[256];

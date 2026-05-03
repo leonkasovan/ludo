@@ -65,4 +65,11 @@ void ludo_mutex_destroy(ludo_mutex_t *m);
 void ludo_mutex_lock(ludo_mutex_t *m);
 void ludo_mutex_unlock(ludo_mutex_t *m);
 
+/* Cross-platform condition variable helpers */
+void ludo_cond_init(ludo_cond_t *c);
+void ludo_cond_destroy(ludo_cond_t *c);
+void ludo_cond_broadcast(ludo_cond_t *c);
+void ludo_cond_wait(ludo_cond_t *c, ludo_mutex_t *m);
+void ludo_cond_reset(ludo_cond_t *c);
+
 #endif /* LUDO_THREAD_QUEUE_H */

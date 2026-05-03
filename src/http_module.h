@@ -8,6 +8,7 @@
  * After this call Lua scripts can call:
  *
  *   body, status, headers = http.get(url [, options])
+ *   http.get_async(url, options, callback)   -- GUI only, callback on main thread
  *   status, headers        = http.head(url [, options])
  *   body, status, headers  = http.post(url, body [, options])
  *   http.set_cookie(filepath)
@@ -25,5 +26,10 @@
  *   cookies          (string, path to cookiejar file)
  */
 void http_module_register(lua_State *L);
+
+#ifndef BUILD_CONSOLE
+void async_http_init(void);
+void async_http_shutdown(void);
+#endif
 
 #endif /* LUDO_HTTP_MODULE_H */

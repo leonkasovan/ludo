@@ -52,13 +52,13 @@ void ludo_thread_join(ludo_thread_t t) {
 }
 
 /* Use native Windows condition variables so semantics match POSIX. */
-static void cond_init(ludo_cond_t *c)    { InitializeConditionVariable(c); }
-static void cond_destroy(ludo_cond_t *c) { (void)c; }
+void ludo_cond_init(ludo_cond_t *c)    { InitializeConditionVariable(c); }
+void ludo_cond_destroy(ludo_cond_t *c) { (void)c; }
 
-static void cond_signal_all(ludo_cond_t *c) { WakeAllConditionVariable(c); }
-static void cond_reset(ludo_cond_t *c)      { (void)c; }
+void ludo_cond_broadcast(ludo_cond_t *c) { WakeAllConditionVariable(c); }
+void ludo_cond_reset(ludo_cond_t *c)      { (void)c; }
 
-static void cond_wait(ludo_cond_t *c, ludo_mutex_t *m) {
+void ludo_cond_wait(ludo_cond_t *c, ludo_mutex_t *m) {
     SleepConditionVariableCS(c, &m->cs, INFINITE);
 }
 
@@ -76,11 +76,11 @@ int ludo_thread_create(ludo_thread_t *t, void *(*fn)(void *), void *arg) {
 }
 void ludo_thread_join(ludo_thread_t t) { pthread_join(t, NULL); }
 
-static void cond_init(ludo_cond_t *c)         { pthread_cond_init(c, NULL); }
-static void cond_destroy(ludo_cond_t *c)      { pthread_cond_destroy(c); }
-static void cond_signal_all(ludo_cond_t *c)   { pthread_cond_broadcast(c); }
-static void cond_reset(ludo_cond_t *c)        { (void)c; /* no-op */ }
-static void cond_wait(ludo_cond_t *c, ludo_mutex_t *m) {
+void ludo_cond_init(ludo_cond_t *c)         { pthread_cond_init(c, NULL); }
+void ludo_cond_destroy(ludo_cond_t *c)      { pthread_cond_destroy(c); }
+void ludo_cond_broadcast(ludo_cond_t *c)   { pthread_cond_broadcast(c); }
+void ludo_cond_reset(ludo_cond_t *c)        { (void)c; /* no-op */ }
+void ludo_cond_wait(ludo_cond_t *c, ludo_mutex_t *m) {
     pthread_cond_wait(c, m);
 }
 
@@ -99,16 +99,16 @@ int task_queue_init(TaskQueue *q, int capacity) {
     q->count    = 0;
     q->shutdown = 0;
     ludo_mutex_init(&q->mutex);
-    cond_init(&q->not_empty);
-    cond_init(&q->not_full);
+    ludo_cond_init(&q->not_empty);
+    ludo_cond_init(&q->not_full);
     return 0;
 }
 
 void task_queue_destroy(TaskQueue *q) {
     free(q->buf);
     q->buf = NULL;
-    cond_destroy(&q->not_empty);
-    cond_destroy(&q->not_full);
+    ludo_cond_destroy(&q->not_empty);
+    ludo_cond_destroy(&q->not_full);
     ludo_mutex_destroy(&q->mutex);
 }
 
@@ -122,14 +122,14 @@ void task_queue_push(TaskQueue *q, const char *url) {
 void task_queue_push_task(TaskQueue *q, const URLTask *task) {
     ludo_mutex_lock(&q->mutex);
     while (q->count == q->capacity && !q->shutdown) {
-        cond_wait(&q->not_full, &q->mutex);
-        cond_reset(&q->not_full);
+        ludo_cond_wait(&q->not_full, &q->mutex);
+        ludo_cond_reset(&q->not_full);
     }
     if (!q->shutdown) {
         q->buf[q->tail] = *task;
         q->tail = (q->tail + 1) % q->capacity;
         q->count++;
-        cond_signal_all(&q->not_empty);
+        ludo_cond_broadcast(&q->not_empty);
     }
     ludo_mutex_unlock(&q->mutex);
 }
@@ -137,8 +137,8 @@ void task_queue_push_task(TaskQueue *q, const URLTask *task) {
 int task_queue_pop(TaskQueue *q, URLTask *out) {
     ludo_mutex_lock(&q->mutex);
     while (q->count == 0 && !q->shutdown) {
-        cond_reset(&q->not_empty);
-        cond_wait(&q->not_empty, &q->mutex);
+        ludo_cond_reset(&q->not_empty);
+        ludo_cond_wait(&q->not_empty, &q->mutex);
     }
     if (q->shutdown) {
         ludo_mutex_unlock(&q->mutex);
@@ -147,7 +147,7 @@ int task_queue_pop(TaskQueue *q, URLTask *out) {
     *out    = q->buf[q->head];
     q->head = (q->head + 1) % q->capacity;
     q->count--;
-    cond_signal_all(&q->not_full);
+    ludo_cond_broadcast(&q->not_full);
     ludo_mutex_unlock(&q->mutex);
     return 1;
 }
@@ -155,7 +155,7 @@ int task_queue_pop(TaskQueue *q, URLTask *out) {
 void task_queue_shutdown(TaskQueue *q) {
     ludo_mutex_lock(&q->mutex);
     q->shutdown = 1;
-    cond_signal_all(&q->not_empty);
-    cond_signal_all(&q->not_full);
+    ludo_cond_broadcast(&q->not_empty);
+    ludo_cond_broadcast(&q->not_full);
     ludo_mutex_unlock(&q->mutex);
 }
