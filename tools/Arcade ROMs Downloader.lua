@@ -2,6 +2,7 @@
 -- Downloads Arcade ROMs from the archive.org.
 -- Requires lualib/ftcsv.lua for CSV parsing.
 -- CSV db files must be in the same directory as this script.
+-- System id based on https://api.screenscraper.fr/api2/systemesListe.php?output=json&devid=recalbox&devpassword=C3KbyjX8PKsUgm2tu53y&softname=Emulationstation-Recalbox-9.1&ssid=test&sspassword=test
 
 local ui    = require("ui")
 local ftcsv = require("ftcsv")
@@ -14,13 +15,15 @@ local TOOLS_DIR = _src:match("^@(.+)[\\/][^\\/]+$") or "tools"
 -- Platform definitions using the actual CSV header column names.
 local PLATFORMS = {
     { name = "FBNeo", file = "FBNEO.csv",
-	  source = "https://archive.org/download/cylums-final-burn-neo-rom-collection/Cylum%27s%20FinalBurn%20Neo%20ROM%20Collection%20%2802-18-21%29",
+	  source_url = "https://archive.org/download/cylums-final-burn-neo-rom-collection/Cylum%27s%20FinalBurn%20Neo%20ROM%20Collection%20%2802-18-21%29",
+	  scrape_url = "https://api.screenscraper.fr/api2/jeuInfos.php?output=json&devid=recalbox&devpassword=C3KbyjX8PKsUgm2tu53y&softname=Emulationstation-Recalbox-9.1&ssid=test&sspassword=test&romtype=rom&systemeid=75&romnom=",
       col_id  = "game_id",
       col_name = "game_name",
       col_info = "game_info",
 	  col_size   = "game_size" },
     { name = "MAME", file = "MAME.csv",
-	  source = "https://archive.org/download/mame-0.221-roms-merged",
+	  source_url = "https://archive.org/download/mame-0.221-roms-merged",
+	  scrape_url = "https://api.screenscraper.fr/api2/jeuInfos.php?output=json&devid=recalbox&devpassword=C3KbyjX8PKsUgm2tu53y&softname=Emulationstation-Recalbox-9.1&ssid=test&sspassword=test&romtype=rom&systemeid=6&romnom=",
       col_id  = "game_id",
       col_name = "game_name",
       col_info = "game_info",
@@ -66,7 +69,7 @@ local function search_platform(platform, query, results)
 				game_id   = id,
 				game_name = name,
 				game_info = trim(row[platform.col_info]),
-				rom_url   = platform.source .. "/" .. id,
+				rom_url   = platform.source_url .. "/" .. id,
 				rom_size  = trim(row[platform.col_size]),
 			})
 		end
@@ -114,6 +117,7 @@ plat_box:SetPadded(1)
 local plat_cbs = {}
 for _, p in ipairs(PLATFORMS) do
     local cb = ui.NewCheckbox(p.name)
+    cb:SetChecked(1)
     plat_cbs[p.name] = cb
     plat_box:Append(cb, false)
 end
@@ -144,7 +148,8 @@ results_tbl:AppendTextColumn("Info",   COL_INFO,   ui.TableModelColumnNeverEdita
 results_tbl:SetSelectionMode(ui.TableSelectionModeZeroOrOne)
 results_tbl:ColumnSetWidth(0, 40)
 results_tbl:ColumnSetWidth(1, 80)
-results_tbl:ColumnSetWidth(2, 150)
+results_tbl:ColumnSetWidth(2, 300)
+results_tbl:ColumnSetWidth(3, 400)
 root:Append(results_tbl, true)
 
 -- Game details group
@@ -288,3 +293,55 @@ win:Show()
 while win_open do
     if ui.MainStep(true) == 0 then break end
 end
+
+--------------------------------------------------------------------------------
+-- Table of search results with images that load on selection
+local results = {
+    { title = "Item 1", img_url = "https://myserver.com/1.png" },
+    { title = "Item 2", img_url = "https://myserver.com/2.png" },
+    { title = "Item 3", img_url = "https://myserver.com/3.png" },
+}
+
+local images = {}  -- keeps uiImage objects alive
+
+local handler = {
+    NumColumns = function(m) return 2 end,
+    ColumnType = function(m, col)
+        if col == 0 then return ui.TableValueTypeString end
+        return ui.TableValueTypeImage
+    end,
+    NumRows = function(m) return #results end,
+    CellValue = function(m, row, col)
+        if col == 0 then return results[row+1].title end
+        return images[row+1]  -- nil if not yet loaded
+    end,
+    SetCellValue = function(m, row, col, val) end,
+}
+
+local model = ui.NewTableModel(handler)
+local tbl = ui.NewTable(model)
+tbl:AppendTextColumn("Title", 0, ui.TableModelColumnNeverEditable)
+tbl:AppendImageColumn("Thumb", 1)
+
+local function load_image(row)
+    local url = results[row+1].img_url
+    http.get_async(url, { timeout = 10 }, function(body, status)
+        if status == 200 and body and #body > 0 then
+            images[row+1] = ui.LoadImageFromMemory(body)
+            model:RowChanged(row)  -- triggers table repaint
+        end
+    end)
+end
+
+-- Load images when user selects a row
+tbl:OnSelectionChanged(function(t)
+    local sel = tbl:Selection()
+    if sel and sel >= 0 then
+        load_image(sel)
+    end
+end)
+
+win:SetChild(tbl)
+win:OnClosing(function(w) ui.Quit() end)
+win:Show()
+ui.Main()
