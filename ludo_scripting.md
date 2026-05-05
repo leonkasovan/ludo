@@ -663,6 +663,59 @@ tbl:OnSelectionChanged(function(t)
 end)
 ```
 
+```lua
+-- Table of search results with images that load on selection
+local results = {
+    { title = "Item 1", img_url = "https://myserver.com/1.png" },
+    { title = "Item 2", img_url = "https://myserver.com/2.png" },
+    { title = "Item 3", img_url = "https://myserver.com/3.png" },
+}
+
+local images = {}  -- keeps uiImage objects alive
+
+local handler = {
+    NumColumns = function(m) return 2 end,
+    ColumnType = function(m, col)
+        if col == 0 then return ui.TableValueTypeString end
+        return ui.TableValueTypeImage
+    end,
+    NumRows = function(m) return #results end,
+    CellValue = function(m, row, col)
+        if col == 0 then return results[row+1].title end
+        return images[row+1]  -- nil if not yet loaded
+    end,
+    SetCellValue = function(m, row, col, val) end,
+}
+
+local model = ui.NewTableModel(handler)
+local tbl = ui.NewTable(model)
+tbl:AppendTextColumn("Title", 0, ui.TableModelColumnNeverEditable)
+tbl:AppendImageColumn("Thumb", 1)
+
+local function load_image(row)
+    local url = results[row+1].img_url
+    http.get_async(url, { timeout = 10 }, function(body, status)
+        if status == 200 and body and #body > 0 then
+            images[row+1] = ui.LoadImageFromMemory(body)
+            model:RowChanged(row)  -- triggers table repaint
+        end
+    end)
+end
+
+-- Load images when user selects a row
+tbl:OnSelectionChanged(function(t)
+    local sel = tbl:Selection()
+    if sel and sel >= 0 then
+        load_image(sel)
+    end
+end)
+
+win:SetChild(tbl)
+win:OnClosing(function(w) ui.Quit() end)
+win:Show()
+ui.Main()
+```
+
 ### 4.3 `http.head(url [, options])` → body, status, headers
 
 Perform an HTTP HEAD request (no response body).
