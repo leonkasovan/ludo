@@ -31,6 +31,7 @@ local PLATFORMS = {
 }
 local MAX_RESULTS = 99
 local search_results = {}
+local current_details_id = nil
 
 local function trim(s)
     return (s or ""):match("^%s*(.-)%s*$") or ""
@@ -153,25 +154,17 @@ results_tbl:ColumnSetWidth(3, 400)
 root:Append(results_tbl, true)
 
 -- Game details group
--- { platform, game_id, game_name, game_info, rom_url, rom_size }
 local det_group = ui.NewGroup("Rom Details")
 det_group:SetMargined(1)
-local det_box = ui.NewVerticalBox()
+local det_box = ui.NewHorizontalBox()
 det_box:SetPadded(1)
-local lbl_plat   = ui.NewLabel("Platform : -")
-local lbl_id     = ui.NewLabel("Game ID  : -")
-local lbl_name   = ui.NewLabel("Name     : -")
-local lbl_info   = ui.NewLabel("Info     : -")
-local lbl_url    = ui.NewLabel("URL      : -")
-local lbl_size   = ui.NewLabel("Size     : -")
-det_box:Append(lbl_plat)
-det_box:Append(lbl_id)
-det_box:Append(lbl_name)
-det_box:Append(lbl_info)
-det_box:Append(lbl_url)
-det_box:Append(lbl_size)
+local entry_info = ui.NewMultilineEntry()
+entry_info:SetReadOnly(1)
+det_box:Append(entry_info, true)
+local ss_img = ui.NewStaticImage()
+det_box:Append(ss_img, true)
 det_group:SetChild(det_box)
-root:Append(det_group, false)
+root:Append(det_group, true)
 
 -- Download button
 local dl_btn = ui.NewButton("  Download Selected  ")
@@ -183,21 +176,111 @@ win:SetChild(root)
 
 local function update_details(idx)
     if not idx or idx < 1 or idx > #search_results then
-        lbl_plat:SetText("Platform : -")
-        lbl_id:SetText("Game ID  : -")
-        lbl_name:SetText("Name     : -")
-        lbl_info:SetText("Info     : -")
-        lbl_url:SetText("URL      : -")
-        lbl_size:SetText("Size     : -")
+        entry_info:SetText("")
+        ss_img:Clear()
+        current_details_id = nil
         return
     end
     local r = search_results[idx]
-    lbl_plat:SetText("Platform : " .. (r.platform or "-"))
-    lbl_id:SetText("Game ID  : " .. (r.game_id or "-"))
-    lbl_name:SetText("Name     : " .. (r.game_name or "-"))
-    lbl_info:SetText("Info     : " .. (r.game_info or "-"))
-    lbl_url:SetText("URL      : " .. (r.rom_url or "-"))
-    lbl_size:SetText("Size     : " .. (r.rom_size or "-"))
+    current_details_id = r.game_id
+    ss_img:Clear()
+    local scrape_url = nil
+    for _, p in ipairs(PLATFORMS) do
+        if p.name == r.platform then
+            scrape_url = p.scrape_url .. r.game_id
+            break
+        end
+    end
+    if scrape_url then
+        entry_info:SetText("Loading details...")
+        http.get_async(scrape_url, { timeout = 30 }, function(body, status)
+            if current_details_id ~= r.game_id then return end
+            if status ~= 200 or not body or #body == 0 then
+                entry_info:SetText("Failed to fetch details (HTTP " .. tostring(status) .. ")")
+                return
+            end
+            local ok, data = pcall(json.decode, body)
+            if not ok or not data or not data.response or not data.response.jeu then
+                entry_info:SetText("Failed to parse response.")
+                return
+            end
+            local jeu = data.response.jeu
+            local lines = {}
+            local names = jeu.noms
+            if names and #names > 0 then
+                local name_text = ""
+                for _, n in ipairs(names) do
+                    if n.region == "en" or n.region == "ss" or n.region == "wor" then
+                        name_text = n.text; break
+                    end
+                end
+                if name_text == "" then name_text = names[1].text end
+                table.insert(lines, "Name: " .. name_text)
+            end
+            if jeu.developpeur and jeu.developpeur.text ~= "" then
+                table.insert(lines, "Developer: " .. jeu.developpeur.text)
+            end
+            if jeu.editeur and jeu.editeur.text ~= "" then
+                table.insert(lines, "Publisher: " .. jeu.editeur.text)
+            end
+            if jeu.dates and #jeu.dates > 0 and jeu.dates[1].text ~= "" then
+                table.insert(lines, "Year: " .. jeu.dates[1].text)
+            end
+            if jeu.genres and #jeu.genres > 0 then
+                for _, g in ipairs(jeu.genres) do
+                    if g.noms and g.principale == "1" then
+                        for _, n in ipairs(g.noms) do
+                            if n.langue == "en" then
+                                table.insert(lines, "Genre: " .. n.text); break
+                            end
+                        end
+                        break
+                    end
+                end
+            end
+            if jeu.joueurs and jeu.joueurs.text ~= "" then
+                table.insert(lines, "Players: " .. jeu.joueurs.text)
+            end
+            if jeu.note and jeu.note.text ~= "" then
+                table.insert(lines, "Rating: " .. jeu.note.text .. "/20")
+            end
+            if jeu.resolution and jeu.resolution ~= "" then
+                table.insert(lines, "Resolution: " .. jeu.resolution)
+            end
+            if jeu.synopsis and #jeu.synopsis > 0 then
+                local synopsis = ""
+                for _, s in ipairs(jeu.synopsis) do
+                    if s.langue == "en" then synopsis = s.text; break end
+                end
+                if synopsis == "" then synopsis = jeu.synopsis[1].text end
+                table.insert(lines, "")
+                table.insert(lines, "Synopsis:")
+                table.insert(lines, synopsis:match("^%s*(.-)%s*$"))
+            end
+            local ss_url = nil
+            if jeu.medias and #jeu.medias > 0 then
+                for _, m in ipairs(jeu.medias) do
+                    if m.type == "ss" and m.url and m.url ~= "" then
+                        ss_url = m.url; break
+                    end
+                end
+            end
+            -- if ss_url then
+            --     table.insert(lines, "")
+            --     table.insert(lines, "Screenshot: " .. ss_url)
+            -- end
+            entry_info:SetText(table.concat(lines, "\n"))
+            if ss_url then
+                http.get_async(ss_url, { timeout = 30 }, function(img_body, img_status)
+                    if current_details_id ~= r.game_id then return end
+                    if img_status ~= 200 or not img_body or #img_body == 0 then return end
+                    ss_img:SetImageFromMemory(img_body)
+                end)
+            end
+        end)
+    else
+        entry_info:SetText("Details not available.")
+    end
 end
 
 -- Clicking a row in the table updates the details panel.
@@ -293,55 +376,3 @@ win:Show()
 while win_open do
     if ui.MainStep(true) == 0 then break end
 end
-
---------------------------------------------------------------------------------
--- Table of search results with images that load on selection
-local results = {
-    { title = "Item 1", img_url = "https://myserver.com/1.png" },
-    { title = "Item 2", img_url = "https://myserver.com/2.png" },
-    { title = "Item 3", img_url = "https://myserver.com/3.png" },
-}
-
-local images = {}  -- keeps uiImage objects alive
-
-local handler = {
-    NumColumns = function(m) return 2 end,
-    ColumnType = function(m, col)
-        if col == 0 then return ui.TableValueTypeString end
-        return ui.TableValueTypeImage
-    end,
-    NumRows = function(m) return #results end,
-    CellValue = function(m, row, col)
-        if col == 0 then return results[row+1].title end
-        return images[row+1]  -- nil if not yet loaded
-    end,
-    SetCellValue = function(m, row, col, val) end,
-}
-
-local model = ui.NewTableModel(handler)
-local tbl = ui.NewTable(model)
-tbl:AppendTextColumn("Title", 0, ui.TableModelColumnNeverEditable)
-tbl:AppendImageColumn("Thumb", 1)
-
-local function load_image(row)
-    local url = results[row+1].img_url
-    http.get_async(url, { timeout = 10 }, function(body, status)
-        if status == 200 and body and #body > 0 then
-            images[row+1] = ui.LoadImageFromMemory(body)
-            model:RowChanged(row)  -- triggers table repaint
-        end
-    end)
-end
-
--- Load images when user selects a row
-tbl:OnSelectionChanged(function(t)
-    local sel = tbl:Selection()
-    if sel and sel >= 0 then
-        load_image(sel)
-    end
-end)
-
-win:SetChild(tbl)
-win:OnClosing(function(w) ui.Quit() end)
-win:Show()
-ui.Main()
