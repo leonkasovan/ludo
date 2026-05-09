@@ -176,6 +176,13 @@ IWICBitmap *uiprivImageAppropriateForDC(uiImage *i, HDC dc)
 	return m.best;
 }
 
+IWICBitmap *uiprivImageFirstBitmap(uiImage *i)
+{
+	if (i->bitmaps->empty())
+		return NULL;
+	return (*i->bitmaps)[0];
+}
+
 // TODO this needs to center images if the given size is not the same aspect ratio
 HRESULT uiprivWICToGDI(IWICBitmap *b, HDC dc, int width, int height, HBITMAP *hb)
 {

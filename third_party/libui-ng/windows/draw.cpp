@@ -509,3 +509,20 @@ void uiDrawRestore(uiDrawContext *c)
 	// no need to explicitly addref or release; just transfer the ref
 	c->currentClip = state.clip;
 }
+
+void uiDrawBitmap(uiDrawContext *c, uiImage *img, double x, double y, double width, double height)
+{
+	if (!c || !c->rt || !img) return;
+	if (width <= 0 || height <= 0)
+		return;
+	IWICBitmap *wb = uiprivImageFirstBitmap(img);
+	if (!wb)
+		return;
+	ID2D1Bitmap *d2db = NULL;
+	HRESULT hr = c->rt->CreateBitmapFromWicBitmap(wb, NULL, &d2db);
+	if (hr != S_OK)
+		return;
+	D2D1_RECT_F dest = { (FLOAT)x, (FLOAT)y, (FLOAT)(x + width), (FLOAT)(y + height) };
+	c->rt->DrawBitmap(d2db, dest, 1.0f, D2D1_BITMAP_INTERPOLATION_MODE_LINEAR, NULL);
+	d2db->Release();
+}

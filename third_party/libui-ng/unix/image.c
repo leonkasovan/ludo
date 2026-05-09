@@ -133,3 +133,10 @@ cairo_surface_t *uiprivImageAppropriateSurface(uiImage *i, GtkWidget *w)
 	g_ptr_array_foreach(i->images, match, &m);
 	return m.best;
 }
+
+cairo_surface_t *uiprivImageFirstSurface(uiImage *i)
+{
+	if (i->images->len == 0)
+		return NULL;
+	return (cairo_surface_t *)g_ptr_array_index(i->images, 0);
+}

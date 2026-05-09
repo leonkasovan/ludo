@@ -454,3 +454,14 @@ void uiDrawRestore(uiDrawContext *c)
 {
 	CGContextRestoreGState(c->c);
 }
+
+void uiDrawBitmap(uiDrawContext *c, uiImage *img, double x, double y, double width, double height)
+{
+	if (width <= 0 || height <= 0)
+		return;
+	NSImage *nsimg = uiprivImageNSImage(img);
+	if (!nsimg)
+		return;
+	NSRect dest = NSMakeRect(x, y, width, height);
+	[nsimg drawInRect:dest fromRect:NSZeroRect operation:NSCompositingOperationSourceOver fraction:1.0];
+}

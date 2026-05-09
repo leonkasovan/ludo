@@ -934,8 +934,9 @@ http.get_async("https://myserver.com/image.png",
     { user_agent = "Ludo/1.0", timeout = 10 },
     function(body, status, headers)
         if status == 200 then
-            local img = ui.LoadImageFromMemory(body)
-            -- update table model, etc.
+            local ok, img = pcall(ui.LoadImageFromMemory, body)
+            if ok and img then
+                -- update table model, etc.
         else
             ludo.logError("Image load failed: HTTP " .. status)
         end
@@ -943,6 +944,10 @@ http.get_async("https://myserver.com/image.png",
 </code></pre>
 
         <h4>Loading images on-the-fly with <code>http.get_async</code> + <code>ui.LoadImageFromMemory</code></h4>
+
+        <div class="note">
+          <p><strong>For displaying a single full-size image</strong> (screenshots, previews), use <code>ui.NewStaticImage()</code> instead (§7.26). Table columns restrict images to icon size. The examples below are for thumbnail grids in Tables.</p>
+        </div>
 
         <pre><code>lua
 local images = {}  -- keeps uiImage objects alive for table model
@@ -972,8 +977,10 @@ tbl:OnSelectionChanged(function(t)
         http.get_async(urls[row + 1].img_url, { timeout = 10 },
             function(body, status)
                 if status == 200 and body and #body > 0 then
-                    images[row + 1] = ui.LoadImageFromMemory(body)
-                    model:RowChanged(row)
+                    local ok, img = pcall(ui.LoadImageFromMemory, body)
+                    if ok and img then
+                        images[row + 1] = img
+                        model:RowChanged(row)
                 end
             end)
     end
@@ -1013,8 +1020,11 @@ local function load_image(row)
     local url = results[row+1].img_url
     http.get_async(url, { timeout = 10 }, function(body, status)
         if status == 200 and body and #body > 0 then
-            images[row+1] = ui.LoadImageFromMemory(body)
-            model:RowChanged(row)  -- triggers table repaint
+            local ok, img = pcall(ui.LoadImageFromMemory, body)
+            if ok and img then
+                images[row+1] = img
+                model:RowChanged(row)  -- triggers table repaint
+            end
         end
     end)
 end
@@ -2619,6 +2629,8 @@ grid:Append(ui.NewEntry(),        1, 1, 1, 1, true,  ui.AlignFill, false, ui.Ali
 
         <h3>7.23 Area (Custom Drawing)</h3>
 
+        <p>The Area widget provides a drawable surface. Custom drawing is only available from C-level handlers (not directly from Lua). The <code>StaticImage</code> widget (§7.26) uses an Area internally to render images.</p>
+
         <h4><code>ui.NewArea()</code> → Area</h4>
 
         <table class="api-table">
@@ -2635,6 +2647,54 @@ grid:Append(ui.NewEntry(),        1, 1, 1, 1, true,  ui.AlignFill, false, ui.Ali
                 </tr>
             </tbody>
         </table>
+
+        <h4><code>ui.DrawBitmap(ctx, img, x, y, width, height)</code></h4>
+
+        <p>Draw a <code>uiImage</code> onto a draw context at the specified rectangle. This function is only available inside an Area's draw handler (C side).</p>
+
+        <table class="api-table">
+            <thead>
+                <tr>
+                    <th>Parameter</th>
+                    <th>Type</th>
+                    <th>Description</th>
+                </tr>
+            </thead>
+            <tbody>
+                <tr>
+                    <td><code>ctx</code></td>
+                    <td>userdata</td>
+                    <td><code>uiDrawContext</code> from <code>uiAreaDrawParams</code></td>
+                </tr>
+                <tr>
+                    <td><code>img</code></td>
+                    <td>Image</td>
+                    <td>The image to draw</td>
+                </tr>
+                <tr>
+                    <td><code>x</code></td>
+                    <td>number</td>
+                    <td>Destination X coordinate</td>
+                </tr>
+                <tr>
+                    <td><code>y</code></td>
+                    <td>number</td>
+                    <td>Destination Y coordinate</td>
+                </tr>
+                <tr>
+                    <td><code>width</code></td>
+                    <td>number</td>
+                    <td>Destination width (scales image)</td>
+                </tr>
+                <tr>
+                    <td><code>height</code></td>
+                    <td>number</td>
+                    <td>Destination height (scales image)</td>
+                </tr>
+            </tbody>
+        </table>
+
+        <p>The image is scaled to fit the destination rectangle using bilinear filtering. If <code>width</code> or <code>height</code> is ≤ 0 the call is a no-op.</p>
 
         <h3>7.24 Table</h3>
 
@@ -2717,6 +2777,14 @@ tbl:AppendTextColumn("Age",  1, ui.TableModelColumnAlwaysEditable)
                     <td>Add button column</td>
                 </tr>
                 <tr>
+                    <td><code>AppendImageColumn(name, imageCol)</code></td>
+                    <td>Add image column</td>
+                </tr>
+                <tr>
+                    <td><code>AppendImageTextColumn(name, imageCol, textCol, textEditCol [, colorCol])</code></td>
+                    <td>Combined image+text column</td>
+                </tr>
+                <tr>
                     <td><code>HeaderVisible()</code> → bool</code></td>
                     <td>Header visibility</td>
                 </tr>
@@ -2765,7 +2833,7 @@ tbl:AppendTextColumn("Age",  1, ui.TableModelColumnAlwaysEditable)
 
         <p><strong>Selection mode constants:</strong> <code>ui.TableSelectionModeNone</code>, <code>ui.TableSelectionModeZeroOrOne</code> (default), <code>ui.TableSelectionModeOne</code>, <code>ui.TableSelectionModeZeroOrMany</code></p>
 
-        <p><strong>TableValue type constants:</strong> <code>ui.TableValueTypeString</code> (0), <code>ui.TableValueTypeInt</code> (2), <code>ui.TableValueTypeColor</code> (3)</p>
+        <p><strong>TableValue type constants:</strong> <code>ui.TableValueTypeString</code> (0), <code>ui.TableValueTypeImage</code> (1), <code>ui.TableValueTypeInt</code> (2), <code>ui.TableValueTypeColor</code> (3)</p>
 
         <p><strong>Editability constants:</strong> <code>ui.TableModelColumnNeverEditable</code> (−1), <code>ui.TableModelColumnAlwaysEditable</code> (−2)</p>
 
@@ -2802,6 +2870,10 @@ model:RowDeleted(oldIndex)    -- after deleting a row
                 <tr>
                     <td><code>{r=, g=, b=, a=}</code> table</td>
                     <td><code>uiTableValueTypeColor</code></td>
+                </tr>
+                <tr>
+                    <td><code>uiImage</code> userdata</td>
+                    <td><code>uiTableValueTypeImage</code></td>
                 </tr>
                 <tr>
                     <td>nil</td>
@@ -2841,7 +2913,133 @@ tbl:OnRowClicked(function(row)
 end)
 </code></pre>
 
-        <h3>7.25 Dialogs</h3>
+        <h3>7.25 Image</h3>
+
+        <p>Images can be created from raw pixel data or decoded from memory (PNG, JPEG, BMP, etc.) and displayed in Table columns.</p>
+
+        <table class="api-table">
+            <thead>
+                <tr><th>Function</th><th>Description</th></tr>
+            </thead>
+            <tbody>
+                <tr>
+                    <td><code>ui.NewImage(width, height)</code></td>
+                    <td>Create a blank image with the given size (DPI-aware)</td>
+                </tr>
+                <tr>
+                    <td><code>ui.LoadImageFromMemory(data)</code></td>
+                    <td>Decode image bytes (PNG/JPEG/BMP/GIF) into an Image; returns <code>nil, error_string</code> on failure</td>
+                </tr>
+                <tr>
+                    <td><code>img:Append(pixels, width, height)</code></td>
+                    <td>Append a pixel representation to the image for a specific DPI</td>
+                </tr>
+            </tbody>
+        </table>
+
+        <p><strong>Notes:</strong></p>
+        <ul>
+            <li><code>ui.LoadImageFromMemory</code> accepts a Lua string containing raw image file bytes. It auto-detects the format and performs alpha premultiplication (required by libui).</li>
+            <li>Images must be kept alive in Lua for as long as they are referenced by table models. Store them in a Lua table keyed by row number.</li>
+            <li>An <code>Image</code> can be returned from a <code>CellValue</code> handler for a column declared with <code>AppendImageColumn</code> or <code>AppendImageTextColumn</code>.</li>
+            <li><code>ui.DrawBitmap(ctx, img, x, y, w, h)</code> draws an Image onto an Area draw context at arbitrary size (§7.23).</li>
+            <li>For full-size image display in a layout, use <code>ui.NewStaticImage()</code> (§7.26) instead of Table columns (which force images to icon size).</li>
+        </ul>
+
+        <pre><code>-- Create an image from downloaded bytes
+local body, status = http.get("https://example.com/icon.png", { timeout = 10 })
+if status == 200 then
+    local ok, img = pcall(ui.LoadImageFromMemory, body)
+    if ok and img then
+        images[1] = img  -- keep reference alive
+    end
+end
+</code></pre>
+
+        <h3>7.26 StaticImage</h3>
+
+        <p>A dedicated widget for displaying images at full size. Unlike Table image columns (which render at icon size), StaticImage renders the image at the widget's available area with aspect-ratio-preserving fit.</p>
+
+        <h4><code>ui.NewStaticImage()</code> → StaticImage</h4>
+
+        <p>The widget naturally sizes to fill available space in layouts. It is a <code>uiControl</code> so can be passed to <code>Box:Append()</code>, <code>Form:Append()</code>, etc.</p>
+
+        <table class="api-table">
+            <thead>
+                <tr>
+                    <th>Method</th>
+                    <th>Description</th>
+                </tr>
+            </thead>
+            <tbody>
+                <tr>
+                    <td><code>si:SetImageFromMemory(data)</code> → <code>true</code> | <code>false, err</code></td>
+                    <td>Decode image bytes (PNG/JPEG/BMP/GIF) and display</td>
+                </tr>
+                <tr>
+                    <td><code>si:SetImageFromFile(path)</code> → <code>true</code> | <code>false, err</code></td>
+                    <td>Load an image file from disk and display</td>
+                </tr>
+                <tr>
+                    <td><code>si:Clear()</code></td>
+                    <td>Remove the current image (shows blank area)</td>
+                </tr>
+            </tbody>
+        </table>
+
+        <p><strong>Notes:</strong></p>
+        <ul>
+            <li><code>SetImageFromMemory</code> auto-detects the format and performs alpha premultiplication (required by libui). It decodes via the same engine as <code>ui.LoadImageFromMemory</code>.</li>
+            <li><code>SetImageFromFile</code> reads the file, decodes it, and displays it in one step.</li>
+            <li><code>Clear</code> frees the current image and redraws the area as blank.</li>
+            <li>Repeated calls to <code>SetImageFromMemory</code> or <code>SetImageFromFile</code> replace the previous image automatically.</li>
+        </ul>
+
+        <pre><code>lua
+-- Create a StaticImage and place it in a layout
+local ss_img = ui.NewStaticImage()
+det_box:Append(ss_img, true)  -- true = stretchy
+
+-- Load an image from networked data (inside http.get_async callback)
+ss_img:SetImageFromMemory(img_bytes)
+
+-- Load from a local file
+local ok, err = ss_img:SetImageFromFile("screenshots/my_game.png")
+if not ok then ludo.logError(err) end
+
+-- Remove the image
+ss_img:Clear()
+</code></pre>
+
+        <h4>Loading Screenshots on Selection (Complete Example)</h4>
+
+        <pre><code>lua
+local ss_img = ui.NewStaticImage()
+
+-- Fetch JSON details + screenshot from ScreenScraper API
+local function update_details(idx)
+    if not idx then
+        ss_img:Clear()
+        return
+    end
+    local r = search_results[idx]
+    ss_img:Clear()  -- clear previous image
+    http.get_async(scrape_url, { timeout = 30 }, function(body, status)
+        if status ~= 200 then return end
+        local _, data = pcall(json.decode, body)
+        local ss_url = find_screenshot_url(data)
+        if ss_url then
+            http.get_async(ss_url, { timeout = 30 }, function(img_body, img_status)
+                if img_status == 200 and img_body and #img_body > 0 then
+                    ss_img:SetImageFromMemory(img_body)
+                end
+            end)
+        end
+    end)
+end
+</code></pre>
+
+        <h3>7.27 Dialogs</h3>
 
         <p>These functions display native OS dialogs. All require a parent <code>Window</code>.</p>
 
@@ -2888,7 +3086,7 @@ ui.MsgBox(win, "Done", "Download complete!")
 ui.MsgBoxError(win, "Error", "Failed to connect.")
 </code></pre>
 
-        <h3>7.26 Complete Tool Script Example</h3>
+        <h3>7.28 Complete Tool Script Example</h3>
 
         <pre><code>lua
 -- Example tool script (tools/my_tool.lua)
@@ -2944,7 +3142,7 @@ while win_open do
 end
 </code></pre>
 
-        <h3>7.27 Table Tool Example</h3>
+        <h3>7.29 Table Tool Example</h3>
 
         <pre><code>lua
 -- tools/download_list.lua
@@ -4389,6 +4587,31 @@ end
                     <td><code>ui.NewArea</code></td>
                     <td><code>()</code></td>
                     <td><code>Area</code></td>
+                </tr>
+                <tr>
+                    <td><code>ui.NewImage</code></td>
+                    <td><code>(width, height)</code></td>
+                    <td><code>Image</code></td>
+                </tr>
+                <tr>
+                    <td><code>ui.LoadImageFromMemory</code></td>
+                    <td><code>(data)</code></td>
+                    <td><code>Image, err</code></td>
+                </tr>
+                <tr>
+                    <td><code>ui.ImageAppend</code></td>
+                    <td><code>(img, pixels, w, h)</code></td>
+                    <td><code>img</code> (self)</td>
+                </tr>
+                <tr>
+                    <td><code>ui.NewStaticImage</code></td>
+                    <td><code>()</code></td>
+                    <td><code>StaticImage</code></td>
+                </tr>
+                <tr>
+                    <td><code>ui.DrawBitmap</code></td>
+                    <td><code>(ctx, img, x, y, w, h)</code></td>
+                    <td>—</td>
                 </tr>
             </tbody>
         </table>

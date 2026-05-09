@@ -1,4 +1,7 @@
 
+#define STB_IMAGE_IMPLEMENTATION
+#include "stb_image.h"
+
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -36,6 +39,24 @@
 
 struct wrap {
 	uiControl *control;
+};
+
+struct imgwrap {
+	uiImage *img;
+};
+
+/* StaticImage widget - wraps an area with a draw handler that renders a uiImage */
+struct si_handler {
+	uiAreaHandler handler;      /* MUST be first */
+	uiImage *img;
+	int img_w, img_h;           /* natural pixel dimensions */
+	unsigned char *pixels;      /* raw RGBA data (owned) */
+	int pw, ph;                 /* pixel buffer dimensions */
+};
+
+struct si_lua {
+	uiControl *control;         /* area cast to uiControl (offset 0, CAST_ARG-compatible) */
+	struct si_handler *h;
 };
 
 /* TableModel handler - wraps Lua handler table with C callbacks */
@@ -1562,6 +1583,18 @@ static int lmh_NumRows(uiTableModelHandler *mh, uiTableModel *m)
 	return n;
 }
 
+static uiImage *g_default_image = NULL;
+
+static uiImage *get_default_image(void)
+{
+	if (!g_default_image) {
+		unsigned char pixel[4] = {0, 0, 0, 0};
+		g_default_image = uiNewImage(1, 1);
+		uiImageAppend(g_default_image, pixel, 1, 1, 4);
+	}
+	return g_default_image;
+}
+
 static uiTableValue *lmh_CellValue(uiTableModelHandler *mh, uiTableModel *m, int row, int col)
 {
 	LuaTableModelHandler *lmh = (LuaTableModelHandler *)mh;
@@ -1588,6 +1621,19 @@ static uiTableValue *lmh_CellValue(uiTableModelHandler *mh, uiTableModel *m, int
 		lua_getfield(L, -1, "b"); double b = lua_tonumber(L, -1); lua_pop(L, 1);
 		lua_getfield(L, -1, "a"); double a = lua_tonumber(L, -1); lua_pop(L, 1);
 		tv = uiNewTableValueColor(r, g, b, a);
+	} else if (ltype == LUA_TUSERDATA) {
+		struct imgwrap *iw = (struct imgwrap *)luaL_testudata(L, -1, "libui.Image");
+		if (iw && iw->img) {
+			tv = uiNewTableValueImage(iw->img);
+		}
+	}
+	/* Fallback: if handler returned nil/wrong type for an image column,
+	   use a 1x1 transparent placeholder to avoid crashing libui-ng. */
+	if (!tv && mh->ColumnType) {
+		uiTableValueType ct = mh->ColumnType(mh, m, col);
+		if (ct == uiTableValueTypeImage) {
+			tv = uiNewTableValueImage(get_default_image());
+		}
 	}
 	lua_pop(L, 1);
 	return tv;
@@ -1781,6 +1827,280 @@ int l_NewTable(lua_State *L)
 	return 1;
 }
 
+static int l_ImageGC(lua_State *L)
+{
+	struct imgwrap *iw = (struct imgwrap *)lua_touserdata(L, 1);
+	if (iw && iw->img) {
+		uiFreeImage(iw->img);
+		iw->img = NULL;
+	}
+	return 0;
+}
+
+static int l_NewImage(lua_State *L)
+{
+	double w = luaL_checknumber(L, 1);
+	double h = luaL_checknumber(L, 2);
+	uiImage *img = uiNewImage(w, h);
+	struct imgwrap *iw = (struct imgwrap *)lua_newuserdata(L, sizeof(struct imgwrap));
+	iw->img = img;
+	luaL_getmetatable(L, "libui.Image");
+	lua_setmetatable(L, -2);
+	return 1;
+}
+
+static int l_LoadImageFromMemory(lua_State *L)
+{
+	size_t data_len;
+	const unsigned char *data = (const unsigned char *)luaL_checklstring(L, 1, &data_len);
+	int w, h, channels;
+	unsigned char *pixels = stbi_load_from_memory(data, (int)data_len, &w, &h, &channels, 4);
+	if (!pixels) {
+		lua_pushnil(L);
+		lua_pushstring(L, stbi_failure_reason());
+		return 2;
+	}
+	int stride = w * 4;
+	unsigned char *premul = (unsigned char *)malloc((size_t)(h * stride));
+	if (!premul) {
+		stbi_image_free(pixels);
+		lua_pushnil(L);
+		lua_pushstring(L, "out of memory");
+		return 2;
+	}
+	for (int i = 0; i < w * h; i++) {
+		unsigned char r = pixels[i * 4 + 0];
+		unsigned char g = pixels[i * 4 + 1];
+		unsigned char b = pixels[i * 4 + 2];
+		unsigned char a = pixels[i * 4 + 3];
+		premul[i * 4 + 0] = (unsigned char)((unsigned)r * a / 255);
+		premul[i * 4 + 1] = (unsigned char)((unsigned)g * a / 255);
+		premul[i * 4 + 2] = (unsigned char)((unsigned)b * a / 255);
+		premul[i * 4 + 3] = a;
+	}
+	uiImage *img = uiNewImage((double)w, (double)h);
+	uiImageAppend(img, premul, w, h, stride);
+	free(premul);
+	stbi_image_free(pixels);
+	struct imgwrap *iw = (struct imgwrap *)lua_newuserdata(L, sizeof(struct imgwrap));
+	iw->img = img;
+	luaL_getmetatable(L, "libui.Image");
+	lua_setmetatable(L, -2);
+	return 1;
+}
+
+static int l_ImageAppend(lua_State *L)
+{
+	struct imgwrap *iw = (struct imgwrap *)luaL_checkudata(L, 1, "libui.Image");
+	if (!iw || !iw->img) return luaL_error(L, "invalid Image");
+	size_t pixels_len;
+	const unsigned char *raw = (const unsigned char *)luaL_checklstring(L, 2, &pixels_len);
+	int w = (int)luaL_checkinteger(L, 3);
+	int h = (int)luaL_checkinteger(L, 4);
+	if (w <= 0 || h <= 0) return luaL_error(L, "invalid image dimensions");
+	size_t expected = (size_t)(w * h * 4);
+	if (pixels_len < expected) return luaL_error(L, "pixel data too small");
+	int byteStride = w * 4;
+	uiImageAppend(iw->img, (void *)raw, w, h, byteStride);
+	RETURN_SELF;
+}
+
+/* === StaticImage widget ============================================== */
+
+static void si_onDraw(uiAreaHandler *ah, uiArea *a, uiAreaDrawParams *p)
+{
+	struct si_handler *h = (struct si_handler *)ah;
+	if (!h->img || !p->Context) return;
+	if (p->AreaWidth <= 0 || p->AreaHeight <= 0) return;
+	if (h->img_w <= 0 || h->img_h <= 0) return;
+
+	double scale_w = p->AreaWidth / (double)h->img_w;
+	double scale_h = p->AreaHeight / (double)h->img_h;
+	double scale = (scale_w < scale_h) ? scale_w : scale_h;
+	double w = h->img_w * scale;
+	double hh = h->img_h * scale;
+	double x = (p->AreaWidth - w) / 2.0;
+	double y = (p->AreaHeight - hh) / 2.0;
+
+	uiDrawBitmap(p->Context, h->img, x, y, w, hh);
+}
+
+static void si_onMouseEvent(uiAreaHandler *ah, uiArea *a, uiAreaMouseEvent *e)
+{
+	(void)ah; (void)a; (void)e;
+}
+
+static void si_onMouseCrossed(uiAreaHandler *ah, uiArea *a, int left)
+{
+	(void)ah; (void)a; (void)left;
+}
+
+static void si_onDragBroken(uiAreaHandler *ah, uiArea *a)
+{
+	(void)ah; (void)a;
+}
+
+static int si_onKeyEvent(uiAreaHandler *ah, uiArea *a, uiAreaKeyEvent *e)
+{
+	(void)ah; (void)a; (void)e;
+	return 0;
+}
+
+static int si_gc(lua_State *L)
+{
+	struct si_lua *s = (struct si_lua *)lua_touserdata(L, 1);
+	if (s->h) {
+		if (s->h->img) uiFreeImage(s->h->img);
+		free(s->h->pixels);
+		free(s->h);
+		s->h = NULL;
+	}
+	return 0;
+}
+
+static void si_update_image(struct si_handler *h)
+{
+	if (h->img) { uiFreeImage(h->img); h->img = NULL; }
+	if (!h->pixels || h->pw <= 0 || h->ph <= 0) return;
+	h->img = uiNewImage((double)h->pw, (double)h->ph);
+	uiImageAppend(h->img, h->pixels, h->pw, h->ph, h->pw * 4);
+	h->img_w = h->pw;
+	h->img_h = h->ph;
+}
+
+static int l_NewStaticImage(lua_State *L)
+{
+	struct si_lua *s = (struct si_lua *)lua_newuserdata(L, sizeof(struct si_lua));
+	memset(s, 0, sizeof(*s));
+	s->h = (struct si_handler *)malloc(sizeof(struct si_handler));
+	memset(s->h, 0, sizeof(*s->h));
+	s->h->handler.Draw = si_onDraw;
+	s->h->handler.MouseEvent = si_onMouseEvent;
+	s->h->handler.MouseCrossed = si_onMouseCrossed;
+	s->h->handler.DragBroken = si_onDragBroken;
+	s->h->handler.KeyEvent = si_onKeyEvent;
+	s->control = uiControl(uiNewArea(&s->h->handler));
+
+	lua_newtable(L);
+	luaL_getmetatable(L, "libui.StaticImage");
+	lua_setfield(L, -2, "__index");
+	lua_pushcfunction(L, si_gc);
+	lua_setfield(L, -2, "__gc");
+	lua_setmetatable(L, -2);
+	return 1;
+}
+
+static int l_StaticImageSetImageFromMemory(lua_State *L)
+{
+	struct si_lua *s = (struct si_lua *)lua_touserdata(L, 1);
+	if (!s->h) {
+		lua_pushboolean(L, 0);
+		lua_pushstring(L, "SetImageFromMemory: widget destroyed");
+		return 2;
+	}
+	size_t data_len;
+	const unsigned char *data = (const unsigned char *)luaL_checklstring(L, 2, &data_len);
+	int w, h, channels;
+	unsigned char *pixels = stbi_load_from_memory(data, (int)data_len, &w, &h, &channels, 4);
+	if (!pixels) {
+		lua_pushboolean(L, 0);
+		lua_pushfstring(L, "SetImageFromMemory: %s", stbi_failure_reason());
+		return 2;
+	}
+	if (w > 4096 || h > 4096) {
+		stbi_image_free(pixels);
+		lua_pushboolean(L, 0);
+		lua_pushstring(L, "SetImageFromMemory: image too large (max 4096x4096)");
+		return 2;
+	}
+	int npixels = w * h;
+	for (int i = 0; i < npixels; i++) {
+		unsigned char r = pixels[i * 4 + 0];
+		unsigned char g = pixels[i * 4 + 1];
+		unsigned char b = pixels[i * 4 + 2];
+		unsigned char a = pixels[i * 4 + 3];
+		pixels[i * 4 + 0] = (unsigned char)((unsigned)r * a / 255);
+		pixels[i * 4 + 1] = (unsigned char)((unsigned)g * a / 255);
+		pixels[i * 4 + 2] = (unsigned char)((unsigned)b * a / 255);
+	}
+	free(s->h->pixels);
+	s->h->pixels = pixels;
+	s->h->pw = w;
+	s->h->ph = h;
+	si_update_image(s->h);
+	uiAreaQueueRedrawAll((uiArea *)s->control);
+	lua_pushboolean(L, 1);
+	return 1;
+}
+
+static int l_StaticImageSetImageFromFile(lua_State *L)
+{
+	struct si_lua *s = (struct si_lua *)lua_touserdata(L, 1);
+	const char *path = luaL_checkstring(L, 2);
+
+	FILE *f = fopen(path, "rb");
+	if (!f) {
+		lua_pushboolean(L, 0);
+		lua_pushstring(L, "SetImageFromFile: cannot open file");
+		return 2;
+	}
+	fseek(f, 0, SEEK_END);
+	long fsize = ftell(f);
+	fseek(f, 0, SEEK_SET);
+	if (fsize <= 0) { fclose(f); lua_pushboolean(L, 0); lua_pushstring(L, "SetImageFromFile: empty file"); return 2; }
+
+	unsigned char *fdata = (unsigned char *)malloc((size_t)fsize);
+	if (!fdata || (long)fread(fdata, 1, (size_t)fsize, f) != fsize) {
+		free(fdata); fclose(f);
+		lua_pushboolean(L, 0); lua_pushstring(L, "SetImageFromFile: read error"); return 2;
+	}
+	fclose(f);
+
+	int w, h, channels;
+	unsigned char *pixels = stbi_load_from_memory(fdata, (int)fsize, &w, &h, &channels, 4);
+	free(fdata);
+	if (!pixels) {
+		lua_pushboolean(L, 0);
+		lua_pushfstring(L, "SetImageFromFile: %s", stbi_failure_reason());
+		return 2;
+	}
+	for (int i = 0; i < w * h; i++) {
+		unsigned char r = pixels[i * 4 + 0];
+		unsigned char g = pixels[i * 4 + 1];
+		unsigned char b = pixels[i * 4 + 2];
+		unsigned char a = pixels[i * 4 + 3];
+		pixels[i * 4 + 0] = (unsigned char)((unsigned)r * a / 255);
+		pixels[i * 4 + 1] = (unsigned char)((unsigned)g * a / 255);
+		pixels[i * 4 + 2] = (unsigned char)((unsigned)b * a / 255);
+	}
+	free(s->h->pixels);
+	s->h->pixels = pixels;
+	s->h->pw = w;
+	s->h->ph = h;
+	si_update_image(s->h);
+	uiAreaQueueRedrawAll((uiArea *)s->control);
+	lua_pushboolean(L, 1);
+	return 1;
+}
+
+static int l_StaticImageClear(lua_State *L)
+{
+	struct si_lua *s = (struct si_lua *)lua_touserdata(L, 1);
+	free(s->h->pixels); s->h->pixels = NULL;
+	s->h->pw = 0; s->h->ph = 0;
+	if (s->h->img) { uiFreeImage(s->h->img); s->h->img = NULL; }
+	uiAreaQueueRedrawAll((uiArea *)s->control);
+	lua_pushboolean(L, 1);
+	return 1;
+}
+
+static struct luaL_Reg meta_StaticImage[] = {
+	{ "SetImageFromMemory",    l_StaticImageSetImageFromMemory },
+	{ "SetImageFromFile",      l_StaticImageSetImageFromFile },
+	{ "Clear",                 l_StaticImageClear },
+	{ NULL }
+};
+
 int l_TableAppendTextColumn(lua_State *L)
 {
 	int colorModelColumn = (int)luaL_optinteger(L, 5, -1);
@@ -1832,6 +2152,28 @@ int l_TableAppendButtonColumn(lua_State *L)
 		luaL_checkstring(L, 2),
 		(int)luaL_checkinteger(L, 3),
 		(int)luaL_checkinteger(L, 4));
+	RETURN_SELF;
+}
+
+int l_TableAppendImageColumn(lua_State *L)
+{
+	uiTableAppendImageColumn(CAST_ARG(1, Table),
+		luaL_checkstring(L, 2),
+		(int)luaL_checkinteger(L, 3));
+	RETURN_SELF;
+}
+
+int l_TableAppendImageTextColumn(lua_State *L)
+{
+	int colorModelColumn = (int)luaL_optinteger(L, 6, -1);
+	uiTableTextColumnOptionalParams tp;
+	tp.ColorModelColumn = colorModelColumn;
+	uiTableAppendImageTextColumn(CAST_ARG(1, Table),
+		luaL_checkstring(L, 2),
+		(int)luaL_checkinteger(L, 3),
+		(int)luaL_checkinteger(L, 4),
+		(int)luaL_checkinteger(L, 5),
+		colorModelColumn >= 0 ? &tp : NULL);
 	RETURN_SELF;
 }
 
@@ -1933,6 +2275,8 @@ static struct luaL_Reg meta_Table[] = {
 	{ "AppendCheckboxTextColumn", l_TableAppendCheckboxTextColumn },
 	{ "AppendProgressBarColumn",  l_TableAppendProgressBarColumn },
 	{ "AppendButtonColumn",       l_TableAppendButtonColumn },
+	{ "AppendImageColumn",        l_TableAppendImageColumn },
+	{ "AppendImageTextColumn",    l_TableAppendImageTextColumn },
 	{ "HeaderVisible",            l_TableHeaderVisible },
 	{ "HeaderSetVisible",         l_TableHeaderSetVisible },
 	{ "OnRowClicked",             l_TableOnRowClicked },
@@ -2075,9 +2419,13 @@ static struct luaL_Reg lui_table[] = {
 	{ "NewRadioButtons",        l_NewRadioButtons },
 	{ "NewSlider",              l_NewSlider },
 	{ "NewSpinbox",             l_NewSpinbox },
+	{ "NewStaticImage",         l_NewStaticImage },
 	{ "NewTab",                 l_NewTab },
 	{ "NewTable",               l_NewTable },
 	{ "NewTableModel",          l_NewTableModel },
+	{ "NewImage",               l_NewImage },
+	{ "LoadImageFromMemory",    l_LoadImageFromMemory },
+	{ "ImageAppend",            l_ImageAppend },
 	{ "NewVerticalBox",         l_NewVerticalBox },
 	{ "NewVerticalSeparator",   l_NewVerticalSeparator },
 	{ "NewWindow",              l_NewWindow },
@@ -2148,6 +2496,23 @@ int luaopen_libuilua(lua_State *L)
 	CREATE_META(Tab)
 	CREATE_META(Table)
 	CREATE_META(Window)
+
+	/* Image meta (not a uiControl, has __gc) */
+	luaL_newmetatable(L, "libui.Image");
+	lua_pushcfunction(L, l_ImageGC);
+	lua_setfield(L, -2, "__gc");
+	lua_pushvalue(L, -1);
+	lua_setfield(L, -2, "__index");
+	lua_pop(L, 1);
+
+	/* StaticImage meta (not a uiControl, has __gc) */
+	luaL_newmetatable(L, "libui.StaticImage");
+	luaL_setfuncs(L, meta_StaticImage, 0);
+	lua_pushcfunction(L, si_gc);
+	lua_setfield(L, -2, "__gc");
+	lua_pushvalue(L, -1);
+	lua_setfield(L, -2, "__index");
+	lua_pop(L, 1);
 
 	/* TableModel meta (not a uiControl, has __gc) */
 	luaL_newmetatable(L, "libui.TableModel");

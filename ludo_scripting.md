@@ -617,8 +617,10 @@ http.get_async("https://myserver.com/image.png",
     { user_agent = "Ludo/1.0", timeout = 10 },
     function(body, status, headers)
         if status == 200 then
-            local img = ui.LoadImageFromMemory(body)
-            -- update table model, etc.
+            local ok, img = pcall(ui.LoadImageFromMemory, body)
+            if ok and img then
+                -- update table model, etc.
+            end
         else
             ludo.logError("Image load failed: HTTP " .. status)
         end
@@ -626,6 +628,10 @@ http.get_async("https://myserver.com/image.png",
 ```
 
 ## Loading images on-the-fly with `http.get_async` + `ui.LoadImageFromMemory`
+
+> **For displaying a single full-size image** (screenshots, previews), use
+> `ui.NewStaticImage()` instead (§7.26). Table columns restrict images to
+> icon size. The examples below are for thumbnail grids in Tables.
 
 ```lua
 local images = {}  -- keeps uiImage objects alive for table model
@@ -655,8 +661,11 @@ tbl:OnSelectionChanged(function(t)
         http.get_async(urls[row + 1].img_url, { timeout = 10 },
             function(body, status)
                 if status == 200 and body and #body > 0 then
-                    images[row + 1] = ui.LoadImageFromMemory(body)
-                    model:RowChanged(row)
+                    local ok, img = pcall(ui.LoadImageFromMemory, body)
+                    if ok and img then
+                        images[row + 1] = img
+                        model:RowChanged(row)
+                    end
                 end
             end)
     end
@@ -696,8 +705,11 @@ local function load_image(row)
     local url = results[row+1].img_url
     http.get_async(url, { timeout = 10 }, function(body, status)
         if status == 200 and body and #body > 0 then
-            images[row+1] = ui.LoadImageFromMemory(body)
-            model:RowChanged(row)  -- triggers table repaint
+            local ok, img = pcall(ui.LoadImageFromMemory, body)
+            if ok and img then
+                images[row+1] = img
+                model:RowChanged(row)  -- triggers table repaint
+            end
         end
     end)
 end
@@ -1788,11 +1800,32 @@ grid:Append(ui.NewEntry(),        1, 1, 1, 1, true,  ui.AlignFill, false, ui.Ali
 
 ### 7.23 Area (Custom Drawing)
 
+The Area widget provides a drawable surface. Custom drawing is only available
+from C-level handlers (not directly from Lua). The `StaticImage` widget
+(§7.26) uses an Area internally to render images.
+
 #### `ui.NewArea()` → Area
 
 | Method | Description |
 |--------|-------------|
 | `area:SetSize(w, h)` | Set drawing area size |
+
+#### `ui.DrawBitmap(ctx, img, x, y, width, height)`
+
+Draw a `uiImage` onto a draw context at the specified rectangle. This function
+is only available inside an Area's draw handler (C side).
+
+| Parameter | Type | Description |
+|-----------|------|-------------|
+| `ctx` | userdata | `uiDrawContext` from `uiAreaDrawParams` |
+| `img` | Image | The image to draw |
+| `x` | number | Destination X coordinate |
+| `y` | number | Destination Y coordinate |
+| `width` | number | Destination width (scales image) |
+| `height` | number | Destination height (scales image) |
+
+The image is scaled to fit the destination rectangle using bilinear filtering.
+If `width` or `height` is ≤ 0 the call is a no-op.
 
 ---
 
@@ -1855,6 +1888,8 @@ tbl:AppendTextColumn("Age",  1, ui.TableModelColumnAlwaysEditable)
 | `AppendCheckboxTextColumn(name, checkCol, checkEditCol, textCol, textEditCol [, colorCol])` | Combined |
 | `AppendProgressBarColumn(name, progressCol)` | Add progress bar column |
 | `AppendButtonColumn(name, textCol, clickableCol)` | Add button column |
+| `AppendImageColumn(name, imageCol)` | Add image column |
+| `AppendImageTextColumn(name, imageCol, textCol, textEditCol [, colorCol])` | Combined image+text column |
 | `HeaderVisible()` → bool | Header visibility |
 | `HeaderSetVisible(bool)` | Show/hide header |
 | `GetSelectionMode()` → number | Current selection mode |
@@ -1870,7 +1905,7 @@ tbl:AppendTextColumn("Age",  1, ui.TableModelColumnAlwaysEditable)
 **Selection mode constants:** `ui.TableSelectionModeNone`, `ui.TableSelectionModeZeroOrOne` (default),
 `ui.TableSelectionModeOne`, `ui.TableSelectionModeZeroOrMany`
 
-**TableValue type constants:** `ui.TableValueTypeString` (0), `ui.TableValueTypeInt` (2), `ui.TableValueTypeColor` (3)
+**TableValue type constants:** `ui.TableValueTypeString` (0), `ui.TableValueTypeImage` (1), `ui.TableValueTypeInt` (2), `ui.TableValueTypeColor` (3)
 
 **Editability constants:** `ui.TableModelColumnNeverEditable` (−1), `ui.TableModelColumnAlwaysEditable` (−2)
 
@@ -1890,6 +1925,7 @@ model:RowDeleted(oldIndex)    -- after deleting a row
 | integer | `uiTableValueTypeInt` |
 | boolean | `uiTableValueTypeInt` (true→1, false→0) |
 | `{r=, g=, b=, a=}` table | `uiTableValueTypeColor` |
+| `uiImage` userdata | `uiTableValueTypeImage` |
 | nil | NULL (accepted by some column types) |
 
 #### Full Table example
@@ -1925,7 +1961,111 @@ end)
 
 ---
 
-### 7.25 Dialogs
+### 7.25 Image
+
+Images can be created from raw pixel data or decoded from memory (PNG, JPEG, BMP, etc.) and displayed in Table columns.
+
+| Function | Description |
+|----------|-------------|
+| `ui.NewImage(width, height)` → Image | Create a blank image with the given size (DPI-aware) |
+| `ui.LoadImageFromMemory(data)` → Image, err | Decode image bytes (PNG/JPEG/BMP/GIF) into an Image; returns `nil, error_string` on failure |
+| `img:Append(pixels, width, height)` | Append a pixel representation to the image for a specific DPI |
+
+**Notes:**
+
+- `ui.LoadImageFromMemory` accepts a Lua string containing raw image file bytes (e.g. from `http.get` or `http.get_async`). It auto-detects the format and performs alpha premultiplication (required by libui for correct rendering).
+- Images must be kept alive in Lua for as long as they are referenced by table models. Store them in a Lua table keyed by row number.
+- An `Image` can be returned from a `CellValue` handler for a column declared with `AppendImageColumn` or `AppendImageTextColumn`.
+- `ui.DrawBitmap(ctx, img, x, y, w, h)` draws an Image onto an Area draw context at arbitrary size (§7.23).
+- For full-size image display in a layout, use `ui.NewStaticImage()` (§7.26) instead of Table columns (which force images to icon size).
+
+```lua
+-- Create an image from downloaded bytes
+local body, status = http.get("https://example.com/icon.png", { timeout = 10 })
+if status == 200 then
+    local ok, img = pcall(ui.LoadImageFromMemory, body)
+    if ok and img then
+        images[1] = img  -- keep reference alive
+    end
+end
+```
+
+---
+
+### 7.26 StaticImage
+
+A dedicated widget for displaying images at full size. Unlike Table image
+columns (which render at icon size), StaticImage renders the image at the
+widget's available area with aspect-ratio-preserving fit.
+
+#### `ui.NewStaticImage()` → StaticImage
+
+The widget naturally sizes to fill available space in layouts. It is a
+`uiControl` so can be passed to `Box:Append()`, `Form:Append()`, etc.
+
+| Method | Description |
+|--------|-------------|
+| `si:SetImageFromMemory(data)` → `true` \| `false, err` | Decode image bytes (PNG/JPEG/BMP/GIF) and display |
+| `si:SetImageFromFile(path)` → `true` \| `false, err` | Load an image file from disk and display |
+| `si:Clear()` | Remove the current image (shows blank area) |
+
+**Notes:**
+
+- `SetImageFromMemory` auto-detects the format and performs alpha
+  premultiplication (required by libui). It decodes via the same engine as
+  `ui.LoadImageFromMemory`.
+- `SetImageFromFile` reads the file, decodes it, and displays it in one step.
+- `Clear` frees the current image and redraws the area as blank.
+- Repeated calls to `SetImageFromMemory` or `SetImageFromFile` replace the
+  previous image automatically.
+
+```lua
+-- Create a StaticImage and place it in a layout
+local ss_img = ui.NewStaticImage()
+det_box:Append(ss_img, true)  -- true = stretchy
+
+-- Load an image from networked data (inside http.get_async callback)
+ss_img:SetImageFromMemory(img_bytes)
+
+-- Load from a local file
+local ok, err = ss_img:SetImageFromFile("screenshots/my_game.png")
+if not ok then ludo.logError(err) end
+
+-- Remove the image
+ss_img:Clear()
+```
+
+#### Loading Screenshots on Selection (Complete Example)
+
+```lua
+local ss_img = ui.NewStaticImage()
+
+-- Fetch JSON details + screenshot from ScreenScraper API
+local function update_details(idx)
+    if not idx then
+        ss_img:Clear()
+        return
+    end
+    local r = search_results[idx]
+    ss_img:Clear()  -- clear previous image
+    http.get_async(scrape_url, { timeout = 30 }, function(body, status)
+        if status ~= 200 then return end
+        local _, data = pcall(json.decode, body)
+        local ss_url = find_screenshot_url(data)
+        if ss_url then
+            http.get_async(ss_url, { timeout = 30 }, function(img_body, img_status)
+                if img_status == 200 and img_body and #img_body > 0 then
+                    ss_img:SetImageFromMemory(img_body)
+                end
+            end)
+        end
+    end)
+end
+```
+
+---
+
+### 7.27 Dialogs
 
 These functions display native OS dialogs. All require a parent `Window`.
 
@@ -1951,7 +2091,7 @@ ui.MsgBoxError(win, "Error", "Failed to connect.")
 
 ---
 
-### 7.26 Complete Tool Script Example
+### 7.28 Complete Tool Script Example
 
 ```lua
 -- Example tool script (tools/my_tool.lua)
@@ -2009,7 +2149,7 @@ end
 
 ---
 
-### 7.27 Table Tool Example
+### 7.29 Table Tool Example
 
 ```lua
 -- tools/download_list.lua
@@ -2326,6 +2466,11 @@ return plugin
 | `ui.NewDatePicker` | `()` | `DateTimePicker` |
 | `ui.NewTimePicker` | `()` | `DateTimePicker` |
 | `ui.NewArea` | `()` | `Area` |
+| `ui.NewImage` | `(width, height)` | `Image` |
+| `ui.LoadImageFromMemory` | `(data)` | `Image, err` |
+| `ui.ImageAppend` | `(img, pixels, w, h)` | `img` (self) |
+| `ui.NewStaticImage` | `()` | `StaticImage` |
+| `ui.DrawBitmap` | `(ctx, img, x, y, w, h)` | — |
 
 ---
 

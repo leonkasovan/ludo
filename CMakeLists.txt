@@ -398,7 +398,7 @@ if(BUILD_GUI)
 # ------------------------------------------------------------
 set(LIBUILUA_SRC_DIR ${CMAKE_SOURCE_DIR}/third_party/libuilua)
 add_library(libuilua_static STATIC ${LIBUILUA_SRC_DIR}/libuilua.c)
-target_include_directories(libuilua_static PUBLIC ${LIBUILUA_SRC_DIR} ${LUA_SRC_DIR} ${LIBUI_SRC_DIR})
+target_include_directories(libuilua_static PUBLIC ${LIBUILUA_SRC_DIR} ${LUA_SRC_DIR} ${LIBUI_SRC_DIR} ${CMAKE_SOURCE_DIR}/third_party/stb)
 target_link_libraries(libuilua_static PUBLIC libui_static)
 set_static_archive_output(libuilua_static)
 set_target_properties(libuilua_static PROPERTIES OUTPUT_NAME libuilua)

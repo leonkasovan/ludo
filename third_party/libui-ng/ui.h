@@ -2043,6 +2043,7 @@ typedef struct uiAreaMouseEvent uiAreaMouseEvent;
 typedef struct uiAreaKeyEvent uiAreaKeyEvent;
 
 typedef struct uiDrawContext uiDrawContext;
+typedef struct uiImage uiImage;
 
 struct uiAreaHandler {
 	void (*Draw)(uiAreaHandler *, uiArea *, uiAreaDrawParams *);
@@ -2241,6 +2242,8 @@ _UI_EXTERN void uiDrawClip(uiDrawContext *c, uiDrawPath *path);
 
 _UI_EXTERN void uiDrawSave(uiDrawContext *c);
 _UI_EXTERN void uiDrawRestore(uiDrawContext *c);
+
+_UI_EXTERN void uiDrawBitmap(uiDrawContext *c, uiImage *img, double x, double y, double width, double height);
 
 // uiAttribute stores information about an attribute in a
 // uiAttributedString.

@@ -141,3 +141,23 @@ void uiDrawRestore(uiDrawContext *c)
 {
 	cairo_restore(c->cr);
 }
+
+void uiDrawBitmap(uiDrawContext *c, uiImage *img, double x, double y, double width, double height)
+{
+	if (width <= 0 || height <= 0)
+		return;
+	cairo_surface_t *cs = uiprivImageFirstSurface(img);
+	if (!cs)
+		return;
+	cairo_save(c->cr);
+	cairo_translate(c->cr, x, y);
+	double sw = cairo_image_surface_get_width(cs);
+	double sh = cairo_image_surface_get_height(cs);
+	if (sw > 0 && sh > 0) {
+		cairo_scale(c->cr, width / sw, height / sh);
+		cairo_set_source_surface(c->cr, cs, 0, 0);
+		cairo_pattern_set_filter(cairo_get_source(c->cr), CAIRO_FILTER_BILINEAR);
+		cairo_paint(c->cr);
+	}
+	cairo_restore(c->cr);
+}
