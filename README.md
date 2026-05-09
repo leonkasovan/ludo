@@ -54,6 +54,15 @@ pacman -S --needed \
   mingw-w64-x86_64-meson
 ```
 
+### Linux (WSL2 Ubuntu 22.04)
+
+Install toolchain and common tools:
+
+```bash
+sudo apt update
+sudo apt install pkg-config cmake libssl-dev libgtk-3-dev
+```
+
 > This project builds `libui-ng` from source via CMake; Meson is not required.
 
 CMake builds two executables:
