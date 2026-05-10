@@ -16,24 +16,34 @@ local TOOLS_DIR = _src:match("^@(.+)[\\/][^\\/]+$") or "tools"
 -- Platform definitions using the actual TSV header column names.
 local PLATFORMS = {
     { name = "PSX", file = "PSX_GAMES.tsv",
+      scrape_url = "https://api.screenscraper.fr/api2/jeuRecherche.php?output=json&devid=recalbox&devpassword=C3KbyjX8PKsUgm2tu53y&softname=Emulationstation-Recalbox-9.1&ssid=test&sspassword=test&systemeid=57&recherche=",
+      database_url = "https://nopaystation.com/tsv/PSX_GAMES.tsv",
       col_title_id  = "Title ID",           col_region = "Region", col_content_id = "Content ID",
       col_name = "Name",              col_pkg    = "PKG direct link",
       col_date = "Last Modification Date",       col_size   = "File Size" },
     { name = "PSP", file = "PSP_GAMES.tsv",
+      scrape_url = "https://api.screenscraper.fr/api2/jeuRecherche.php?output=json&devid=recalbox&devpassword=C3KbyjX8PKsUgm2tu53y&softname=Emulationstation-Recalbox-9.1&ssid=test&sspassword=test&systemeid=61&recherche=",
+      database_url = "https://nopaystation.com/tsv/PSP_GAMES.tsv",
       col_title_id  = "Title ID",           col_region = "Region", col_content_id = "Content ID",
       col_name = "Name",              col_pkg    = "PKG direct link",
       col_date = "Last Modification Date",       col_size   = "File Size",
       col_rap = "RAP" },
     { name = "PSV", file = "PSV_GAMES.tsv",
+      scrape_url = "https://api.screenscraper.fr/api2/jeuRecherche.php?output=json&devid=recalbox&devpassword=C3KbyjX8PKsUgm2tu53y&softname=Emulationstation-Recalbox-9.1&ssid=test&sspassword=test&systemeid=62&recherche=",
+      database_url = "https://nopaystation.com/tsv/PSV_GAMES.tsv",
       col_title_id  = "Title ID",           col_region = "Region", col_content_id = "Content ID",
       col_name = "Name",              col_pkg    = "PKG direct link", col_zrif = "zRIF",
       col_date = "Last Modification Date",       col_size   = "File Size" },
     { name = "PS3", file = "PS3_GAMES.tsv",
+      scrape_url = "https://api.screenscraper.fr/api2/jeuRecherche.php?output=json&devid=recalbox&devpassword=C3KbyjX8PKsUgm2tu53y&softname=Emulationstation-Recalbox-9.1&ssid=test&sspassword=test&systemeid=59&recherche=",
+      database_url = "https://nopaystation.com/tsv/PS3_GAMES.tsv",
       col_title_id  = "Title ID",           col_region = "Region", col_content_id = "Content ID",
       col_name = "Name",              col_pkg    = "PKG direct link",
       col_date = "Last Modification Date",       col_size   = "File Size",
       col_rap = "RAP" },
     { name = "PSM", file = "PSM_GAMES.tsv",
+      scrape_url = "https://api.screenscraper.fr/api2/jeuRecherche.php?output=json&devid=recalbox&devpassword=C3KbyjX8PKsUgm2tu53y&softname=Emulationstation-Recalbox-9.1&ssid=test&sspassword=test&systemeid=62&recherche=",
+      database_url = "https://nopaystation.com/tsv/PSM_GAMES.tsv",
       col_title_id  = "Title ID",           col_region = "Region", col_content_id = "Content ID",
       col_name = "Name",              col_pkg    = "PKG direct link", col_zrif = "zRIF",
       col_date = "Last Modification Date",       col_size   = "File Size" },
@@ -149,8 +159,31 @@ plat_box:SetPadded(1)
 local plat_cbs = {}
 for _, p in ipairs(PLATFORMS) do
     local cb = ui.NewCheckbox(p.name)
+    cb:SetChecked(1)
     plat_cbs[p.name] = cb
     plat_box:Append(cb, false)
+
+    local is_database_exist = io.open(TOOLS_DIR .. "/" .. p.file, "r")
+    if not is_database_exist then
+        -- If the local TSV file doesn't exist, attempt to download it from the database_url.
+        http.get_async(p.database_url, { timeout = 30 }, function(body, status, headers)
+            if status == 200 or status == 206 then
+                local path = TOOLS_DIR .. "/" .. p.file
+                local f = io.open(path, "wb")
+                if f then
+                    f:write(body)
+                    f:close()
+                    ludo.logSuccess("Downloaded " .. p.file)
+                else
+                    ludo.logError("Failed to save " .. p.file .. " to disk.")
+                end
+            else
+                ludo.logError("Failed to download " .. p.file .. ": HTTP " .. tostring(status))
+            end
+        end)
+    else
+        is_database_exist:close()
+    end
 end
 plat_group:SetChild(plat_box)
 root:Append(plat_group, false)
@@ -187,26 +220,17 @@ results_tbl:ColumnSetWidth(4, 180)
 root:Append(results_tbl, true)
 
 -- Game details group
-local det_group = ui.NewGroup("Game Details")
+local det_group = ui.NewGroup("Rom Details")
 det_group:SetMargined(1)
-local det_box = ui.NewVerticalBox()
+local det_box = ui.NewHorizontalBox()
 det_box:SetPadded(1)
-local lbl_plat   = ui.NewLabel("Platform : -")
-local lbl_id     = ui.NewLabel("Title ID : -")
-local lbl_region = ui.NewLabel("Region   : -")
-local lbl_name   = ui.NewLabel("Name     : -")
-local lbl_date   = ui.NewLabel("Date     : -")
-local lbl_size   = ui.NewLabel("Size     : -")
-local lbl_rap    = ui.NewLabel("RAP URL  : (none)")
-det_box:Append(lbl_plat)
-det_box:Append(lbl_id)
-det_box:Append(lbl_region)
-det_box:Append(lbl_name)
-det_box:Append(lbl_date)
-det_box:Append(lbl_size)
-det_box:Append(lbl_rap)
+local entry_info = ui.NewMultilineEntry()
+entry_info:SetReadOnly(1)
+det_box:Append(entry_info, true)
+local ss_img = ui.NewStaticImage()
+det_box:Append(ss_img, true)
 det_group:SetChild(det_box)
-root:Append(det_group, false)
+root:Append(det_group, true)
 
 -- Download button
 local dl_btn = ui.NewButton("  Download Selected  ")
@@ -215,26 +239,115 @@ root:Append(dl_btn, false)
 win:SetChild(root)
 
 -- Callbacks
-
+local current_details_id = nil
 local function update_details(idx)
     if not idx or idx < 1 or idx > #search_results then
-        lbl_plat:SetText("Platform : -")
-        lbl_id:SetText("Title ID : -")
-        lbl_region:SetText("Region   : -")
-        lbl_name:SetText("Name     : -")
-        lbl_date:SetText("Date     : -")
-        lbl_size:SetText("Size     : -")
-        lbl_rap:SetText("RAP URL  : (none)")
+        entry_info:SetText("")
+        ss_img:Clear()
+        current_details_id = nil
         return
     end
     local r = search_results[idx]
-    lbl_plat:SetText("Platform : " .. (r.platform or "-"))
-    lbl_id:SetText("Title ID : " .. (r.title_id or "-"))
-    lbl_region:SetText("Region   : " .. (r.region or "-"))
-    lbl_name:SetText("Name     : " .. (r.name or "-"))
-    lbl_date:SetText("Date     : " .. (r.date or "-"))
-    lbl_size:SetText("Size     : " .. format_size(r.size))
-    lbl_rap:SetText("RAP URL  : " .. (r.rap_url or "(none)"))
+    current_details_id = r.title_id
+    ss_img:Clear()
+    local scrape_url = nil
+    for _, p in ipairs(PLATFORMS) do
+        if p.name == r.platform then
+            scrape_url = p.scrape_url .. r.name:gsub(" ", "+")
+            break
+        end
+    end
+    if scrape_url then
+        entry_info:SetText("Loading details...")
+        ludo.logInfo("Fetching details for " .. r.title_id .. " from " .. scrape_url)
+        http.get_async(scrape_url, { timeout = 30 }, function(body, status)
+            if current_details_id ~= r.title_id then return end
+            if status ~= 200 or not body or #body == 0 then
+                entry_info:SetText("Failed to fetch details (HTTP " .. tostring(status) .. ")")
+                ludo.logInfo("Failed to fetch details for " .. r.title_id .. " (HTTP " .. tostring(status) .. ")")
+                return
+            end
+            local ok, data = pcall(json.decode, body)
+            if not ok or not data or not data.response or not data.response.jeux or #data.response.jeux == 0 then
+                entry_info:SetText("Failed to parse response.")
+                ludo.logInfo("Invalid JSON response for " .. r.title_id .. ": " .. body)
+                return
+            end
+            local jeu = data.response.jeux[1]
+            local lines = {}
+            local names = jeu.noms
+            if names and #names > 0 then
+                local name_text = ""
+                for _, n in ipairs(names) do
+                    if n.region == "en" or n.region == "ss" or n.region == "wor" then
+                        name_text = n.text; break
+                    end
+                end
+                if name_text == "" then name_text = names[1].text end
+                table.insert(lines, "Name: " .. name_text)
+            end
+            if jeu.developpeur and jeu.developpeur.text ~= "" then
+                table.insert(lines, "Developer: " .. jeu.developpeur.text)
+            end
+            if jeu.editeur and jeu.editeur.text ~= "" then
+                table.insert(lines, "Publisher: " .. jeu.editeur.text)
+            end
+            if jeu.dates and #jeu.dates > 0 and jeu.dates[1].text ~= "" then
+                table.insert(lines, "Year: " .. jeu.dates[1].text)
+            end
+            if jeu.genres and #jeu.genres > 0 then
+                for _, g in ipairs(jeu.genres) do
+                    if g.noms and g.principale == "1" then
+                        for _, n in ipairs(g.noms) do
+                            if n.langue == "en" then
+                                table.insert(lines, "Genre: " .. n.text); break
+                            end
+                        end
+                        break
+                    end
+                end
+            end
+            if jeu.joueurs and jeu.joueurs.text ~= "" then
+                table.insert(lines, "Players: " .. jeu.joueurs.text)
+            end
+            if jeu.note and jeu.note.text ~= "" then
+                table.insert(lines, "Rating: " .. jeu.note.text .. "/20")
+            end
+            if jeu.resolution and jeu.resolution ~= "" then
+                table.insert(lines, "Resolution: " .. jeu.resolution)
+            end
+            if jeu.synopsis and #jeu.synopsis > 0 then
+                local synopsis = ""
+                for _, s in ipairs(jeu.synopsis) do
+                    if s.langue == "en" then synopsis = s.text; break end
+                end
+                if synopsis == "" then synopsis = jeu.synopsis[1].text end
+                table.insert(lines, "")
+                table.insert(lines, "Synopsis:")
+                -- replace &quot; with actual quotes, and trim whitespace
+                synopsis = synopsis:gsub("&quot;", '"')
+                table.insert(lines, synopsis:match("^%s*(.-)%s*$"))
+            end
+            local ss_url = nil
+            if jeu.medias and #jeu.medias > 0 then
+                for _, m in ipairs(jeu.medias) do
+                    if m.type == "ss" and m.url and m.url ~= "" then
+                        ss_url = m.url; break
+                    end
+                end
+            end
+            entry_info:SetText(table.concat(lines, "\n"))
+            if ss_url then
+                http.get_async(ss_url, { timeout = 30 }, function(img_body, img_status)
+                    if current_details_id ~= r.title_id then return end
+                    if img_status ~= 200 or not img_body or #img_body == 0 then return end
+                    ss_img:SetImageFromMemory(img_body)
+                end)
+            end
+        end)
+    else
+        entry_info:SetText("Details not available.")
+    end
 end
 
 -- Clicking a row in the table updates the details panel.
