@@ -44,6 +44,10 @@ static void config_set_defaults(LudoConfig *cfg) {
            default_download_widths,
            sizeof(cfg->gui.downloads_table_widths));
     cfg->gui.snippet_table_widths[0] = 220;
+    strncpy(cfg->gui.http_test_default_url, "https://httpbin.org/get",
+            sizeof(cfg->gui.http_test_default_url) - 1);
+    cfg->gui.http_test_default_url[sizeof(cfg->gui.http_test_default_url) - 1] = '\0';
+    cfg->gui.http_test_default_headers[0] = '\0';
 }
 
 static char *trim(char *s) {
@@ -210,6 +214,8 @@ static int config_save(const LudoConfig *cfg, const char *path) {
     fprintf(fp, "httpTestWindowHeight=%d\n", cfg->gui.http_test_window.height);
     fprintf(fp, "httpTestWindowPosX=%d\n", cfg->gui.http_test_window.pos_x);
     fprintf(fp, "httpTestWindowPosY=%d\n", cfg->gui.http_test_window.pos_y);
+    fprintf(fp, "httpTestWindowDefaultUrl=%s\n", cfg->gui.http_test_default_url);
+    fprintf(fp, "httpTestWindowDefaultHeaders=%s\n", cfg->gui.http_test_default_headers);
     fprintf(fp, "luaTestWindowWidth=%d\n", cfg->gui.lua_test_window.width);
     fprintf(fp, "luaTestWindowHeight=%d\n", cfg->gui.lua_test_window.height);
     fprintf(fp, "luaTestWindowPosX=%d\n", cfg->gui.lua_test_window.pos_x);
@@ -269,6 +275,16 @@ static void config_apply_kv(LudoConfig *cfg, const char *key, const char *value)
     if (config_try_apply_window_kv(&cfg->gui.main_window, "mainWindow", key, value)) return;
     if (config_try_apply_window_kv(&cfg->gui.add_urls_window, "addUrlsWindow", key, value)) return;
     if (config_try_apply_window_kv(&cfg->gui.http_test_window, "httpTestWindow", key, value)) return;
+    if (key_equals(key, "httpTestWindowDefaultUrl")) {
+        strncpy(cfg->gui.http_test_default_url, value, sizeof(cfg->gui.http_test_default_url) - 1);
+        cfg->gui.http_test_default_url[sizeof(cfg->gui.http_test_default_url) - 1] = '\0';
+        return;
+    }
+    if (key_equals(key, "httpTestWindowDefaultHeaders")) {
+        strncpy(cfg->gui.http_test_default_headers, value, sizeof(cfg->gui.http_test_default_headers) - 1);
+        cfg->gui.http_test_default_headers[sizeof(cfg->gui.http_test_default_headers) - 1] = '\0';
+        return;
+    }
     if (config_try_apply_window_kv(&cfg->gui.lua_test_window, "luaTestWindow", key, value)) return;
     if (config_try_apply_table_kv(cfg->gui.downloads_table_widths,
                                   LUDO_GUI_DOWNLOADS_TABLE_COLUMN_COUNT,
@@ -409,4 +425,14 @@ void ludo_config_set_table_column_width(LudoGuiTableId table_id, int column, int
 
     widths[column] = width;
     g_config.dirty = 1;
+}
+
+const char *ludo_config_get_http_test_default_url(void) {
+    if (!g_config.initialized) return "https://httpbin.org/get";
+    return g_config.config.gui.http_test_default_url;
+}
+
+const char *ludo_config_get_http_test_default_headers(void) {
+    if (!g_config.initialized) return "";
+    return g_config.config.gui.http_test_default_headers;
 }

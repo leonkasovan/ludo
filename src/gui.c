@@ -1851,13 +1851,18 @@ static void on_http_clicked(uiMenuItem *sender, uiWindow *w, void *data) {
     uiBox *vbox = uiNewVerticalBox();
     uiBoxSetPadded(vbox, 1);
 
+    // add label + entry for URL input
+    uiLabel *url_label = uiNewLabel("URL:");
+    uiBoxAppend(vbox, uiControl(url_label), 0);
     uiEntry *url_entry = uiNewEntry();
-    uiEntrySetText(url_entry, "");
+    uiEntrySetText(url_entry, ludo_config_get_http_test_default_url());
     uiBoxAppend(vbox, uiControl(url_entry), 0);
 
+    uiLabel *header_label = uiNewLabel("Headers: (optional)");
+    uiBoxAppend(vbox, uiControl(header_label), 0);
     uiMultilineEntry *header_entry = uiNewMultilineEntry();
-    uiMultilineEntrySetText(header_entry, "");
-    uiBoxAppend(vbox, uiControl(header_entry), 0);
+    uiMultilineEntrySetText(header_entry, ludo_config_get_http_test_default_headers());
+    uiBoxAppend(vbox, uiControl(header_entry), 1);
 
     uiButton *send_btn = uiNewButton("Send HTTP Request");
     uiBoxAppend(vbox, uiControl(send_btn), 0);
