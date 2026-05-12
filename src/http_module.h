@@ -32,4 +32,17 @@ void async_http_init(void);
 void async_http_shutdown(void);
 #endif
 
+/* C-level HTTP GET result (no Lua dependency) */
+typedef struct {
+    char  *body;
+    size_t body_len;
+    long   status_code;
+    char  *resp_headers;   /* "Key: Value\n" formatted, caller must free */
+    char   error[256];     /* curl error message if curl_ok == 0 */
+    int    curl_ok;        /* 1 if curl_easy_perform succeeded */
+} HttpRawResult;
+
+void  http_raw_result_free(HttpRawResult *r);
+int   http_raw_get(const char *url, const char *headers_str, HttpRawResult *result);
+
 #endif /* LUDO_HTTP_MODULE_H */
