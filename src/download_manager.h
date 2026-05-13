@@ -55,7 +55,7 @@ struct Download {
     void            *curl_handle;    /* opaque pointer to active CURL handle, if any */
     FILE            *fp;             /* active file handle for writing, if any */
     size_t           bytes_since_last_flush;
-    volatile int     stop_requested;
+    volatile int     stop_requested;  /* guarded by list_mutex; volatile for visibility */
     int              marked_for_removal;
     char             extra_headers[4096]; /* optional "Name: Value\n" pairs appended to GET request */
     char             post_data[4096];     /* optional POST body for intercepted browser downloads */

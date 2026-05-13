@@ -2,6 +2,7 @@
 #define LUDO_HTTP_MODULE_H
 
 #include <lua.h>
+#include <curl/curl.h>
 
 /*
  * Registers the "http" library into the given Lua state.
@@ -44,5 +45,9 @@ typedef struct {
 
 void  http_raw_result_free(HttpRawResult *r);
 int   http_raw_get(const char *url, const char *headers_str, HttpRawResult *result);
+
+/* Shared curl setup utilities */
+void curl_setup_accept_encoding(CURL *curl);
+void curl_setup_debug(CURL *curl, const char *tag);
 
 #endif /* LUDO_HTTP_MODULE_H */

@@ -252,13 +252,13 @@ int main(int argc, char *argv[])
         }
         lua_engine_init();
         lua_engine_load_plugins(cfg ? cfg->plugin_dir : "plugins");
-        lua_engine_run_script(script_path);
+        int script_ok = lua_engine_run_script(script_path);
 
         task_queue_shutdown(&g_url_queue);
         download_manager_shutdown(); lua_engine_shutdown();
         task_queue_destroy(&g_url_queue);
         free(script_path); ludo_config_shutdown();
-        return 0;
+        return script_ok ? 0 : 1;
     }
 
     /* -------------------------------------------------------------- */

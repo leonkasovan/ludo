@@ -126,11 +126,7 @@ static struct {
 /* Lua state factory                                                    */
 /* ------------------------------------------------------------------ */
 
-/*
- * Create a fresh lua_State with standard libs plus our custom http/ludo
- * modules registered.  Each worker thread owns an independent state.
- */
-static lua_State *create_lua_state(void) {
+lua_State *lua_engine_create_state(void) {
     lua_State *L = luaL_newstate();
     if (!L) return NULL;
 
@@ -161,10 +157,22 @@ static lua_State *create_lua_state(void) {
     /* Register libui Lua bindings as "ui" */
 #ifndef BUILD_CONSOLE
     luaL_requiref(L, "ui", luaopen_libuilua, 1);
-#endif
     lua_pop(L, 1);
+#endif
 
     return L;
+}
+
+void lua_engine_close_state(lua_State *L) {
+    lua_close(L);
+}
+
+/*
+ * Backward-compatible wrapper — creates a state internally.
+ * Prefer lua_engine_process_url_l with a reusable state for batch workloads.
+ */
+static lua_State *create_lua_state(void) {
+    return lua_engine_create_state();
 }
 
 /* ------------------------------------------------------------------ */
@@ -172,35 +180,43 @@ static lua_State *create_lua_state(void) {
 /* ------------------------------------------------------------------ */
 
 /*
+ * Load a .lua file, pcall it, and verify it returns a table.
+ * On success leaves the table on top of the stack and returns 1.
+ * On failure pops any partial result and returns 0.
+ */
+static int load_plugin_file(lua_State *L, const char *path) {
+    if (lua_loadfile_utf8(L, path) != LUA_OK) return 0;
+    if (lua_pcall(L, 0, 1, 0) != LUA_OK) {
+        lua_pop(L, 1);
+        return 0;
+    }
+    if (!lua_istable(L, -1)) {
+        lua_pop(L, 1);
+        return 0;
+    }
+    return 1;
+}
+
+/*
  * Attempt to load and execute the plugin at `path` in state `L`.
  * Returns 1 if the file defines a table with .validate and .process
  * functions (the plugin "contract"), 0 otherwise.
  */
 static int plugin_check_contract(lua_State *L, const char *path) {
-    int status;
-    int has_validate;
-    int has_process;
-
-    status = lua_loadfile_utf8(L, path);
-    if (status != LUA_OK || lua_pcall(L, 0, 1, 0) != LUA_OK) {
+    if (!load_plugin_file(L, path)) {
         const char *err = lua_tostring(L, -1);
         char msg[1024];
         snprintf(msg, sizeof(msg), "[lua_engine] failed to load %.380s: %.580s",
              path, err ? err : "(unknown error)");
         gui_log(LOG_ERROR, msg);
-        lua_pop(L, 1);
-        return 0;
-    }
-    /* The file must leave a table on top of the stack with the plugin */
-    if (!lua_istable(L, -1)) {
-        lua_pop(L, 1);
+        if (lua_gettop(L) > 0) lua_pop(L, 1);
         return 0;
     }
     lua_getfield(L, -1, "validate");
-    has_validate = lua_isfunction(L, -1);
+    int has_validate = lua_isfunction(L, -1);
     lua_pop(L, 1);
     lua_getfield(L, -1, "process");
-    has_process = lua_isfunction(L, -1);
+    int has_process = lua_isfunction(L, -1);
     lua_pop(L, 1);
     lua_pop(L, 1); /* pop plugin table */
 
@@ -240,10 +256,9 @@ void lua_engine_load_plugins(const char *plugin_dir) {
         free(plugin_dir_w);
         return;
     }
-    ludo_mutex_lock(&g_engine.mutex);
-    g_engine.count = 0;
-    memset(g_engine.plugins, 0, sizeof(g_engine.plugins));
-    ludo_mutex_unlock(&g_engine.mutex);
+    /* Build local list first to avoid leaving g_engine.plugins empty mid-scan */
+    PluginEntry local_list[MAX_PLUGINS];
+    int local_count = 0;
     do {
         wchar_t full_path[512];
         char utf8_path[512];
@@ -263,22 +278,30 @@ void lua_engine_load_plugins(const char *plugin_dir) {
         }
         lua_close(check_L);
 
-        ludo_mutex_lock(&g_engine.mutex);
-        if (g_engine.count < MAX_PLUGINS) {
-            memcpy(g_engine.plugins[g_engine.count].path, utf8_path, sizeof(utf8_path));
-            g_engine.count++;
+        if (local_count < MAX_PLUGINS) {
+            memcpy(local_list[local_count].path, utf8_path, sizeof(utf8_path));
+            local_count++;
         } else {
             gui_log(LOG_WARNING, "[lua_engine] MAX_PLUGINS (%d) reached; skipping %s",
                     MAX_PLUGINS, utf8_path);
         }
-        ludo_mutex_unlock(&g_engine.mutex);
     } while (FindNextFileW(hFind, &fd));
     FindClose(hFind);
     free(plugin_dir_w);
+
+    /* Atomically install the new plugin list */
+    ludo_mutex_lock(&g_engine.mutex);
+    g_engine.count = local_count;
+    memcpy(g_engine.plugins, local_list, (size_t)local_count * sizeof(PluginEntry));
+    memset(g_engine.plugins + local_count, 0,
+           (MAX_PLUGINS - local_count) * sizeof(PluginEntry));
+    ludo_mutex_unlock(&g_engine.mutex);
 #else
     DIR *dir = opendir(plugin_dir);
     if (!dir) return;
     struct dirent *ent;
+    PluginEntry local_list[MAX_PLUGINS];
+    int local_count = 0;
     while ((ent = readdir(dir))) {
         char path[sizeof(g_engine.plugins[0].path)];
         lua_State *check_L;
@@ -297,24 +320,36 @@ void lua_engine_load_plugins(const char *plugin_dir) {
         }
         lua_close(check_L);
 
-        ludo_mutex_lock(&g_engine.mutex);
-        if (g_engine.count < MAX_PLUGINS) {
-            memcpy(g_engine.plugins[g_engine.count].path, path, sizeof(path));
-            g_engine.count++;
+        if (local_count < MAX_PLUGINS) {
+            memcpy(local_list[local_count].path, path, sizeof(path));
+            local_count++;
         } else {
             gui_log(LOG_WARNING, "[lua_engine] MAX_PLUGINS (%d) reached; skipping %s",
                     MAX_PLUGINS, path);
         }
-        ludo_mutex_unlock(&g_engine.mutex);
     }
     closedir(dir);
+
+    /* Atomically install the new plugin list */
+    ludo_mutex_lock(&g_engine.mutex);
+    g_engine.count = local_count;
+    memcpy(g_engine.plugins, local_list, (size_t)local_count * sizeof(PluginEntry));
+    memset(g_engine.plugins + local_count, 0,
+           (MAX_PLUGINS - local_count) * sizeof(PluginEntry));
+    ludo_mutex_unlock(&g_engine.mutex);
 #endif
     /* Move generic.lua to the end so specific hoster plugins get first chance */
     ludo_mutex_lock(&g_engine.mutex);
     if (g_engine.count > 1) {
         int generic_idx = -1;
         for (int i = 0; i < g_engine.count; i++) {
-            if (strstr(g_engine.plugins[i].path, "generic.lua")) {
+            size_t plen = strlen(g_engine.plugins[i].path);
+            const char *suffix = "/generic.lua";
+            size_t slen = strlen(suffix);
+            /* Check for Windows \\generic.lua too */
+            if ((plen >= slen && strcmp(g_engine.plugins[i].path + plen - slen, suffix) == 0) ||
+                (plen >= slen && g_engine.plugins[i].path[plen - slen] == '\\' &&
+                 strcmp(g_engine.plugins[i].path + plen - slen + 1, "generic.lua") == 0)) {
                 generic_idx = i;
                 break;
             }
@@ -329,21 +364,13 @@ void lua_engine_load_plugins(const char *plugin_dir) {
     ludo_mutex_unlock(&g_engine.mutex);
 }
 
-int lua_engine_process_url(const char *url) {
-    /* Each call gets a fresh Lua state (thread-safe, no shared state). */
-    lua_State *L;
-    int handled;
+int lua_engine_process_url_l(lua_State *L, const char *url) {
+    int handled = 0;
     int count;
     PluginEntry plugins[MAX_PLUGINS];
 
-    L = create_lua_state();
-    if (!L) {
-        gui_log(LOG_ERROR, "[lua_engine] failed to create Lua state");
-        return 0;
-    }
     ludo_module_set_current_source_url(L, url);
-
-    handled = 0;
+    lua_settop(L, 0); /* reset stack for reuse */
 
     ludo_mutex_lock(&g_engine.mutex);
     count = g_engine.count;
@@ -352,27 +379,14 @@ int lua_engine_process_url(const char *url) {
 
     for (int i = 0; i < count; i++) {
         int matches;
-        /* Load the plugin file; it should return a table */
-        if (lua_loadfile_utf8(L, plugins[i].path) != LUA_OK) {
+
+        if (!load_plugin_file(L, plugins[i].path)) {
             const char *e = lua_tostring(L, -1);
             char msg[512];
             snprintf(msg, sizeof(msg), "[lua_engine] load error %.190s: %.280s",
                      plugins[i].path, e ? e : "?");
             gui_log(LOG_ERROR, "%s", msg);
-            lua_pop(L, 1);
-            continue;
-        }
-        if (lua_pcall(L, 0, 1, 0) != LUA_OK) {
-            const char *e = lua_tostring(L, -1);
-            char msg[512];
-            snprintf(msg, sizeof(msg), "[lua_engine] exec error %.190s: %.280s",
-                     plugins[i].path, e ? e : "?");
-            gui_log(LOG_ERROR, "%s", msg);
-            lua_pop(L, 1);
-            continue;
-        }
-        if (!lua_istable(L, -1)) {
-            lua_pop(L, 1);
+            if (lua_gettop(L) > 0) lua_pop(L, 1);
             continue;
         }
 
@@ -421,13 +435,22 @@ int lua_engine_process_url(const char *url) {
         lua_pop(L, 1); /* pop process() return value */
         lua_pop(L, 1); /* pop plugin table */
 
-        /* Count this as handled even if process returned nil; the script
-           called ludo.newDownload() internally as a side effect. */
         handled = 1;
         break; /* first matching plugin wins */
     }
 
-    lua_close(L);
+    lua_settop(L, 0); /* clean stack for next URL */
+    return handled;
+}
+
+int lua_engine_process_url(const char *url) {
+    lua_State *L = lua_engine_create_state();
+    if (!L) {
+        gui_log(LOG_ERROR, "[lua_engine] failed to create Lua state");
+        return 0;
+    }
+    int handled = lua_engine_process_url_l(L, url);
+    lua_engine_close_state(L);
     return handled;
 }
 

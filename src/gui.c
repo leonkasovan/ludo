@@ -495,8 +495,13 @@ static void persist_lua_test_window_state(LuaTestCtx *ctx) {
 static void *url_worker_thread(void *arg) {
     (void)arg;
     URLTask task;
+    lua_State *L = lua_engine_create_state();
+    if (!L) {
+        gui_log(LOG_ERROR, "[url_worker] failed to create Lua state");
+        return NULL;
+    }
     while (task_queue_pop(&g_url_queue, &task)) {
-        int handled = lua_engine_process_url(task.url);
+        int handled = lua_engine_process_url_l(L, task.url);
         if (!handled) {
             /* No plugin matched: attempt a direct download */
             char msg[512];
@@ -514,6 +519,7 @@ static void *url_worker_thread(void *arg) {
                                  NULL);
         }
     }
+    lua_engine_close_state(L);
     return NULL;
 }
 
