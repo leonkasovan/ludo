@@ -61,7 +61,7 @@ local function search_platform(platform, query, results)
 	-- local filepath = platform.file
     local ok, iter = pcall(ftcsv.parseLine, filepath, "|")
     if not ok then
-        ludo.logInfo("Arcade ROMs Downloader: cannot open " .. filepath .. ": " .. tostring(iter))
+        ludo.logInfo("Retro ROMs Downloader: cannot open " .. filepath .. ": " .. tostring(iter))
         return
     end
     local q = query:lower()
@@ -107,11 +107,9 @@ local handler = {
 }
 
 local model = ui.NewTableModel(handler)
-local skip_selection = false  -- guard against RowChanged re-triggering OnSelectionChanged
 
 -- UI construction
-
-local win = ui.NewWindow("Arcade ROMs Downloader", 860, 600, false)
+local win = ui.NewWindow("Retro ROMs Downloader", 860, 600, false)
 win:SetMargined(1)
 
 local root = ui.NewVerticalBox()
@@ -180,26 +178,29 @@ root:Append(dl_btn, false)
 win:SetChild(root)
 
 -- Callbacks
-
+local current_details_id = nil
 local function update_details(idx)
     if not idx or idx < 1 or idx > #search_results then
         entry_info:SetText("")
         ss_img:Clear()
+        current_details_id = nil
         return
     end
     local r = search_results[idx]
+    current_details_id = r.game_id
     ss_img:Clear()
     local scrape_url = nil
     for _, p in ipairs(PLATFORMS) do
         if p.name == r.platform then
-            scrape_url = p.scrape_url .. http.url_encode(r.game_name)
+            scrape_url = p.scrape_url .. http.url_encode(r.game_name:gsub("%s*%(.*%)%s*", " "):gsub("^%s*(.-)%s*$", "%1"):gsub("%s+", " "):gsub("[^%w%s]", ""))
             break
         end
     end
     if scrape_url then
-        entry_info:SetText("Loading details...")
+        entry_info:SetText("Loading details...\n" .. scrape_url)
+        ludo.logInfo("Fetching details for " .. r.game_name .. " from " .. scrape_url)
         http.get_async(scrape_url, { timeout = 30 }, function(body, status)
-            if idx < 1 or idx > #search_results then return end  -- search was reset
+            if current_details_id ~= r.game_id then return end
             if status ~= 200 or not body or #body == 0 then
                 entry_info:SetText("Failed to fetch details (HTTP " .. tostring(status) .. ")\n" .. scrape_url)
                 return
@@ -210,8 +211,8 @@ local function update_details(idx)
                 return
             end
             local jeu = data.response.jeux[1]  -- Take the first result, which should be the best match
-            if not jeu then
-                entry_info:SetText("No details found.")
+            if not jeu or not jeu.noms or #jeu.noms == 0 then
+                entry_info:SetText("No details found." .. "\n" .. scrape_url)
                 return
             end
             local lines = {}
@@ -225,20 +226,15 @@ local function update_details(idx)
                 end
                 if name_text == "" then name_text = names[1].text end
                 table.insert(lines, "Name: " .. name_text)
-                r.game_name = name_text
             end
-            local info_parts = {}
             if jeu.developpeur and jeu.developpeur.text ~= "" then
                 table.insert(lines, "Developer: " .. jeu.developpeur.text)
-                table.insert(info_parts, "Dev: " .. jeu.developpeur.text)
             end
             if jeu.editeur and jeu.editeur.text ~= "" then
                 table.insert(lines, "Publisher: " .. jeu.editeur.text)
-                table.insert(info_parts, "Pub: " .. jeu.editeur.text)
             end
             if jeu.dates and #jeu.dates > 0 and jeu.dates[1].text ~= "" then
                 table.insert(lines, "Year: " .. jeu.dates[1].text)
-                table.insert(info_parts, jeu.dates[1].text)
             end
             if jeu.genres and #jeu.genres > 0 then
                 for _, g in ipairs(jeu.genres) do
@@ -257,7 +253,6 @@ local function update_details(idx)
             end
             if jeu.note and jeu.note.text ~= "" then
                 table.insert(lines, "Rating: " .. jeu.note.text .. "/20")
-                table.insert(info_parts, "Rating: " .. jeu.note.text .. "/20")
             end
             if jeu.resolution and jeu.resolution ~= "" then
                 table.insert(lines, "Resolution: " .. jeu.resolution)
@@ -270,13 +265,10 @@ local function update_details(idx)
                 if synopsis == "" then synopsis = jeu.synopsis[1].text end
                 table.insert(lines, "")
                 table.insert(lines, "Synopsis:")
-                synopsis = synopsis:gsub("&quot;", "\"")
+                -- replace &quot; with actual quotes, and trim whitespace
+                synopsis = synopsis:gsub("&quot;", '"')
                 table.insert(lines, synopsis:match("^%s*(.-)%s*$"))
             end
-            r.game_info = table.concat(info_parts, " | ")
-            skip_selection = true
-            model:RowChanged(idx - 1)
-            skip_selection = false
             local ss_url = nil
             if jeu.medias and #jeu.medias > 0 then
                 for _, m in ipairs(jeu.medias) do
@@ -285,13 +277,10 @@ local function update_details(idx)
                     end
                 end
             end
-            -- if ss_url then
-            --     table.insert(lines, "")
-            --     table.insert(lines, "Screenshot: " .. ss_url)
-            -- end
             entry_info:SetText(table.concat(lines, "\n"))
             if ss_url then
                 http.get_async(ss_url, { timeout = 30 }, function(img_body, img_status)
+                    if current_details_id ~= r.game_id then return end
                     if img_status ~= 200 or not img_body or #img_body == 0 then return end
                     ss_img:SetImageFromMemory(img_body)
                 end)
@@ -304,7 +293,6 @@ end
 
 -- Clicking a row in the table updates the details panel.
 results_tbl:OnSelectionChanged(function()
-    if skip_selection then return end
     local sel = results_tbl:GetSelection()
     if sel and #sel > 0 then
         update_details(sel[1] + 1)  -- GetSelection returns 0-based indices
