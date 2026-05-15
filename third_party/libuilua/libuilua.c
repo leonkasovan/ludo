@@ -7,6 +7,10 @@
 #include <string.h>
 #include <time.h>
 
+#ifdef _WIN32
+#include <windows.h>
+#endif
+
 #include <lua.h>
 #include <lualib.h>
 #include <lauxlib.h>
@@ -45,6 +49,9 @@ struct imgwrap {
 	uiImage *img;
 };
 
+/* forward declaration — used by CREATE_OBJECT macro */
+int l_gc(lua_State *L);
+
 /* --- window tracker for app-shutdown cleanup ---------------------- */
 
 #define MAX_TRACKED_WINDOWS 64
@@ -73,6 +80,20 @@ void libuilua_destroy_all_windows(void)
 		uiWindow *w = g_tracked_windows[--g_tracked_window_count];
 		uiControlDestroy(uiControl(w));
 	}
+}
+
+void libuilua_request_close_all_windows(void)
+{
+	fprintf(stderr, "[libuilua] request_close_all_windows: %d tracked windows\n",
+		g_tracked_window_count);
+#ifdef _WIN32
+	for (int i = g_tracked_window_count - 1; i >= 0; i--) {
+		uiWindow *w = g_tracked_windows[i];
+		HWND hwnd = (HWND)uiControlHandle(uiControl(w));
+		fprintf(stderr, "[libuilua]   posting WM_CLOSE to hwnd=%p\n", (void *)hwnd);
+		PostMessageW(hwnd, WM_CLOSE, 0, 0);
+	}
+#endif
 }
 
 /* ------------------------------------------------------------------ */
@@ -186,31 +207,6 @@ static int callback_boolean(lua_State *L, void *control, int default_value)
 	default_value = lua_toboolean(L, -1);
 	lua_pop(L, 1);
 	return default_value;
-}
-
-
-int l_gc(lua_State *L)
-{
-	return 0;
-
-	struct wrap *w = lua_touserdata(L, 1);
-	uint32_t s = w->control->TypeSignature;
-	printf("gc %p %c%c%c%c\n", w->control, s >> 24, s >> 16, s >> 8, s >> 0);
-
-	uiControl *control = CAST_ARG(1, Control);
-	uiControl *parent = uiControlParent(control);
-
-	if(parent) {
-		if(parent->TypeSignature == 0x57696E64) {
-			//uiWindowSetChild(uiWindow(parent), NULL);
-		}
-		if(parent->TypeSignature == 0x47727062) {
-			//uiGroupSetChild(uiWindow(parent), NULL);
-		}
-	}
-	//uiControlDestroy(control);
-
-	return 0;
 }
 
 
@@ -1231,6 +1227,9 @@ static struct luaL_Reg meta_Tab[] = {
 static int on_window_closing_default(uiWindow *w, void *data)
 {
 	(void)data;
+	fprintf(stderr, "[libuilua] on_window_closing_default: hwnd=%p\n",
+		(void *)uiControlHandle(uiControl(w)));
+	tracked_window_remove(w);
 	uiControlDestroy(uiControl(w));
 	return 0;
 }
@@ -1238,13 +1237,56 @@ static int on_window_closing_default(uiWindow *w, void *data)
 static int on_window_closing_lua(uiWindow *w, void *data)
 {
 	lua_State *L = data;
+	fprintf(stderr, "[libuilua] on_window_closing_lua: hwnd=%p\n",
+		(void *)uiControlHandle(uiControl(w)));
 	int should_close = callback_boolean(L, w, 1);
 
 	if(should_close) {
+		fprintf(stderr, "[libuilua]   should_close=true, removing and destroying\n");
+		tracked_window_remove(w);
 		clear_callback_data(L, w);
 		uiControlDestroy(uiControl(w));
 	}
 
+	return 0;
+}
+
+/*
+ * If the user closes the main window while a tool-script window is still
+ * open we must NOT call uiControlDestroy() from begin_app_shutdown because
+ * the tool script may still be inside a nested MainStep() event loop.
+ * Calling DestroyWindow() from a different call-stack frame can deadlock
+ * the message pump.
+ *
+ * Instead we let uiQuit() cause all nested MainStep loops to exit
+ * naturally.  When the Lua state is garbage-collected during
+ * lua_close(), the GC calls the __gc metamethod which cleans up any
+ * still-alive top-level windows here.
+ */
+int l_gc(lua_State *L)
+{
+	uiControl *control = CAST_ARG(1, Control);
+	fprintf(stderr, "[libuilua] l_gc: control=%p parent=%p tracked=%d\n",
+		(void *)control, uiControlParent(control), g_tracked_window_count);
+
+	/* Only clean up top-level windows that are still in the tracker.
+	 * Child controls (buttons, entries, etc.) are recursively destroyed
+	 * by the parent's uiControlDestroy and appear here with a dangling
+	 * parent=NULL — those must be skipped to avoid double-free. */
+	if (uiControlParent(control) == NULL) {
+		for (int i = 0; i < g_tracked_window_count; i++) {
+			if (g_tracked_windows[i] == (uiWindow *)control) {
+				fprintf(stderr, "[libuilua] l_gc: destroying tracked window hwnd=%p\n",
+					(void *)uiControlHandle(control));
+				tracked_window_remove((uiWindow *)control);
+				clear_callback_data(L, control);
+				uiControlDestroy(control);
+				break;
+			}
+		}
+	} else {
+		fprintf(stderr, "[libuilua] l_gc: skipping child control (not a top-level window)\n");
+	}
 	return 0;
 }
 
@@ -2410,6 +2452,22 @@ int l_Main(lua_State *L)
 int l_MainStep(lua_State *L)
 {
 	int r = uiMainStep(lua_toboolean(L, 1));
+	if (r == 0) {
+		fprintf(stderr, "[libuilua] MainStep: WM_QUIT received, "
+			"posting WM_CLOSE to %d tracked windows and re-posting WM_QUIT\n",
+			g_tracked_window_count);
+		/* WM_QUIT received — the app is shutting down. Post WM_CLOSE to
+		 * each tracked window so their OnClosing handlers fire.  This is
+		 * necessary for Lua tool scripts that use
+		 *   while win_open do ui.MainStep(true) end
+		 * because they only break the loop when win_open becomes false,
+		 * which only happens in the Lua OnClosing callback. */
+		libuilua_request_close_all_windows();
+		/* Re-post WM_QUIT so subsequent uiMainStep calls also return 0,
+		 * preventing the loop from blocking on GetMessageW forever after
+		 * the initial WM_QUIT is consumed. */
+		uiQuit();
+	}
 	lua_pushnumber(L, r);
 	return 1;
 }

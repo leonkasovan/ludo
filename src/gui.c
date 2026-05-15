@@ -1502,24 +1502,38 @@ void gui_on_progress(const ProgressUpdate *update, void *user_data) {
 static void begin_app_shutdown(void) {
     if (g_gui.shutdown_requested) return;
 
+    gui_log(LOG_INFO, "[shutdown] begin_app_shutdown: starting");
+
     /* Destroy any open child windows before tearing down the app */
     if (g_active_add_urls_ctx) {
+        gui_log(LOG_INFO, "[shutdown] destroying Add URLs window");
         on_child_window_closing(g_active_add_urls_ctx->win, g_active_add_urls_ctx);
         g_active_add_urls_ctx = NULL;
     }
     if (g_active_http_test_ctx) {
+        gui_log(LOG_INFO, "[shutdown] destroying HTTP test window");
         destroy_http_test_window(g_active_http_test_ctx->win, g_active_http_test_ctx);
         g_active_http_test_ctx = NULL;
     }
     if (g_active_lua_test_ctx) {
+        gui_log(LOG_INFO, "[shutdown] destroying Lua test window");
         destroy_lua_test_window(g_active_lua_test_ctx->win, g_active_lua_test_ctx);
         g_active_lua_test_ctx = NULL;
     }
 
-    /* Destroy any tool-script windows created through ui.NewWindow() */
-    libuilua_destroy_all_windows();
+    /* Post WM_CLOSE to any tool-script windows so their OnClosing
+     * handlers fire and their Lua event loops can break. */
+    gui_log(LOG_INFO, "[shutdown] requesting close of all Lua windows");
+    libuilua_request_close_all_windows();
 
     persist_main_window_state();
+    g_gui.shutdown_requested = 1;
+    task_queue_shutdown(&g_url_queue);
+    gui_shutdown();
+    download_manager_shutdown();
+    lua_engine_shutdown();
+
+    gui_log(LOG_INFO, "[shutdown] begin_app_shutdown: done");
     g_gui.shutdown_requested = 1;
     task_queue_shutdown(&g_url_queue);
     gui_shutdown();
@@ -1558,8 +1572,11 @@ int gui_is_shutdown_requested(void) {
 
 static int on_window_close(uiWindow *w, void *data) {
     (void)w; (void)data;
+    gui_log(LOG_INFO, "[shutdown] on_window_close: calling begin_app_shutdown");
     begin_app_shutdown();
+    gui_log(LOG_INFO, "[shutdown] on_window_close: calling uiQuit");
     uiQuit();
+    gui_log(LOG_INFO, "[shutdown] on_window_close: done");
     return 1; /* destroy window */
 }
 

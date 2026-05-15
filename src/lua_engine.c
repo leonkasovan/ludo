@@ -468,6 +468,7 @@ void lua_engine_info(void) {
 
 /* Run a specific Lua script file headlessly. Returns 1 on success, 0 on error. */
 int lua_engine_run_script(const char *path) {
+    gui_log(LOG_INFO, "[lua_engine] run_script: enter (%s)", path);
     lua_State *L = create_lua_state();
     if (!L) {
         gui_log(LOG_ERROR, "[lua_engine] failed to create Lua state for script");
@@ -510,13 +511,17 @@ int lua_engine_run_script(const char *path) {
     }
 
     /* Execute the chunk */
+    gui_log(LOG_INFO, "[lua_engine] run_script: calling lua_pcall");
     if (lua_pcall(L, 0, 0, 0) != LUA_OK) {
         const char *e = lua_tostring(L, -1);
         gui_log(LOG_ERROR, "[lua_engine] exec error %s: %s", path, e ? e : "?");
         lua_close(L);
         return 0;
     }
+    gui_log(LOG_INFO, "[lua_engine] run_script: lua_pcall returned");
 
+    gui_log(LOG_INFO, "[lua_engine] run_script: calling lua_close");
     lua_close(L);
+    gui_log(LOG_INFO, "[lua_engine] run_script: exit");
     return 1;
 }

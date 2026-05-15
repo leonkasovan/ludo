@@ -95,13 +95,15 @@ void dm_log(const char *fmt, ...) {
 }
 
 void dm_log_close(void) {
-    if (!g_log_fp) return;
     if (!g_log_mutex_init) return;
 
     ludo_mutex_lock(&g_log_mutex);
-    fprintf(g_log_fp, "===== dm session end =====\n");
-    fclose(g_log_fp);
-    g_log_fp = NULL;
+    if (g_log_fp) {
+        fprintf(g_log_fp, "===== dm session end =====\n");
+        fflush(g_log_fp);
+        fclose(g_log_fp);
+        g_log_fp = NULL;
+    }
     ludo_mutex_unlock(&g_log_mutex);
     ludo_mutex_destroy(&g_log_mutex);
     g_log_mutex_init = 0;
@@ -1435,7 +1437,10 @@ void download_manager_prepare_for_shutdown(void) {
 }
 
 void download_manager_shutdown(void) {
-    if (!g_mgr.initialized || g_mgr.shutdown_complete) return;
+    if (!g_mgr.initialized || g_mgr.shutdown_complete) {
+        dm_log_close();
+        return;
+    }
 
     dm_log("[shutdown] begin");
     download_manager_prepare_for_shutdown();

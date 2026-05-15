@@ -11,4 +11,8 @@ int luaopen_libuilua(lua_State *L);
    main window. */
 void libuilua_destroy_all_windows(void);
 
+/* Posts WM_CLOSE to all tracked windows so their OnClosing handlers fire,
+   allowing Lua tool scripts to break out of their event loops. */
+void libuilua_request_close_all_windows(void);
+
 #endif /* LIBUILUA_H */

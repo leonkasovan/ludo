@@ -45,7 +45,7 @@ The project produces two executable targets:
 
 ### Build Commands
 
-in VSCode open w64devkit terminal and then follow this command
+in VSCode open w64devkit terminal (C:\w64devkit\w64devkit.exe) and then follow this command
 ```bash
 # Configure + build (full)
 cmake -B build . && cmake --build build --parallel
