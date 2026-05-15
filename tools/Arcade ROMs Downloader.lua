@@ -28,6 +28,34 @@ local PLATFORMS = {
       col_name = "game_name",
       col_info = "game_info",
 	  col_size   = "game_size" },
+	{ name = "Neogeo", file = "NEOGEO.csv",
+	  source_url = "https://archive.org/download/cylums-neo-geo-rom-collection/Cylum%27s%20Neo%20Geo%20ROM%20Collection%20%2802-18-2021%29",
+	  scrape_url = "https://api.screenscraper.fr/api2/jeuInfos.php?output=json&devid=recalbox&devpassword=C3KbyjX8PKsUgm2tu53y&softname=Emulationstation-Recalbox-9.1&ssid=test&sspassword=test&romtype=rom&systemeid=68&romnom=",
+      col_id  = "game_id",
+      col_name = "game_name",
+      col_info = "game_info",
+	  col_size   = "game_size" },
+	{ name = "CPS1", file = "CPS1.csv",
+	  source_url = "https://archive.org/download/CapcomCPS1ByGhostware",
+	  scrape_url = "https://api.screenscraper.fr/api2/jeuInfos.php?output=json&devid=recalbox&devpassword=C3KbyjX8PKsUgm2tu53y&softname=Emulationstation-Recalbox-9.1&ssid=test&sspassword=test&romtype=rom&systemeid=6&romnom=",
+      col_id  = "game_id",
+      col_name = "game_name",
+      col_info = "game_info",
+	  col_size   = "game_size" },
+	{ name = "CPS2", file = "CPS2.csv",
+	  source_url = "https://archive.org/download/CapcomCPS2ByDataghost",
+	  scrape_url = "https://api.screenscraper.fr/api2/jeuInfos.php?output=json&devid=recalbox&devpassword=C3KbyjX8PKsUgm2tu53y&softname=Emulationstation-Recalbox-9.1&ssid=test&sspassword=test&romtype=rom&systemeid=7&romnom=",
+      col_id  = "game_id",
+      col_name = "game_name",
+      col_info = "game_info",
+	  col_size   = "game_size" },
+	{ name = "CPS3", file = "CPS3.csv",
+	  source_url = "https://archive.org/download/cps3_games",
+	  scrape_url = "https://api.screenscraper.fr/api2/jeuInfos.php?output=json&devid=recalbox&devpassword=C3KbyjX8PKsUgm2tu53y&softname=Emulationstation-Recalbox-9.1&ssid=test&sspassword=test&romtype=rom&systemeid=8&romnom=",
+      col_id  = "game_id",
+      col_name = "game_name",
+      col_info = "game_info",
+	  col_size   = "game_size" },
 }
 local MAX_RESULTS = 99
 local search_results = {}
@@ -196,7 +224,7 @@ local function update_details(idx)
         http.get_async(scrape_url, { timeout = 30 }, function(body, status)
             if current_details_id ~= r.game_id then return end
             if status ~= 200 or not body or #body == 0 then
-                entry_info:SetText("Failed to fetch details (HTTP " .. tostring(status) .. ")")
+                entry_info:SetText("Failed to fetch details (HTTP " .. tostring(status) .. ")\n" .. scrape_url)
                 return
             end
             local ok, data = pcall(json.decode, body)
