@@ -495,8 +495,13 @@ static void persist_lua_test_window_state(LuaTestCtx *ctx) {
 static void *url_worker_thread(void *arg) {
     (void)arg;
     URLTask task;
+    lua_State *L = lua_engine_create_state();
+    if (!L) {
+        gui_log(LOG_ERROR, "[url_worker] failed to create Lua state");
+        return NULL;
+    }
     while (task_queue_pop(&g_url_queue, &task)) {
-        int handled = lua_engine_process_url(task.url);
+        int handled = lua_engine_process_url_l(L, task.url);
         if (!handled) {
             /* No plugin matched: attempt a direct download */
             char msg[512];
@@ -514,6 +519,7 @@ static void *url_worker_thread(void *arg) {
                                  NULL);
         }
     }
+    lua_engine_close_state(L);
     return NULL;
 }
 
@@ -915,112 +921,43 @@ static void http_test_on_send(uiButton *b, void *ud) {
     const char *url = uiEntryText(ctx->url_entry);
     const char *headers = uiMultilineEntryText(ctx->header_entry);
 
-    lua_State *L = luaL_newstate();
-    if (!L) {
-        gui_log(LOG_ERROR, "[HTTP DEBUG] luaL_newstate failed");
-        if (url) uiFreeText((char*)url);
-        if (headers) uiFreeText((char*)headers);
-        return;
-    }
-    luaL_openlibs(L);
-    http_module_register(L);
+    HttpRawResult result;
+    int rc = http_raw_get(url ? url : "", headers, &result);
 
-    lua_getglobal(L, "http");
-    lua_getfield(L, -1, "get");
-    lua_pushstring(L, url ? url : "");
-    lua_newtable(L); /* options */
-    if (headers && headers[0]) {
-        lua_newtable(L);
-        char *lines = strdup(headers);
-        char *p = lines;
-        while (p && *p) {
-            char *end = strchr(p, '\n');
-            if (end) *end = '\0'; /* Terminate the current line */
-            
-            char *colon = strchr(p, ':');
-            if (colon) {
-                *colon = '\0';
-                const char *k = p;
-                const char *v = colon + 1;
-                while (*v == ' ' || *v == '\t') v++; /* Trim leading space */
-                lua_pushstring(L, k);
-                lua_pushstring(L, v);
-                lua_settable(L, -3);
-            }
-            p = end ? end + 1 : NULL; /* Move to next line */
-        }
-        free(lines);
-        lua_setfield(L, -2, "headers");
-    }
-
-    int res = lua_pcall(L, 2, 3, 0);
-    if (res != LUA_OK) {
-        const char *err = lua_tostring(L, -1);
-        gui_log(LOG_ERROR, err ? err : "(nil)");
-        uiMultilineEntrySetText(ctx->output_entry, err ? err : "Lua error");
-        lua_close(L);
-        if (url) uiFreeText((char*)url);
-        if (headers) uiFreeText((char*)headers);
-        return;
-    }
-
-    /* Build header response string from headers table (stack -1) */
-    if (lua_istable(L, -1)) {
-        int hdr_idx = lua_gettop(L);
-        char *hdr_out = NULL;
-        size_t hdr_len = 0;
-        lua_pushnil(L);
-        while (lua_next(L, hdr_idx) != 0) {
-            const char *k = lua_tostring(L, -2);
-            const char *v = lua_tostring(L, -1);
-            size_t klen = k ? strlen(k) : 0;
-            size_t vlen = v ? strlen(v) : 0;
-            size_t pair_len = klen + 2 + vlen + 1; /* "Key: Value\n" */
-            char *tmp = (char *)realloc(hdr_out, hdr_len + pair_len + 1);
-            if (!tmp) { free(hdr_out); hdr_out = NULL; hdr_len = 0; break; }
-            hdr_out = tmp;
-            if (klen) memcpy(hdr_out + hdr_len, k, klen);
-            hdr_len += klen;
-            hdr_out[hdr_len++] = ':';
-            hdr_out[hdr_len++] = ' ';
-            if (vlen) memcpy(hdr_out + hdr_len, v, vlen);
-            hdr_len += vlen;
-            hdr_out[hdr_len++] = '\n';
-            hdr_out[hdr_len] = '\0';
-            lua_pop(L, 1); /* pop value, keep key for next */
-        }
-        uiMultilineEntrySetText(ctx->header_resp_entry, hdr_out ? hdr_out : "");
-        free(hdr_out);
-    } else {
+    if (rc != 0) {
+        gui_log(LOG_ERROR, "[HTTP DEBUG] %s", result.error);
+        uiMultilineEntrySetText(ctx->output_entry, result.error);
         uiMultilineEntrySetText(ctx->header_resp_entry, "");
+        http_raw_result_free(&result);
+        if (url) uiFreeText((char *)url);
+        if (headers) uiFreeText((char *)headers);
+        return;
     }
 
-    size_t body_len = 0;
-    const char *body = lua_tolstring(L, -3, &body_len);
-    int status = (int)lua_tointeger(L, -2);
+    uiMultilineEntrySetText(ctx->header_resp_entry,
+                            result.resp_headers ? result.resp_headers : "");
 
-    /* Build dynamic output: [HTTP <code>]\n<body>. Avoid fixed-size truncation. */
-    const char *status_fmt = "[HTTP %d]\n";
+    const char *status_fmt = "[HTTP %ld]\n";
     char status_hdr[64];
-    int hdr_len = snprintf(status_hdr, sizeof(status_hdr), status_fmt, status);
+    int hdr_len = snprintf(status_hdr, sizeof(status_hdr), status_fmt, result.status_code);
     if (hdr_len < 0) hdr_len = 0;
 
-    size_t out_len = (size_t)hdr_len + (body_len ? body_len : 0);
+    size_t out_len = (size_t)hdr_len + (result.body_len ? result.body_len : 0);
     char *out = (char *)malloc(out_len + 1);
     if (out) {
         if (hdr_len > 0) memcpy(out, status_hdr, (size_t)hdr_len);
-        if (body && body_len > 0) memcpy(out + hdr_len, body, body_len);
+        if (result.body && result.body_len > 0)
+            memcpy(out + hdr_len, result.body, result.body_len);
         out[out_len] = '\0';
         uiMultilineEntrySetText(ctx->output_entry, out);
         free(out);
     } else {
-        /* Fallback: show status only */
         uiMultilineEntrySetText(ctx->output_entry, status_hdr);
     }
 
-    lua_close(L);
-    if (url) uiFreeText((char*)url);
-    if (headers) uiFreeText((char*)headers);
+    http_raw_result_free(&result);
+    if (url) uiFreeText((char *)url);
+    if (headers) uiFreeText((char *)headers);
 }
 
 static void lua_test_on_exec(uiButton *b, void *ud) {
@@ -1851,13 +1788,18 @@ static void on_http_clicked(uiMenuItem *sender, uiWindow *w, void *data) {
     uiBox *vbox = uiNewVerticalBox();
     uiBoxSetPadded(vbox, 1);
 
+    // add label + entry for URL input
+    uiLabel *url_label = uiNewLabel("URL:");
+    uiBoxAppend(vbox, uiControl(url_label), 0);
     uiEntry *url_entry = uiNewEntry();
-    uiEntrySetText(url_entry, "");
+    uiEntrySetText(url_entry, ludo_config_get_http_test_default_url());
     uiBoxAppend(vbox, uiControl(url_entry), 0);
 
+    uiLabel *header_label = uiNewLabel("Headers: (optional)");
+    uiBoxAppend(vbox, uiControl(header_label), 0);
     uiMultilineEntry *header_entry = uiNewMultilineEntry();
-    uiMultilineEntrySetText(header_entry, "");
-    uiBoxAppend(vbox, uiControl(header_entry), 0);
+    uiMultilineEntrySetText(header_entry, ludo_config_get_http_test_default_headers());
+    uiBoxAppend(vbox, uiControl(header_entry), 1);
 
     uiButton *send_btn = uiNewButton("Send HTTP Request");
     uiBoxAppend(vbox, uiControl(send_btn), 0);

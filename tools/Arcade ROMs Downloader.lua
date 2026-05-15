@@ -255,6 +255,8 @@ local function update_details(idx)
                 if synopsis == "" then synopsis = jeu.synopsis[1].text end
                 table.insert(lines, "")
                 table.insert(lines, "Synopsis:")
+                -- replace &quot; with actual quotes, and trim whitespace
+                synopsis = synopsis:gsub("&quot;", '"')
                 table.insert(lines, synopsis:match("^%s*(.-)%s*$"))
             end
             local ss_url = nil
@@ -349,15 +351,17 @@ dl_btn:OnClicked(function(b, data)
     local r = search_results[idx]
     local outdir = ludo.getOutputDirectory()
 
-    -- Queue the PKG download.
+    status_lbl:SetText("Checking download availability...")
+    -- Queue the PKG download (blocking preflight happens here)
     local _, pkg_status, pkg_out = ludo.newDownload(r.rom_url, outdir, ludo.DOWNLOAD_NOW)
     if pkg_status == 200 or pkg_status == 206 or pkg_status == 0 then
-        ludo.logSuccess("Queued PKG: " .. (pkg_out))
+        ludo.logInfo("Queued: " .. (pkg_out))
+        status_lbl:SetText("Download queued: " .. r.game_name)
     else
         ludo.logError("Preflight HTTP " .. tostring(pkg_status) .. " for " .. r.game_id)
+        status_lbl:SetText("Download failed - check log for details")
+        return  -- Don't close window on error
     end
-
-    status_lbl:SetText("Download queued: " .. r.game_name)
 
     -- Close the window: win:Close() does not exist in libuilua.
     -- Set win_open=false to exit the MainStep loop, then Destroy the window.

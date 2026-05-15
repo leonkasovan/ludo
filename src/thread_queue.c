@@ -140,7 +140,7 @@ int task_queue_pop(TaskQueue *q, URLTask *out) {
         ludo_cond_reset(&q->not_empty);
         ludo_cond_wait(&q->not_empty, &q->mutex);
     }
-    if (q->shutdown) {
+    if (q->count == 0 && q->shutdown) {
         ludo_mutex_unlock(&q->mutex);
         return 0; /* signal to exit */
     }

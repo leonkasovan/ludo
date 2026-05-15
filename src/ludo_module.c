@@ -37,18 +37,28 @@ static int lua_ludo_new_download(lua_State *L) {
     /* Collect optional 5th argument: headers table {"Name": "Value", ...} */
     char headers_buf[4096] = {0};
     const char *extra_headers = NULL;
+    int header_truncated = 0;
     if (lua_istable(L, 5)) {
         int pos = 0;
         lua_pushnil(L);
         while (lua_next(L, 5) != 0) {
             const char *key = lua_tostring(L, -2);
             const char *val = lua_tostring(L, -1);
-            if (key && val && pos < (int)sizeof(headers_buf) - 128)
-                pos += snprintf(headers_buf + pos, sizeof(headers_buf) - pos,
-                                "%s: %s\n", key, val);
+            if (key && val) {
+                if (pos < (int)sizeof(headers_buf) - 128) {
+                    pos += snprintf(headers_buf + pos, sizeof(headers_buf) - pos,
+                                    "%s: %s\n", key, val);
+                } else {
+                    header_truncated = 1;
+                }
+            }
             lua_pop(L, 1);
         }
         if (pos > 0) extra_headers = headers_buf;
+    }
+    if (header_truncated) {
+        gui_log(LOG_WARNING, "Extra headers exceeded %d bytes — some headers were dropped",
+                (int)sizeof(headers_buf) - 128);
     }
 
     /* Use default output dir if none provided */
@@ -72,15 +82,15 @@ static int lua_ludo_new_download(lua_State *L) {
 /* ludo.pauseDownload(id) */
 static int lua_ludo_pause_download(lua_State *L) {
     int id = (int)luaL_checkinteger(L, 1);
-    download_manager_pause(id);
-    return 0;
+    lua_pushboolean(L, download_manager_pause(id) ? 1 : 0);
+    return 1;
 }
 
 /* ludo.removeDownload(id) */
 static int lua_ludo_remove_download(lua_State *L) {
     int id = (int)luaL_checkinteger(L, 1);
-    download_manager_remove(id);
-    return 0;
+    lua_pushboolean(L, download_manager_remove(id) ? 1 : 0);
+    return 1;
 }
 
 /* ------------------------------------------------------------------ */
@@ -274,10 +284,13 @@ void ludo_module_register(lua_State *L) {
 }
 
 void ludo_module_set_tester_bindings(lua_State *L, const LudoTesterBindings *bindings) {
-    LudoTesterBindings *stored;
-
-    if (!bindings) return;
-    stored = (LudoTesterBindings *)lua_newuserdata(L, sizeof(*stored));
+    if (!bindings) {
+        lua_pushlightuserdata(L, (void *)&ludo_tester_bindings_key);
+        lua_pushnil(L);
+        lua_settable(L, LUA_REGISTRYINDEX);
+        return;
+    }
+    LudoTesterBindings *stored = (LudoTesterBindings *)lua_newuserdata(L, sizeof(*stored));
     *stored = *bindings;
     lua_pushlightuserdata(L, (void *)&ludo_tester_bindings_key);
     lua_pushvalue(L, -2);

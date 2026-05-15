@@ -44,6 +44,10 @@ static void config_set_defaults(LudoConfig *cfg) {
            default_download_widths,
            sizeof(cfg->gui.downloads_table_widths));
     cfg->gui.snippet_table_widths[0] = 220;
+    strncpy(cfg->gui.http_test_default_url, "https://httpbin.org/get",
+            sizeof(cfg->gui.http_test_default_url) - 1);
+    cfg->gui.http_test_default_url[sizeof(cfg->gui.http_test_default_url) - 1] = '\0';
+    cfg->gui.http_test_default_headers[0] = '\0';
 }
 
 static char *trim(char *s) {
@@ -210,6 +214,8 @@ static int config_save(const LudoConfig *cfg, const char *path) {
     fprintf(fp, "httpTestWindowHeight=%d\n", cfg->gui.http_test_window.height);
     fprintf(fp, "httpTestWindowPosX=%d\n", cfg->gui.http_test_window.pos_x);
     fprintf(fp, "httpTestWindowPosY=%d\n", cfg->gui.http_test_window.pos_y);
+    fprintf(fp, "httpTestWindowDefaultUrl=%s\n", cfg->gui.http_test_default_url);
+    fprintf(fp, "httpTestWindowDefaultHeaders=%s\n", cfg->gui.http_test_default_headers);
     fprintf(fp, "luaTestWindowWidth=%d\n", cfg->gui.lua_test_window.width);
     fprintf(fp, "luaTestWindowHeight=%d\n", cfg->gui.lua_test_window.height);
     fprintf(fp, "luaTestWindowPosX=%d\n", cfg->gui.lua_test_window.pos_x);
@@ -226,62 +232,73 @@ static int config_save(const LudoConfig *cfg, const char *path) {
     return 1;
 }
 
-static void config_apply_kv(LudoConfig *cfg, const char *key, const char *value) {
+static int config_apply_kv(LudoConfig *cfg, const char *key, const char *value) {
     int parsed;
 
-    if (!cfg || !key || !value) return;
+    if (!cfg || !key || !value) return 0;
 
     if (key_equals(key, "maxDownloadRetry")) {
         parsed = atoi(value);
         cfg->max_download_retry = clamp_min(parsed, 0);
-        return;
+        return 1;
     }
     if (key_equals(key, "maxThread")) {
         parsed = atoi(value);
         cfg->max_thread = clamp_min(parsed, 1);
-        return;
+        return 1;
     }
     if (key_equals(key, "urlQueueCapacity")) {
         parsed = atoi(value);
         cfg->url_queue_capacity = clamp_min(parsed, 1);
-        return;
+        return 1;
     }
     if (key_equals(key, "downloadQueueCapacity")) {
         parsed = atoi(value);
         cfg->download_queue_capacity = clamp_min(parsed, 1);
-        return;
+        return 1;
     }
     if (key_equals(key, "maxRedirect")) {
         parsed = atoi(value);
         cfg->max_redirect = clamp_min(parsed, 0);
-        return;
+        return 1;
     }
     if (key_equals(key, "outputDir")) {
         strncpy(cfg->output_dir, value, sizeof(cfg->output_dir) - 1);
         cfg->output_dir[sizeof(cfg->output_dir) - 1] = '\0';
-        return;
+        return 1;
     }
     if (key_equals(key, "pluginDir")) {
         strncpy(cfg->plugin_dir, value, sizeof(cfg->plugin_dir) - 1);
         cfg->plugin_dir[sizeof(cfg->plugin_dir) - 1] = '\0';
-        return;
+        return 1;
     }
-    if (config_try_apply_window_kv(&cfg->gui.main_window, "mainWindow", key, value)) return;
-    if (config_try_apply_window_kv(&cfg->gui.add_urls_window, "addUrlsWindow", key, value)) return;
-    if (config_try_apply_window_kv(&cfg->gui.http_test_window, "httpTestWindow", key, value)) return;
-    if (config_try_apply_window_kv(&cfg->gui.lua_test_window, "luaTestWindow", key, value)) return;
+    if (config_try_apply_window_kv(&cfg->gui.main_window, "mainWindow", key, value)) return 1;
+    if (config_try_apply_window_kv(&cfg->gui.add_urls_window, "addUrlsWindow", key, value)) return 1;
+    if (config_try_apply_window_kv(&cfg->gui.http_test_window, "httpTestWindow", key, value)) return 1;
+    if (key_equals(key, "httpTestWindowDefaultUrl")) {
+        strncpy(cfg->gui.http_test_default_url, value, sizeof(cfg->gui.http_test_default_url) - 1);
+        cfg->gui.http_test_default_url[sizeof(cfg->gui.http_test_default_url) - 1] = '\0';
+        return 1;
+    }
+    if (key_equals(key, "httpTestWindowDefaultHeaders")) {
+        strncpy(cfg->gui.http_test_default_headers, value, sizeof(cfg->gui.http_test_default_headers) - 1);
+        cfg->gui.http_test_default_headers[sizeof(cfg->gui.http_test_default_headers) - 1] = '\0';
+        return 1;
+    }
+    if (config_try_apply_window_kv(&cfg->gui.lua_test_window, "luaTestWindow", key, value)) return 1;
     if (config_try_apply_table_kv(cfg->gui.downloads_table_widths,
                                   LUDO_GUI_DOWNLOADS_TABLE_COLUMN_COUNT,
                                   "downloadsTable",
                                   key,
                                   value)) {
-        return;
+        return 1;
     }
     config_try_apply_table_kv(cfg->gui.snippet_table_widths,
                               LUDO_GUI_SNIPPET_TABLE_COLUMN_COUNT,
                               "snippetTable",
                               key,
                               value);
+    return 0; /* unrecognized key */
 }
 
 int ludo_config_init(const char *path) {
@@ -326,7 +343,9 @@ int ludo_config_init(const char *path) {
         *eq = '\0';
         key = trim(trimmed);
         value = trim(eq + 1);
-        config_apply_kv(&g_config.config, key, value);
+        if (!config_apply_kv(&g_config.config, key, value)) {
+            fprintf(stderr, "Warning: unknown config key '%s' ignored\n", key);
+        }
     }
 
     fclose(fp);
@@ -336,8 +355,12 @@ int ludo_config_init(const char *path) {
 }
 
 void ludo_config_shutdown(void) {
+    if (!g_config.initialized) return;
+    if (g_config.dirty) {
+        config_save(&g_config.config, g_config.path);
+        g_config.dirty = 0;
+    }
     g_config.initialized = 0;
-    g_config.dirty = 0;
 }
 
 const LudoConfig *ludo_config_get(void) {
@@ -409,4 +432,14 @@ void ludo_config_set_table_column_width(LudoGuiTableId table_id, int column, int
 
     widths[column] = width;
     g_config.dirty = 1;
+}
+
+const char *ludo_config_get_http_test_default_url(void) {
+    if (!g_config.initialized) return "https://httpbin.org/get";
+    return g_config.config.gui.http_test_default_url;
+}
+
+const char *ludo_config_get_http_test_default_headers(void) {
+    if (!g_config.initialized) return "";
+    return g_config.config.gui.http_test_default_headers;
 }

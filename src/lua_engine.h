@@ -1,16 +1,23 @@
 #ifndef LUDO_LUA_ENGINE_H
 #define LUDO_LUA_ENGINE_H
 
+#include <lua.h>
+
 /*
  * Lua plugin engine.
  *
- * Each worker thread that processes a URL gets its own lua_State so that
- * concurrent script execution is safe without locking.
+ * Each worker thread that processes URLs should acquire a single lua_State
+ * once and reuse it across all URLs — this avoids the overhead of VM
+ * creation/destruction per URL (see lua_engine_process_url_l).
  *
  * Lifecycle:
  *   lua_engine_init()           — called once at startup (main thread)
  *   lua_engine_load_plugins()   — scans a directory for *.lua plugins
  *   lua_engine_process_url()    — called from a worker thread per URL
+ *                                  (creates/destroys state per call)
+ *   lua_engine_process_url_l()  — same but reuses a caller-managed state
+ *   lua_engine_create_state()   — acquire a fresh Lua state
+ *   lua_engine_close_state()    — destroy a Lua state
  *   lua_engine_shutdown()       — called once at exit (main thread)
  */
 
@@ -35,6 +42,17 @@ void lua_engine_load_plugins(const char *plugin_dir);
  * Returns 1 if a plugin handled the URL, 0 otherwise.
  */
 int lua_engine_process_url(const char *url);
+
+/*
+ * Same as lua_engine_process_url but reuses an existing lua_State.
+ * The caller owns the state lifecycle (create/close).
+ */
+int lua_engine_process_url_l(lua_State *L, const char *url);
+
+/* Create a fresh Lua state pre-loaded with http, ludo, zip, aes modules. */
+lua_State *lua_engine_create_state(void);
+/* Destroy a Lua state created by lua_engine_create_state. */
+void lua_engine_close_state(lua_State *L);
 
 /* Release all engine resources. */
 void lua_engine_shutdown(void);

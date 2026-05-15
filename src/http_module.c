@@ -16,19 +16,20 @@
 #include <curl/curl.h>
 
 #ifdef DEBUG
-static int http_curl_debug_cb(CURL *handle, curl_infotype type,
-                              char *data, size_t size, void *userp)
+static int curl_shared_debug_cb(CURL *handle, curl_infotype type,
+                                 char *data, size_t size, void *userp)
 {
-    (void)handle; (void)userp;
+    (void)handle;
+    const char *tag = (const char *)userp;
+    if (!tag) tag = "curl";
     if (type == CURLINFO_HEADER_OUT || type == CURLINFO_HEADER_IN) {
-        /* Log each line of the header block */
         size_t start = 0;
-        const char *tag = (type == CURLINFO_HEADER_OUT) ? "http >" : "http <";
+        const char *dir = (type == CURLINFO_HEADER_OUT) ? ">" : "<";
         while (start < size) {
             size_t end = start;
             while (end < size && data[end] != '\r' && data[end] != '\n') end++;
             if (end > start)
-                dm_log("[%s] %.*s", tag, (int)(end - start), data + start);
+                dm_log("[%s %s] %.*s", tag, dir, (int)(end - start), data + start);
             while (end < size && (data[end] == '\r' || data[end] == '\n')) end++;
             start = end;
         }
@@ -40,8 +41,35 @@ static int http_curl_debug_cb(CURL *handle, curl_infotype type,
     memcpy(buf, data, n);
     while (n > 0 && (buf[n-1] == '\n' || buf[n-1] == '\r')) n--;
     buf[n] = '\0';
-    if (n > 0) dm_log("[http] %s", buf);
+    if (n > 0) dm_log("[%s] %s", tag, buf);
     return 0;
+}
+#endif
+
+void curl_setup_accept_encoding(CURL *curl) {
+    char ae[64];
+    const curl_version_info_data *vi = curl_version_info(CURLVERSION_NOW);
+    int n = snprintf(ae, sizeof(ae), "gzip, deflate");
+#ifdef CURL_VERSION_BROTLI
+    if (vi && (vi->features & CURL_VERSION_BROTLI))
+        n += snprintf(ae + n, sizeof(ae) - n, ", br");
+#endif
+#ifdef CURL_VERSION_ZSTD
+    if (vi && (vi->features & CURL_VERSION_ZSTD))
+        n += snprintf(ae + n, sizeof(ae) - n, ", zstd");
+#endif
+    curl_easy_setopt(curl, CURLOPT_ACCEPT_ENCODING, ae);
+}
+
+#ifdef DEBUG
+void curl_setup_debug(CURL *curl, const char *tag) {
+    curl_easy_setopt(curl, CURLOPT_VERBOSE, 1L);
+    curl_easy_setopt(curl, CURLOPT_DEBUGFUNCTION, curl_shared_debug_cb);
+    curl_easy_setopt(curl, CURLOPT_DEBUGDATA, (void *)tag);
+}
+#else
+void curl_setup_debug(CURL *curl, const char *tag) {
+    (void)curl; (void)tag;
 }
 #endif
 
@@ -426,29 +454,13 @@ static int http_request(lua_State *L, int method) {
     curl_easy_setopt(curl, CURLOPT_HEADERDATA,     &headers_buf);
     curl_easy_setopt(curl, CURLOPT_FOLLOWLOCATION, 1L);
     curl_easy_setopt(curl, CURLOPT_MAXREDIRS,      10L);
-    /* Only advertise encodings curl can actually decode */
-    {
-        char ae[64];
-        const curl_version_info_data *vi = curl_version_info(CURLVERSION_NOW);
-        int n = snprintf(ae, sizeof(ae), "gzip, deflate");
-#ifdef CURL_VERSION_BROTLI
-        if (vi && (vi->features & CURL_VERSION_BROTLI))
-            n += snprintf(ae + n, sizeof(ae) - n, ", br");
-#endif
-#ifdef CURL_VERSION_ZSTD
-        if (vi && (vi->features & CURL_VERSION_ZSTD))
-            n += snprintf(ae + n, sizeof(ae) - n, ", zstd");
-#endif
-        curl_easy_setopt(curl, CURLOPT_ACCEPT_ENCODING, ae);
-    }
+    curl_setup_accept_encoding(curl);
     curl_easy_setopt(curl, CURLOPT_USERAGENT,
                      "Mozilla/5.0 LUDO/1.0");
     /* Always enable cookie engine */
     curl_easy_setopt(curl, CURLOPT_COOKIEFILE, ""); /* activate in-memory jar */
 #ifdef DEBUG
-    curl_easy_setopt(curl, CURLOPT_VERBOSE, 1L);
-    curl_easy_setopt(curl, CURLOPT_DEBUGFUNCTION, http_curl_debug_cb);
-    curl_easy_setopt(curl, CURLOPT_DEBUGDATA, NULL);
+    curl_setup_debug(curl, "http");
     dm_log("[http_request] %s", url);
 #endif
 
@@ -819,20 +831,7 @@ static void *async_http_worker(void *arg) {
         curl_easy_setopt(curl, CURLOPT_HEADERDATA,     &headers_buf);
         curl_easy_setopt(curl, CURLOPT_FOLLOWLOCATION, 1L);
         curl_easy_setopt(curl, CURLOPT_MAXREDIRS,      10L);
-        {
-            char ae[64];
-            const curl_version_info_data *vi = curl_version_info(CURLVERSION_NOW);
-            int n = snprintf(ae, sizeof(ae), "gzip, deflate");
-#ifdef CURL_VERSION_BROTLI
-            if (vi && (vi->features & CURL_VERSION_BROTLI))
-                n += snprintf(ae + n, sizeof(ae) - n, ", br");
-#endif
-#ifdef CURL_VERSION_ZSTD
-            if (vi && (vi->features & CURL_VERSION_ZSTD))
-                n += snprintf(ae + n, sizeof(ae) - n, ", zstd");
-#endif
-            curl_easy_setopt(curl, CURLOPT_ACCEPT_ENCODING, ae);
-        }
+        curl_setup_accept_encoding(curl);
         curl_easy_setopt(curl, CURLOPT_USERAGENT,
                          task.user_agent[0] ? task.user_agent
                                             : "Mozilla/5.0 LUDO/1.0");
@@ -857,9 +856,7 @@ static void *async_http_worker(void *arg) {
             curl_easy_setopt(curl, CURLOPT_HTTPHEADER, headers);
 
 #ifdef DEBUG
-        curl_easy_setopt(curl, CURLOPT_VERBOSE, 1L);
-        curl_easy_setopt(curl, CURLOPT_DEBUGFUNCTION, http_curl_debug_cb);
-        curl_easy_setopt(curl, CURLOPT_DEBUGDATA, NULL);
+        curl_setup_debug(curl, "async_http");
         dm_log("[async_http] %s", task.url);
 #endif
 
@@ -979,6 +976,135 @@ static int lua_http_get_async(lua_State *L) {
 }
 
 #endif /* BUILD_CONSOLE */
+
+/* ------------------------------------------------------------------ */
+/* C-level HTTP GET (no Lua dependency)                                  */
+/* ------------------------------------------------------------------ */
+
+void http_raw_result_free(HttpRawResult *r) {
+    if (!r) return;
+    free(r->body);
+    free(r->resp_headers);
+    memset(r, 0, sizeof(*r));
+}
+
+int http_raw_get(const char *url, const char *headers_str, HttpRawResult *result) {
+    memset(result, 0, sizeof(*result));
+
+    CURL *curl = curl_easy_init();
+    if (!curl) {
+        snprintf(result->error, sizeof(result->error), "curl_easy_init failed");
+        return -1;
+    }
+
+    StrBuf body_buf    = {0};
+    StrBuf headers_buf = {0};
+
+    curl_easy_setopt(curl, CURLOPT_URL,            url);
+    curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION,  curl_write_body);
+    curl_easy_setopt(curl, CURLOPT_WRITEDATA,      &body_buf);
+    curl_easy_setopt(curl, CURLOPT_HEADERFUNCTION, curl_write_headers);
+    curl_easy_setopt(curl, CURLOPT_HEADERDATA,     &headers_buf);
+    curl_easy_setopt(curl, CURLOPT_FOLLOWLOCATION, 1L);
+    curl_easy_setopt(curl, CURLOPT_MAXREDIRS,      10L);
+    curl_setup_accept_encoding(curl);
+    curl_easy_setopt(curl, CURLOPT_USERAGENT, "Mozilla/5.0 LUDO/1.0");
+    curl_easy_setopt(curl, CURLOPT_COOKIEFILE, "");
+#ifdef DEBUG
+    curl_setup_debug(curl, "http_raw");
+    dm_log("[http_raw_get] %s", url);
+#endif
+
+    struct curl_slist *custom_hdrs = NULL;
+    if (headers_str && headers_str[0]) {
+        char *lines = strdup(headers_str);
+        if (lines) {
+            char *p = lines;
+            while (p && *p) {
+                char *end = strchr(p, '\n');
+                if (end) *end = '\0';
+                size_t plen = strlen(p);
+                while (plen > 0 && (p[plen - 1] == '\r')) p[--plen] = '\0';
+
+                char *colon = strchr(p, ':');
+                if (colon) {
+                    *colon = '\0';
+                    const char *v = colon + 1;
+                    while (*v == ' ' || *v == '\t') v++;
+                    char hdr[2048];
+                    snprintf(hdr, sizeof(hdr), "%s: %s", p, v);
+                    custom_hdrs = curl_slist_append(custom_hdrs, hdr);
+                }
+                p = end ? end + 1 : NULL;
+            }
+            free(lines);
+        }
+    }
+    if (custom_hdrs)
+        curl_easy_setopt(curl, CURLOPT_HTTPHEADER, custom_hdrs);
+
+    CURLcode res = curl_easy_perform(curl);
+
+    long status = 0;
+    curl_easy_getinfo(curl, CURLINFO_RESPONSE_CODE, &status);
+
+    curl_slist_free_all(custom_hdrs);
+    curl_easy_cleanup(curl);
+
+    result->status_code = status;
+    result->curl_ok = (res == CURLE_OK) ? 1 : 0;
+
+    if (res != CURLE_OK) {
+        snprintf(result->error, sizeof(result->error), "%s", curl_easy_strerror(res));
+        result->body = body_buf.data;
+        result->body_len = body_buf.len;
+        free(headers_buf.data);
+        return -1;
+    }
+
+    result->body = body_buf.data;
+    result->body_len = body_buf.len;
+
+    if (headers_buf.data) {
+        size_t hdr_cap = headers_buf.len * 2 + 1;
+        char *parsed = (char *)malloc(hdr_cap);
+        if (parsed) {
+            size_t parsed_len = 0;
+            const char *hp = headers_buf.data;
+            while (hp && *hp) {
+                const char *eol = strpbrk(hp, "\r\n");
+                if (!eol) eol = hp + strlen(hp);
+                if (strncmp(hp, "HTTP/", 5) != 0) {
+                    const char *colon = memchr(hp, ':', (size_t)(eol - hp));
+                    if (colon) {
+                        size_t klen = (size_t)(colon - hp);
+                        const char *val = colon + 1;
+                        while (*val == ' ') val++;
+                        size_t vlen = (size_t)(eol - val);
+                        size_t needed = klen + 2 + vlen + 1;
+                        if (parsed_len + needed < hdr_cap) {
+                            memcpy(parsed + parsed_len, hp, klen);
+                            parsed_len += klen;
+                            parsed[parsed_len++] = ':';
+                            parsed[parsed_len++] = ' ';
+                            memcpy(parsed + parsed_len, val, vlen);
+                            parsed_len += vlen;
+                            parsed[parsed_len++] = '\n';
+                        }
+                    }
+                }
+                hp = eol;
+                while (*hp == '\r' || *hp == '\n') hp++;
+                if (*hp == '\0') break;
+            }
+            parsed[parsed_len] = '\0';
+            result->resp_headers = parsed;
+        }
+        free(headers_buf.data);
+    }
+
+    return 0;
+}
 
 /* ------------------------------------------------------------------ */
 /* Module registration                                                  */

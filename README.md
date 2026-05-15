@@ -54,6 +54,15 @@ pacman -S --needed \
   mingw-w64-x86_64-meson
 ```
 
+### Linux (WSL2 Ubuntu 22.04)
+
+Install toolchain and common tools:
+
+```bash
+sudo apt update
+sudo apt install pkg-config cmake libssl-dev libgtk-3-dev
+```
+
 > This project builds `libui-ng` from source via CMake; Meson is not required.
 
 CMake builds two executables:
@@ -63,7 +72,7 @@ CMake builds two executables:
 | `ludo` | GUI downloader (requires libui-ng) | `ludo-debug.exe` | `ludo.exe` |
 | `ludocon` | Console-only CLI (no GUI) | `ludocon-debug.exe` | `ludocon.exe` |
 
-## Build
+## Build (default Debug)
 
 From repository root:
 
@@ -91,17 +100,10 @@ cmake -B build -DCMAKE_BUILD_TYPE=Release .
 cmake --build build --parallel
 ```
 
-Multi-config examples:
-
 ```bash
-cmake -G "Ninja Multi-Config" -B build-multi .
-cmake --build build-multi --config Debug --parallel
-cmake --build build-multi --config Release --parallel
+cmake -B build . -DCMAKE_BUILD_TYPE=Release -DBUILD_GUI=OFF
+cmake --build build --parallel
 ```
-
-Note: If `build/` was previously configured with single-config `Ninja`, keep using it for single-config builds,
-or remove it before switching generators. Using a separate directory like `build-multi/` avoids generator conflicts.
-
 ## Run
 
 ### GUI (ludo)

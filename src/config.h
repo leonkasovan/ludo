@@ -30,6 +30,8 @@ typedef struct {
     LudoGuiWindowConfig add_urls_window;
     LudoGuiWindowConfig http_test_window;
     LudoGuiWindowConfig lua_test_window;
+    char http_test_default_url[2048];
+    char http_test_default_headers[4096];
     int downloads_table_widths[LUDO_GUI_DOWNLOADS_TABLE_COLUMN_COUNT];
     int snippet_table_widths[LUDO_GUI_SNIPPET_TABLE_COLUMN_COUNT];
 } LudoGuiConfig;
@@ -56,5 +58,7 @@ int ludo_config_set_output_dir(const char *output_dir);
 void ludo_config_set_window_position(LudoGuiWindowId window_id, int x, int y);
 void ludo_config_set_window_size(LudoGuiWindowId window_id, int width, int height);
 void ludo_config_set_table_column_width(LudoGuiTableId table_id, int column, int width);
+const char *ludo_config_get_http_test_default_url(void);
+const char *ludo_config_get_http_test_default_headers(void);
 
 #endif /* LUDO_CONFIG_H */

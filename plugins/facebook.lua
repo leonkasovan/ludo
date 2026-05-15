@@ -1,17 +1,6 @@
 -- facebook.lua
 --
 -- Ludo plugin for downloading Facebook videos.
--- Handles: /videos/ID,  /watch/?v=ID,  video.php?v=ID,  /reel/ID,
---          story.php?story_fbid=,  permalink.php,  m.facebook.com URLs.
---
--- AUTHENTICATION
---   Most Facebook content requires a logged-in session. To authenticate:
---     1. Export your Facebook browser cookies in Netscape (cookies.txt) format
---        (e.g. with the "Get cookies.txt LOCALLY" browser extension).
---     2. Save the file as:  <OutputDirectory>/facebook_cookies.txt
---   Ludo will automatically load those cookies before each request.
---
--- Based on the extraction logic from yt-dlp's facebook.py extractor.
 
 local plugin = {
     name    = "Facebook",
@@ -19,31 +8,15 @@ local plugin = {
     creator = "GitHub Copilot",
 }
 
-local FB_HOME         = "https://www.facebook.com"
-local DESKTOP_UA      = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
-    .. "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/136.0.0.0 Safari/537.36"
-local REQUEST_TIMEOUT = 30
-
-local json = json or require("json")
+local utils       = dofile("plugins/utils.lua")
+local DESKTOP_UA  = utils.DESKTOP_UA
+local TIMEOUT     = utils.TIMEOUT
+local safe_name   = utils.safe_name
+local unescape_json_url = utils.unescape_json_url
+local FB_HOME     = "https://www.facebook.com"
+local json        = json or require("json")
 
 -- ─── Helpers ──────────────────────────────────────────────────────────────────
-
-local function safe_name(s)
-    return (s or ""):gsub("[^%w%-_]", "_"):sub(1, 80)
-end
-
--- Unescape JSON string escapes that appear in embedded JavaScript/JSON blobs.
--- Primarily handles \/ → / and \uXXXX → char (ASCII range only).
-local function unescape_json_url(s)
-    if not s then return nil end
-    s = s:gsub("\\/", "/")
-    s = s:gsub("\\u(%x%x%x%x)", function(h)
-        local cp = tonumber(h, 16)
-        if cp < 128 then return string.char(cp) end
-        return ""
-    end)
-    return s
-end
 
 -- Normalize encoded fragments we commonly see in relay/config blobs.
 local function cleanup_extracted_url(s)
@@ -289,7 +262,7 @@ function plugin.process(url)
 
         local body, status = http.get(candidate, {
             user_agent = DESKTOP_UA,
-            timeout    = REQUEST_TIMEOUT,
+            timeout    = TIMEOUT,
             headers    = req_headers,
         })
 

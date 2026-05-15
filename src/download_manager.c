@@ -1,5 +1,6 @@
 #include "download_manager.h"
 #include "config.h"
+#include "http_module.h"
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -73,10 +74,10 @@ void dm_log_init(void) {
 }
 
 void dm_log(const char *fmt, ...) {
-    if (!g_log_fp) return;
     if (!g_log_mutex_init) return;
-
     ludo_mutex_lock(&g_log_mutex);
+    if (!g_log_fp) { ludo_mutex_unlock(&g_log_mutex); return; }
+
     /* Timestamp */
     time_t now = time(NULL);
     struct tm *tm_info = localtime(&now);
@@ -127,47 +128,6 @@ typedef struct {
     const char *path;
     int     resume_checked;
 } WriteCtx;
-
-/* curl debug callback — routes libcurl verbose output to dm_log
- * (avoids writing to stderr which is NULL in a WIN32/no-console app) */
-#ifdef DEBUG
-static void dm_log_header_block(const char *prefix, const char *data, size_t size)
-{
-    size_t start = 0;
-
-    while (start < size) {
-        size_t end = start;
-        while (end < size && data[end] != '\r' && data[end] != '\n') end++;
-        if (end > start) {
-            dm_log("[%s] %.*s", prefix, (int)(end - start), data + start);
-        }
-        while (end < size && (data[end] == '\r' || data[end] == '\n')) end++;
-        start = end;
-    }
-}
-
-static int curl_debug_cb(CURL *handle, curl_infotype type,
-                         char *data, size_t size, void *userp)
-{
-    (void)handle; (void)userp;
-
-    if (type == CURLINFO_HEADER_OUT) {
-        dm_log_header_block("curl request header", data, size);
-        return 0;
-    }
-
-    if (type != CURLINFO_TEXT) return 0;
-
-    /* data is NOT null-terminated; copy and trim trailing newline */
-    char buf[256];
-    size_t n = size < sizeof(buf) - 1 ? size : sizeof(buf) - 1;
-    memcpy(buf, data, n);
-    while (n > 0 && (buf[n-1] == '\n' || buf[n-1] == '\r')) n--;
-    buf[n] = '\0';
-    if (n > 0) dm_log("[curl] %s", buf);
-    return 0;
-}
-#endif
 
 /* Context for the response-header callback */
 struct HeaderCtx {
@@ -456,13 +416,15 @@ static void probe_download_head(const char *url, HeaderCtx *hctx) {
     curl_easy_setopt(head, CURLOPT_USERAGENT,
                      "Mozilla/5.0 (Windows NT 10.0; Win64; x64)");
 #ifdef DEBUG
-    curl_easy_setopt(head, CURLOPT_VERBOSE, 1L);
-    curl_easy_setopt(head, CURLOPT_DEBUGFUNCTION, curl_debug_cb);
-    curl_easy_setopt(head, CURLOPT_DEBUGDATA, NULL);
+    curl_setup_debug(head, "dm_probe");
 #endif
-    curl_easy_perform(head);
-    if (curl_easy_getinfo(head, CURLINFO_CONTENT_LENGTH_DOWNLOAD_T, &cl) == CURLE_OK && cl > 0) {
-        hctx->content_length = (int64_t)cl;
+    CURLcode head_res = curl_easy_perform(head);
+    if (head_res == CURLE_OK) {
+        if (curl_easy_getinfo(head, CURLINFO_CONTENT_LENGTH_DOWNLOAD_T, &cl) == CURLE_OK && cl > 0) {
+            hctx->content_length = (int64_t)cl;
+        }
+    } else {
+        dm_log("[probe] HEAD %s failed: %s", url, curl_easy_strerror(head_res));
     }
     curl_easy_cleanup(head);
 }
@@ -647,20 +609,27 @@ static int xfer_info_cb(void *clientp, curl_off_t dltotal, curl_off_t dlnow,
 
         /* Compute instantaneous speed (bytes/sec) via libcurl's moving average */
         curl_off_t curl_speed = 0;
-        if (curl_easy_getinfo(ctx->curl, CURLINFO_SPEED_DOWNLOAD_T, &curl_speed) == CURLE_OK) {
-            d->status.speed_bps = (double)curl_speed;
-        } else {
-            d->status.speed_bps = 0.0;
+        if (d) {
+            if (curl_easy_getinfo(ctx->curl, CURLINFO_SPEED_DOWNLOAD_T, &curl_speed) == CURLE_OK) {
+                d->status.speed_bps = (double)curl_speed;
+            } else {
+                d->status.speed_bps = 0.0;
+            }
         }
     }
     ProgressUpdate upd = {0};
     if (d) {
         upd.status = d->status;  // copy under lock
+        upd.status.speed_bps = 0.0;
     }
-    int has_update = (d != NULL);
     ludo_mutex_unlock(&g_mgr.list_mutex);
 
-    if (has_update) {
+    if (d) {
+        /* Compute speed outside the lock — curl_easy_getinfo has its own internal locking */
+        curl_off_t curl_speed = 0;
+        if (curl_easy_getinfo(ctx->curl, CURLINFO_SPEED_DOWNLOAD_T, &curl_speed) == CURLE_OK) {
+            upd.status.speed_bps = (double)curl_speed;
+        }
         gui_dispatch_update(&upd);
     }
 
@@ -875,28 +844,13 @@ static void perform_download(Download *d) {
         curl_easy_setopt(curl, CURLOPT_NOPROGRESS, 0L);
         curl_easy_setopt(curl, CURLOPT_FOLLOWLOCATION, 1L);
         curl_easy_setopt(curl, CURLOPT_MAXREDIRS, (long)(cfg ? cfg->max_redirect : 10));
-        {
-            char ae[64];
-            const curl_version_info_data *vi = curl_version_info(CURLVERSION_NOW);
-            int n = snprintf(ae, sizeof(ae), "gzip, deflate");
-#ifdef CURL_VERSION_BROTLI
-            if (vi && (vi->features & CURL_VERSION_BROTLI))
-                n += snprintf(ae + n, sizeof(ae) - n, ", br");
-#endif
-#ifdef CURL_VERSION_ZSTD
-            if (vi && (vi->features & CURL_VERSION_ZSTD))
-                n += snprintf(ae + n, sizeof(ae) - n, ", zstd");
-#endif
-            curl_easy_setopt(curl, CURLOPT_ACCEPT_ENCODING, ae);
-        }
+        curl_setup_accept_encoding(curl);
         curl_easy_setopt(curl, CURLOPT_USERAGENT,
                          "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/146.0.0.0 Safari/537.36 Edg/146.0.0.0");
         curl_easy_setopt(curl, CURLOPT_HEADERFUNCTION, header_cb);
         curl_easy_setopt(curl, CURLOPT_HEADERDATA, &hctx_local);
 #ifdef DEBUG
-        curl_easy_setopt(curl, CURLOPT_VERBOSE, 1L);
-        curl_easy_setopt(curl, CURLOPT_DEBUGFUNCTION, curl_debug_cb);
-        curl_easy_setopt(curl, CURLOPT_DEBUGDATA, NULL);
+        curl_setup_debug(curl, "dm_dl");
 #endif
         
         if (resume_from > 0) {
@@ -1411,15 +1365,22 @@ int download_manager_init(int num_workers, const char *output_dir) {
 
     /* At startup, notify the GUI only about tasks that are not completed
        so the UI doesn't re-display finished entries. */
-    ludo_mutex_lock(&g_mgr.list_mutex);
-    for (Download *d = g_mgr.list; d; d = d->next) {
-        if (d->status.state != DOWNLOAD_STATE_COMPLETED) {
-            ProgressUpdate upd = {0};
-            upd.status = d->status;
-            gui_dispatch_update(&upd);
+    {
+        int snapshot_count = 0;
+        ProgressUpdate snapshot[32]; /* safe upper bound for initial DB load */
+        ludo_mutex_lock(&g_mgr.list_mutex);
+        for (Download *d = g_mgr.list; d; d = d->next) {
+            if (d->status.state != DOWNLOAD_STATE_COMPLETED && snapshot_count < 32) {
+                memset(&snapshot[snapshot_count], 0, sizeof(snapshot[0]));
+                snapshot[snapshot_count].status = d->status;
+                snapshot_count++;
+            }
+        }
+        ludo_mutex_unlock(&g_mgr.list_mutex);
+        for (int i = 0; i < snapshot_count; i++) {
+            gui_dispatch_update(&snapshot[i]);
         }
     }
-    ludo_mutex_unlock(&g_mgr.list_mutex);
 
     g_mgr.workers = (ludo_thread_t *)calloc((size_t)num_workers,
                                             sizeof(ludo_thread_t));
@@ -1628,6 +1589,9 @@ bool download_manager_pause(int id) {
 
 bool download_manager_resume(int id) {
     bool result = false;
+    int task_id = -1;
+    ProgressUpdate upd;
+
     ludo_mutex_lock(&g_mgr.list_mutex);
     if (g_mgr.shutting_down) {
         ludo_mutex_unlock(&g_mgr.list_mutex);
@@ -1640,23 +1604,23 @@ bool download_manager_resume(int id) {
             d->stop_requested = 0;
             gui_log(LOG_INFO, "Resuming %s", d->status.filename);
             result = true;
-
-            /* Push an internal task to tell the worker thread to resume this ID */
-            URLTask task;
-            memset(&task, 0, sizeof(task));
-            task.download_id = d->status.id;
-            task.is_resume_task = 1;
-            task_queue_push_task(&g_mgr.queue, &task);
-            
-            /* Notify GUI to update UI state immediately */
-            ProgressUpdate upd = {0};
+            task_id = d->status.id;
+            memset(&upd, 0, sizeof(upd));
             upd.status = d->status;
-            gui_dispatch_update(&upd);
-            
             break;
         }
     }
     ludo_mutex_unlock(&g_mgr.list_mutex);
+
+    if (task_id >= 0) {
+        /* Push task and notify GUI outside the lock to avoid deadlock */
+        URLTask task;
+        memset(&task, 0, sizeof(task));
+        task.download_id = task_id;
+        task.is_resume_task = 1;
+        task_queue_push_task(&g_mgr.queue, &task);
+        gui_dispatch_update(&upd);
+    }
     return result;
 }
 
@@ -1740,15 +1704,18 @@ int download_manager_find_status(int id, DownloadStatus *out) {
 }
 
 void download_manager_sync_ui(void) {
+    int snapshot_count = 0;
+    ProgressUpdate snapshot[64]; /* safe upper bound — matches MAX_DOWNLOAD_ROWS in gui.c */
     ludo_mutex_lock(&g_mgr.list_mutex);
     for (Download *d = g_mgr.list; d; d = d->next) {
-        /* Only notify GUI about non-completed tasks to avoid re-displaying
-           finished items at startup or on explicit sync. */
         if (d->status.state == DOWNLOAD_STATE_COMPLETED) continue;
-        ProgressUpdate upd = {0};
-        upd.status = d->status;
-        /* Re-dispatch the loaded status to the GUI */
-        gui_dispatch_update(&upd);
+        if (snapshot_count >= 64) break;
+        memset(&snapshot[snapshot_count], 0, sizeof(snapshot[0]));
+        snapshot[snapshot_count].status = d->status;
+        snapshot_count++;
     }
     ludo_mutex_unlock(&g_mgr.list_mutex);
+    for (int i = 0; i < snapshot_count; i++) {
+        gui_dispatch_update(&snapshot[i]);
+    }
 }

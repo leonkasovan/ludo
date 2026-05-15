@@ -2,6 +2,7 @@
 #define LUDO_HTTP_MODULE_H
 
 #include <lua.h>
+#include <curl/curl.h>
 
 /*
  * Registers the "http" library into the given Lua state.
@@ -31,5 +32,22 @@ void http_module_register(lua_State *L);
 void async_http_init(void);
 void async_http_shutdown(void);
 #endif
+
+/* C-level HTTP GET result (no Lua dependency) */
+typedef struct {
+    char  *body;
+    size_t body_len;
+    long   status_code;
+    char  *resp_headers;   /* "Key: Value\n" formatted, caller must free */
+    char   error[256];     /* curl error message if curl_ok == 0 */
+    int    curl_ok;        /* 1 if curl_easy_perform succeeded */
+} HttpRawResult;
+
+void  http_raw_result_free(HttpRawResult *r);
+int   http_raw_get(const char *url, const char *headers_str, HttpRawResult *result);
+
+/* Shared curl setup utilities */
+void curl_setup_accept_encoding(CURL *curl);
+void curl_setup_debug(CURL *curl, const char *tag);
 
 #endif /* LUDO_HTTP_MODULE_H */
