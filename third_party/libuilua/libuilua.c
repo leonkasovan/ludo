@@ -45,6 +45,38 @@ struct imgwrap {
 	uiImage *img;
 };
 
+/* --- window tracker for app-shutdown cleanup ---------------------- */
+
+#define MAX_TRACKED_WINDOWS 64
+static uiWindow *g_tracked_windows[MAX_TRACKED_WINDOWS];
+static int g_tracked_window_count = 0;
+
+static void tracked_window_add(uiWindow *w)
+{
+	if (g_tracked_window_count < MAX_TRACKED_WINDOWS)
+		g_tracked_windows[g_tracked_window_count++] = w;
+}
+
+static void tracked_window_remove(uiWindow *w)
+{
+	for (int i = 0; i < g_tracked_window_count; i++) {
+		if (g_tracked_windows[i] == w) {
+			g_tracked_windows[i] = g_tracked_windows[--g_tracked_window_count];
+			return;
+		}
+	}
+}
+
+void libuilua_destroy_all_windows(void)
+{
+	while (g_tracked_window_count > 0) {
+		uiWindow *w = g_tracked_windows[--g_tracked_window_count];
+		uiControlDestroy(uiControl(w));
+	}
+}
+
+/* ------------------------------------------------------------------ */
+
 /* StaticImage widget - wraps an area with a draw handler that renders a uiImage */
 struct si_handler {
 	uiAreaHandler handler;      /* MUST be first */
@@ -553,6 +585,7 @@ int l_ControlEnabled(lua_State *L)
 
 int l_ControlDestroy(lua_State *L)
 {
+	tracked_window_remove((uiWindow *)CAST_ARG(1, Control));
 	clear_callback_data(L, CAST_ARG(1, Control));
 	uiControlDestroy(CAST_ARG(1, Control));
 	return 0;
@@ -1224,6 +1257,7 @@ int l_NewWindow(lua_State *L)
 		lua_toboolean(L, 4)
 	);
 	CREATE_OBJECT(Window, window);
+	tracked_window_add(window);
 	uiWindowOnClosing(window, on_window_closing_default, NULL);
 	return 1;
 }

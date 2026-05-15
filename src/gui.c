@@ -193,6 +193,11 @@ typedef struct HttpTestCtx {
 } HttpTestCtx;
 
 typedef struct {
+    uiWindow *win;
+    uiMultilineEntry *urls_entry;
+} AddUrlsCtx;
+
+typedef struct {
     char name[256];
     char path[1024];
 } SnippetEntry;
@@ -296,6 +301,8 @@ typedef struct LuaTestCtx {
 } LuaTestCtx;
 
 static HttpTestCtx *g_active_http_test_ctx = NULL;
+static LuaTestCtx  *g_active_lua_test_ctx  = NULL;
+static AddUrlsCtx  *g_active_add_urls_ctx  = NULL;
 
 /* ------------------------------------------------------------------ */
 /* GUI state                                                            */
@@ -899,6 +906,8 @@ static int destroy_http_test_window(uiWindow *w, void *data) {
 static int destroy_lua_test_window(uiWindow *w, void *data) {
     LuaTestCtx *ctx = (LuaTestCtx *)data;
 
+    if (data && g_active_lua_test_ctx == (LuaTestCtx *)data)
+        g_active_lua_test_ctx = NULL;
     if (ctx) {
         persist_lua_test_window_state(ctx);
     }
@@ -1310,15 +1319,11 @@ static DownloadRow *add_row(int id, const char *filename) {
     return r;
 }
 
-/* Context for Add URLs Window */
-typedef struct {
-    uiWindow *win;
-    uiMultilineEntry *urls_entry;
-} AddUrlsCtx;
-
 /* Free dialog context on user-initiated close. */
 static int on_child_window_closing(uiWindow *w, void *data) {
     persist_add_urls_window_state(w);
+    if (data && g_active_add_urls_ctx == (AddUrlsCtx *)data)
+        g_active_add_urls_ctx = NULL;
     if (data) free(data);
     uiControlDestroy(uiControl(w));
     return 0;
@@ -1352,6 +1357,7 @@ static void on_add_urls_submit(uiButton *b, void *ud) {
         uiFreeText(text);
     }
     persist_add_urls_window_state(ctx->win);
+    if (g_active_add_urls_ctx == ctx) g_active_add_urls_ctx = NULL;
     uiControlDestroy(uiControl(ctx->win));
     free(ctx);
 }
@@ -1385,7 +1391,8 @@ static void show_add_urls_window(const char *initial_text) {
     }
     ctx->win = win;
     ctx->urls_entry = me;
-    
+    g_active_add_urls_ctx = ctx;
+
     uiButtonOnClicked(btn, on_add_urls_submit, ctx);
     uiWindowOnClosing(win, (int (*)(uiWindow *, void *))on_child_window_closing, ctx);
     
@@ -1494,6 +1501,23 @@ void gui_on_progress(const ProgressUpdate *update, void *user_data) {
 
 static void begin_app_shutdown(void) {
     if (g_gui.shutdown_requested) return;
+
+    /* Destroy any open child windows before tearing down the app */
+    if (g_active_add_urls_ctx) {
+        on_child_window_closing(g_active_add_urls_ctx->win, g_active_add_urls_ctx);
+        g_active_add_urls_ctx = NULL;
+    }
+    if (g_active_http_test_ctx) {
+        destroy_http_test_window(g_active_http_test_ctx->win, g_active_http_test_ctx);
+        g_active_http_test_ctx = NULL;
+    }
+    if (g_active_lua_test_ctx) {
+        destroy_lua_test_window(g_active_lua_test_ctx->win, g_active_lua_test_ctx);
+        g_active_lua_test_ctx = NULL;
+    }
+
+    /* Destroy any tool-script windows created through ui.NewWindow() */
+    libuilua_destroy_all_windows();
 
     persist_main_window_state();
     g_gui.shutdown_requested = 1;
@@ -1876,6 +1900,7 @@ static void on_lua_clicked(uiMenuItem *sender, uiWindow *w, void *data) {
     ctx->script_entry = script_entry;
     ctx->output_entry = output_entry;
     ctx->win = win;
+    g_active_lua_test_ctx = ctx;
     load_snippets_from_dir(ctx, "snippets");
     ctx->snippet_model_handler.ctx = ctx;
     ctx->snippet_model_handler.handler.NumColumns = snippet_model_num_columns;
