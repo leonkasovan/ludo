@@ -1,5 +1,9 @@
 -- Retro ROMs Downloader (SNES, Sega Genesis, Game Boy Advance)
 -- Downloads Retro ROMs from the archive.org.
+-- https://archive.org/download/ni-roms/roms/Nintendo%20-%20Game%20Boy%20Advance.zip/Acrobat%20Kid%20%28Japan%29.zip
+-- https://archive.org/download/ni-roms/roms/Nintendo%20-%20Super%20Nintendo%20Entertainment%20System.zip/Actraiser%20%28Japan%29.zip
+-- https://archive.org/download/ni-roms/roms/Nintendo%20-%20Nintendo%2064%20%28BigEndian%29.zip/AeroGauge%20%28USA%29.zip
+-- https://archive.org/download/ni-roms/roms/Sega%20-%20Mega%20Drive%20-%20Genesis.zip/Aerobiz%20%28USA%29.zip
 -- Requires lualib/ftcsv.lua for CSV parsing.
 -- CSV db files must be in the same directory as this script.
 -- System id based on https://api.screenscraper.fr/api2/systemesListe.php?output=json&devid=recalbox&devpassword=C3KbyjX8PKsUgm2tu53y&softname=Emulationstation-Recalbox-9.1&ssid=test&sspassword=test
@@ -16,26 +20,23 @@ local TOOLS_DIR = _src:match("^@(.+)[\\/][^\\/]+$") or "tools"
 -- Platform definitions using the actual CSV header column names.
 local PLATFORMS = {
     { name = "SNES", file = "SNES.csv",
-	  source_url = "https://archive.org/download/cylums-snes-rom-collection/Cylum%27s%20SNES%20ROM%20Collection%20%2802-14-2021%29.zip",
-	  scrape_url = "https://api.screenscraper.fr/api2/jeuRecherche.php?output=json&devid=recalbox&devpassword=C3KbyjX8PKsUgm2tu53y&softname=Emulationstation-Recalbox-9.1&ssid=test&sspassword=test&systemeid=4&recherche=",
-      col_id  = "game_id",
+      source_url = "https://archive.org/download/ni-roms/roms/Nintendo%20-%20Super%20Nintendo%20Entertainment%20System.zip",
+      scrape_url = "https://api.screenscraper.fr/api2/jeuRecherche.php?output=json&devid=recalbox&devpassword=C3KbyjX8PKsUgm2tu53y&softname=Emulationstation-Recalbox-9.1&ssid=test&sspassword=test&systemeid=4&recherche=",
       col_name = "game_name",
-      col_info = "game_info",
-	  col_size   = "game_size" },
+      col_ext = "game_ext",
+      col_size = "game_size" },
     { name = "Genesis", file = "GENESIS.csv",
-	  source_url = "https://archive.org/download/cylums-sega-genesis-rom-collection/Cylum%27s%20Sega%20Genesis%20ROM%20Collection%20%2802-16-2021%29.zip/",
-	  scrape_url = "https://api.screenscraper.fr/api2/jeuRecherche.php?output=json&devid=recalbox&devpassword=C3KbyjX8PKsUgm2tu53y&softname=Emulationstation-Recalbox-9.1&ssid=test&sspassword=test&systemeid=1&recherche=",
-      col_id  = "game_id",
+      source_url = "https://archive.org/download/ni-roms/roms/Sega%20-%20Mega%20Drive%20-%20Genesis.zip",
+      scrape_url = "https://api.screenscraper.fr/api2/jeuRecherche.php?output=json&devid=recalbox&devpassword=C3KbyjX8PKsUgm2tu53y&softname=Emulationstation-Recalbox-9.1&ssid=test&sspassword=test&systemeid=1&recherche=",
       col_name = "game_name",
-      col_info = "game_info",
-	  col_size   = "game_size" },
-	{ name = "GBA", file = "GBA.csv",
-	  source_url = "https://archive.org/download/cylums-game-boy-advance-rom-collection_202102/Cylum%27s%20Game%20Boy%20Advance%20ROM%20Collection%20%2802-16-2021%29/",
-	  scrape_url = "https://api.screenscraper.fr/api2/jeuRecherche.php?output=json&devid=recalbox&devpassword=C3KbyjX8PKsUgm2tu53y&softname=Emulationstation-Recalbox-9.1&ssid=test&sspassword=test&systemeid=12&recherche=",
-      col_id  = "game_id",
+      col_ext = "game_ext",
+      col_size = "game_size" },
+    { name = "GBA", file = "GBA.csv",
+      source_url = "https://archive.org/download/ni-roms/roms/Nintendo%20-%20Game%20Boy%20Advance.zip",
+      scrape_url = "https://api.screenscraper.fr/api2/jeuRecherche.php?output=json&devid=recalbox&devpassword=C3KbyjX8PKsUgm2tu53y&softname=Emulationstation-Recalbox-9.1&ssid=test&sspassword=test&systemeid=12&recherche=",
       col_name = "game_name",
-      col_info = "game_info",
-	  col_size   = "game_size" },
+      col_ext = "game_ext",
+      col_size = "game_size" },
 }
 local MAX_RESULTS = 99
 local search_results = {}
@@ -59,7 +60,7 @@ end
 
 local function search_platform(platform, query, results)
     local filepath = TOOLS_DIR .. "/" .. platform.file
-	-- local filepath = platform.file
+    -- local filepath = platform.file
     local ok, iter = pcall(ftcsv.parseLine, filepath, "|")
     if not ok then
         ludo.logInfo("Retro ROMs Downloader: cannot open " .. filepath .. ": " .. tostring(iter))
@@ -68,19 +69,19 @@ local function search_platform(platform, query, results)
     local q = query:lower()
     for _, row in iter do
         if #results >= MAX_RESULTS then break end
-        local id   = trim(row[platform.col_id])
         local name = trim(row[platform.col_name])
-        if (name:lower():find(q, 1, true) or id:lower():find(q, 1, true)) then
-			-- Search results: { platform, game_id, game_name, game_info, rom_url, rom_size }
-			table.insert(results, {
-				platform  = platform.name,
-				game_id   = id,
-				game_name = name,
-				game_info = trim(row[platform.col_info]),
-				rom_url   = platform.source_url .. "/" .. id,
-				rom_size  = trim(row[platform.col_size]),
-			})
-		end
+        if name:lower():find(q, 1, true) then
+            local ext = trim(row[platform.col_ext])
+            local sz  = trim(row[platform.col_size])
+            table.insert(results, {
+                platform  = platform.name,
+                game_name = name,
+                game_ext  = ext,
+                rom_size  = sz,
+                game_info = format_size(sz),
+                rom_url   = platform.source_url .. "/" .. http.url_encode(name .. ext),
+            })
+        end
     end
 end
 
@@ -150,8 +151,8 @@ root:Append(ui.NewLabel("Results (up to " .. MAX_RESULTS .. "):"), false)
 local results_tbl = ui.NewTable(model)
 results_tbl:AppendTextColumn("#",        COL_NUM,      ui.TableModelColumnNeverEditable)
 results_tbl:AppendTextColumn("Platform", COL_PLATFORM, ui.TableModelColumnNeverEditable)
-results_tbl:AppendTextColumn("Name", COL_NAME,       ui.TableModelColumnNeverEditable)
-results_tbl:AppendTextColumn("Info",   COL_INFO,   ui.TableModelColumnNeverEditable)
+results_tbl:AppendTextColumn("Name",     COL_NAME,     ui.TableModelColumnNeverEditable)
+results_tbl:AppendTextColumn("Info",     COL_INFO,     ui.TableModelColumnNeverEditable)
 results_tbl:SetSelectionMode(ui.TableSelectionModeZeroOrOne)
 results_tbl:ColumnSetWidth(0, 40)
 results_tbl:ColumnSetWidth(1, 80)
@@ -188,7 +189,7 @@ local function update_details(idx)
         return
     end
     local r = search_results[idx]
-    current_details_id = r.game_id
+    current_details_id = r.game_name
     ss_img:Clear()
     local scrape_url = nil
     for _, p in ipairs(PLATFORMS) do
@@ -201,7 +202,7 @@ local function update_details(idx)
         entry_info:SetText("Loading details...\n" .. scrape_url)
         ludo.logInfo("Fetching details for " .. r.game_name .. " from " .. scrape_url)
         http.get_async(scrape_url, { timeout = 30 }, function(body, status)
-            if not window_alive or current_details_id ~= r.game_id then return end
+            if not window_alive or current_details_id ~= r.game_name then return end
             if status ~= 200 or not body or #body == 0 then
                 entry_info:SetText("Failed to fetch details (HTTP " .. tostring(status) .. ")\n" .. scrape_url)
                 return
@@ -281,7 +282,7 @@ local function update_details(idx)
             entry_info:SetText(table.concat(lines, "\n"))
             if ss_url then
                 http.get_async(ss_url, { timeout = 30 }, function(img_body, img_status)
-                    if not window_alive or current_details_id ~= r.game_id then return end
+                    if not window_alive or current_details_id ~= r.game_name then return end
                     if img_status ~= 200 or not img_body or #img_body == 0 then return end
                     ss_img:SetImageFromMemory(img_body)
                 end)
@@ -363,7 +364,7 @@ dl_btn:OnClicked(function(b, data)
     if pkg_status == 200 or pkg_status == 206 or pkg_status == 0 then
         ludo.logSuccess("Queued PKG: " .. (pkg_out))
     else
-        ludo.logError("Preflight HTTP " .. tostring(pkg_status) .. " for " .. r.game_id)
+        ludo.logError("Preflight HTTP " .. tostring(pkg_status) .. " for " .. r.game_name)
         ui.MsgBoxError(win, "Download Failed",
             "Preflight check returned HTTP " .. tostring(pkg_status) .. " for\n" .. r.game_name)
         return  -- Don't close window on error
