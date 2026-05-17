@@ -13,8 +13,11 @@
 
 #ifdef _WIN32
 #include <sys/stat.h>
+#include <direct.h>
+#define dm_mkdir(p) _mkdir(p)
 #else
 #include <sys/stat.h>
+#define dm_mkdir(p) mkdir(p, 0755)
 #endif
 
 #include <curl/curl.h>
@@ -691,6 +694,42 @@ static size_t write_cb(char *ptr, size_t size, size_t nmemb, void *userdata) {
     return written;
 }
 
+static void ensure_directory(const char *full_path) {
+    char buf[2048];
+    char *p;
+    size_t len;
+
+    if (!full_path || full_path[0] == '\0') return;
+
+    strncpy(buf, full_path, sizeof(buf) - 1);
+    buf[sizeof(buf) - 1] = '\0';
+    len = strlen(buf);
+
+    /* Strip filename: walk back to last path separator */
+    while (len > 0 && buf[len - 1] != '/' && buf[len - 1] != '\\') {
+        buf[--len] = '\0';
+    }
+    if (len == 0) return; /* no directory component */
+
+    /* Remove trailing separator(s) */
+    while (len > 0 && (buf[len - 1] == '/' || buf[len - 1] == '\\')) {
+        buf[--len] = '\0';
+    }
+    if (len == 0) return;
+
+    /* Recursively create each component */
+    for (p = buf; *p; p++) {
+        if (*p == '/' || *p == '\\') {
+            char saved = *p;
+            *p = '\0';
+            if (p > buf && buf[0] != '\0')
+                dm_mkdir(buf);
+            *p = saved;
+        }
+    }
+    dm_mkdir(buf);
+}
+
 static void perform_download(Download *d) {
     const LudoConfig *cfg = ludo_config_get();
     const char *sep = "";
@@ -799,6 +838,7 @@ static void perform_download(Download *d) {
             }
         }
 
+        ensure_directory(path);
         fp = dm_fopen_utf8(path, resume_from > 0 ? "ab" : "wb");
         if (!fp) {
             ProgressUpdate upd = {0};
