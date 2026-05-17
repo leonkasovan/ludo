@@ -98,6 +98,9 @@ Copy executables and all assets (plugins, config, snippets, lualib, res, tools) 
 
 ```bash
 cmake --install build --prefix install
+cmake --install build --prefix ~/ludo
+cmake --install build --prefix C:/PortableApps/ludo
+cmake --install build --prefix C:/Program Files/ludo
 ```
 
 This creates the `install/` directory with everything needed to run.

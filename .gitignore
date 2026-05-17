@@ -5,3 +5,4 @@
 src/ipc/extension/**
 *.db
 *.log
+/install

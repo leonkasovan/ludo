@@ -31,6 +31,7 @@ void http_module_register(lua_State *L);
 #ifndef BUILD_CONSOLE
 void async_http_init(void);
 void async_http_shutdown(void);
+void async_http_cancel_all_for_L(lua_State *L);
 #endif
 
 /* C-level HTTP GET result (no Lua dependency) */

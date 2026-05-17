@@ -8,6 +8,7 @@
 local ui    = require("ui")
 local ftcsv = require("ftcsv")
 local win_open = true
+local window_alive = true
 
 -- Determine the tools directory from this script's own path.
 local _src = debug.getinfo(1, "S").source or ""
@@ -261,7 +262,7 @@ local function update_details(idx)
         entry_info:SetText("Loading details...")
         ludo.logInfo("Fetching details for " .. r.title_id .. " from " .. scrape_url)
         http.get_async(scrape_url, { timeout = 30 }, function(body, status)
-            if current_details_id ~= r.title_id then return end
+            if not window_alive or current_details_id ~= r.title_id then return end
             if status ~= 200 or not body or #body == 0 then
                 entry_info:SetText("Failed to fetch details (HTTP " .. tostring(status) .. ")")
                 ludo.logInfo("Failed to fetch details for " .. r.title_id .. " (HTTP " .. tostring(status) .. ")")
@@ -339,7 +340,7 @@ local function update_details(idx)
             entry_info:SetText(table.concat(lines, "\n"))
             if ss_url then
                 http.get_async(ss_url, { timeout = 30 }, function(img_body, img_status)
-                    if current_details_id ~= r.title_id then return end
+                    if not window_alive or current_details_id ~= r.title_id then return end
                     if img_status ~= 200 or not img_body or #img_body == 0 then return end
                     ss_img:SetImageFromMemory(img_body)
                 end)
@@ -423,6 +424,9 @@ dl_btn:OnClicked(function(b, data)
         ludo.logSuccess("Queued PKG: " .. (pkg_out or (r.title_id .. ".pkg")))
     else
         ludo.logError("PKG preflight HTTP " .. tostring(pkg_status) .. " for " .. r.title_id)
+        ui.MsgBoxError(win, "Download Failed",
+            "Preflight check returned HTTP " .. tostring(pkg_status) .. " for\n" .. r.name)
+        return  -- Don't close window on error
     end
 
     -- Generate binary RAP (content_id.rap) file if present (PS3/PSP).
@@ -443,6 +447,7 @@ dl_btn:OnClicked(function(b, data)
 
     -- Close the window: win:Close() does not exist in libuilua.
     -- Set win_open=false to exit the MainStep loop, then Destroy the window.
+    window_alive = false
     win_open = false
     win:Destroy()
 end, nil)
@@ -451,6 +456,7 @@ end, nil)
 -- Tool scripts must NOT call ui.Main()/ui.Uninit() — Ludo's own event loop
 -- is already running.  Use MainStep() instead.
 win:OnClosing(function(w, data)
+    window_alive = false
     win_open = false
     return 1
 end, nil)

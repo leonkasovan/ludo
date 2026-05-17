@@ -737,6 +737,55 @@ typedef struct {
     lua_State   *main_L;
 } AsyncHttpResult;
 
+#define MAX_TRACKED_STATES 16
+static struct {
+    lua_State *L;
+    int pending;
+} g_async_track[MAX_TRACKED_STATES];
+
+static void track_inc(lua_State *L) {
+    int i;
+    for (i = 0; i < MAX_TRACKED_STATES; i++) {
+        if (g_async_track[i].L == L) { g_async_track[i].pending++; return; }
+    }
+    for (i = 0; i < MAX_TRACKED_STATES; i++) {
+        if (g_async_track[i].L == NULL) {
+            g_async_track[i].L = L;
+            g_async_track[i].pending = 1;
+            return;
+        }
+    }
+}
+
+static void track_dec(lua_State *L) {
+    int i;
+    for (i = 0; i < MAX_TRACKED_STATES; i++) {
+        if (g_async_track[i].L == L) {
+            if (g_async_track[i].pending > 0) g_async_track[i].pending--;
+            return;
+        }
+    }
+}
+
+static int track_get(lua_State *L) {
+    int i;
+    for (i = 0; i < MAX_TRACKED_STATES; i++) {
+        if (g_async_track[i].L == L) return g_async_track[i].pending;
+    }
+    return 0;
+}
+
+static void track_remove(lua_State *L) {
+    int i;
+    for (i = 0; i < MAX_TRACKED_STATES; i++) {
+        if (g_async_track[i].L == L) {
+            g_async_track[i].L = NULL;
+            g_async_track[i].pending = 0;
+            return;
+        }
+    }
+}
+
 static struct {
     AsyncHttpTask  *ring;
     int             cap;
@@ -761,6 +810,7 @@ static void async_http_queue_push(AsyncHttpTask *task) {
         g_async.ring[g_async.tail] = *task;
         g_async.tail = (g_async.tail + 1) % g_async.cap;
         g_async.count++;
+        track_inc(task->main_L);
         ludo_cond_broadcast(&g_async.not_empty);
     }
     ludo_mutex_unlock(&g_async.mutex);
@@ -784,6 +834,31 @@ static int async_http_queue_pop(AsyncHttpTask *out) {
     return 1;
 }
 
+void async_http_cancel_all_for_L(lua_State *L) {
+    if (!g_async.running) return;
+    ludo_mutex_lock(&g_async.mutex);
+    int idx = g_async.head;
+    int i;
+    for (i = 0; i < g_async.count; i++) {
+        if (g_async.ring[idx].main_L == L) {
+            luaL_unref(L, LUA_REGISTRYINDEX, g_async.ring[idx].callback_ref);
+            g_async.ring[idx].main_L = NULL;
+            g_async.ring[idx].callback_ref = LUA_NOREF;
+            track_dec(L);
+        }
+        idx = (idx + 1) % g_async.cap;
+    }
+    ludo_mutex_unlock(&g_async.mutex);
+
+    for (i = 0; i < 200; i++) {
+        if (track_get(L) == 0) break;
+        uiMainStep(0);
+        Sleep(10);
+    }
+
+    track_remove(L);
+}
+
 static void async_http_on_main(void *data) {
     AsyncHttpResult *r = (AsyncHttpResult *)data;
     lua_State *L = r->main_L;
@@ -793,6 +868,7 @@ static void async_http_on_main(void *data) {
 
     if (!lua_isfunction(L, -1)) {
         lua_pop(L, 1);
+        track_dec(L);
         free(r->body);
         free(r->header_data);
         free(r);
@@ -809,6 +885,7 @@ static void async_http_on_main(void *data) {
         lua_pop(L, 1);
     }
 
+    track_dec(L);
     free(r->body);
     free(r->header_data);
     free(r);
@@ -818,6 +895,7 @@ static void *async_http_worker(void *arg) {
     (void)arg;
     AsyncHttpTask task;
     while (async_http_queue_pop(&task)) {
+        if (task.main_L == NULL) continue;
         CURL *curl = curl_easy_init();
         if (!curl) continue;
 
@@ -887,6 +965,7 @@ static void *async_http_worker(void *arg) {
 
 void async_http_init(void) {
     memset(&g_async, 0, sizeof(g_async));
+    memset(g_async_track, 0, sizeof(g_async_track));
     g_async.cap = ASYNC_HTTP_QUEUE_CAP;
     g_async.ring = (AsyncHttpTask *)malloc(
         (size_t)g_async.cap * sizeof(AsyncHttpTask));

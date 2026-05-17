@@ -515,10 +515,17 @@ int lua_engine_run_script(const char *path) {
     if (lua_pcall(L, 0, 0, 0) != LUA_OK) {
         const char *e = lua_tostring(L, -1);
         gui_log(LOG_ERROR, "[lua_engine] exec error %s: %s", path, e ? e : "?");
+#ifndef BUILD_CONSOLE
+        async_http_cancel_all_for_L(L);
+#endif
         lua_close(L);
         return 0;
     }
     gui_log(LOG_INFO, "[lua_engine] run_script: lua_pcall returned");
+
+#ifndef BUILD_CONSOLE
+    async_http_cancel_all_for_L(L);
+#endif
 
     gui_log(LOG_INFO, "[lua_engine] run_script: calling lua_close");
     lua_close(L);
