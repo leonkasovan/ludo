@@ -1,7 +1,7 @@
-/app_design.md
 /build*
-/ludo_startup.log
 /.claude
 *.tsv
 *.exe
 src/ipc/extension/**
+*.db
+*.log

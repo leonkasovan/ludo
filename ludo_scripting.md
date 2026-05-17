@@ -515,7 +515,9 @@ returns `nil, err` instead of throwing on parse/encode errors.
 - `json.decode(text)` → lua value: parse a JSON string and return the Lua
     representation. `json.decode` raises on malformed input — use
     `pcall(json.decode, text)` to catch errors, or use `require("cjson_safe")`
-    to get the safe wrapper that returns `nil, err`.
+    (or the global `cjson_safe`) to get the safe wrapper that returns `nil, err`.
+- `json.new()` → module: create a new isolated `json` module instance with
+    its own configuration state.
 
 **Special values & behaviour:**
 - `json.null` — a lightuserdata sentinel used to represent JSON `null`.
@@ -545,6 +547,43 @@ local body = json.encode({ videoId = vid, context = { client = { hl = "en" } } }
 local ok, data = pcall(json.decode, normalize_json_response(response_body))
 if not ok then
         print("JSON error:", data)
+end
+```
+
+### `cjson_safe` — Safe JSON Wrapper
+
+In addition to the `json` global, Ludo also registers `cjson_safe` as a
+**global** module (not just via `require`). It mirrors the full `json` API
+but its `encode` and `decode` functions return `nil, err` on failure instead
+of throwing a Lua error.
+
+**Key functions:**
+- `cjson_safe.encode(value)` → `json_string, nil` on success, or `nil, err` on failure.
+- `cjson_safe.decode(text)` → `lua_value, nil` on success, or `nil, err` on failure.
+- `cjson_safe.new()` → module: create a new isolated safe module instance.
+
+All configuration functions are available on `cjson_safe` too:
+- `cjson_safe.encode_sparse_array(convert, ratio, safe)`
+- `cjson_safe.encode_max_depth(n)`
+- `cjson_safe.decode_max_depth(n)`
+- `cjson_safe.encode_number_precision(n)`
+- `cjson_safe.encode_keep_buffer(true|false)`
+- `cjson_safe.encode_invalid_numbers(option)`
+- `cjson_safe.decode_invalid_numbers(option)`
+
+`cjson_safe.null` is the same sentinel as `json.null`.
+
+```lua
+-- Safe decode without pcall
+local data, err = cjson_safe.decode(body)
+if not data then
+    ludo.logError("JSON error: " .. err)
+end
+
+-- Safe encode
+local json_str, err = cjson_safe.encode(big_table)
+if not json_str then
+    ludo.logError("Encode error: " .. err)
 end
 ```
 
@@ -1062,6 +1101,26 @@ Encrypt data with AES-128-CBC and add PKCS7 padding.
 **Returns:**
 - `ciphertext` (string) — Encrypted data (padded to multiple of 16 bytes).
 
+### 4.19 `http.aes128_encrypt_block(data, key)` → string
+
+Encrypt a single 16-byte block with AES-128 ECB (no padding, no IV).
+
+Useful for implementing custom CBC modes (e.g. whitespace padding).
+
+**Parameters:**
+- `data` (string) — Exactly 16 bytes of input.
+- `key` (string) — 16-byte AES-128 key.
+
+**Returns:**
+- `block` (string) — Exactly 16 bytes of encrypted output.
+
+```lua
+-- Encrypt a single 16-byte block
+local encrypted = http.aes128_encrypt_block(plain_block, key16)
+```
+
+**Implementation note:** Standalone AES-128; no external dependency.
+
 ---
 
 #### Note on Compression Support
@@ -1281,11 +1340,22 @@ ludo.logInfo("Scanning page for download links...")
 
 Configuration values loaded from `config.ini` are exposed through `ludo.setting`.
 
+| Key | Type | Description |
+|-----|------|-------------|
+| `maxDownloadRetry` | integer | Maximum download retry count |
+| `maxThread` | integer | Maximum concurrent download threads |
+| `urlQueueCapacity` | integer | Maximum URL queue size |
+| `downloadQueueCapacity` | integer | Maximum download queue size |
+| `maxRedirect` | integer | Maximum HTTP redirect depth |
+| `outputDir` | string | Default output directory path |
+| `pluginDir` | string | Plugin directory path |
+
 ```lua
 print(ludo.setting.maxDownloadRetry)
 print(ludo.setting.maxThread)
 print(ludo.setting.outputDir)
 ```
+
 ### 6.8 `ludo.getOutputDirectory()` - string
 
 Get the current default output directory.
@@ -1296,6 +1366,40 @@ Get the current default output directory.
 ```lua
 local dir = ludo.getOutputDirectory()
 ludo.logInfo("Files will be saved to: " .. dir)
+```
+
+### 6.9 `ludo.http_tester` (GUI build only)
+
+> **GUI builds only.** These functions are `nil` in console builds.
+
+Provides access to the HTTP Tester window's response data from Lua.
+
+| Function | Returns | Description |
+|----------|---------|-------------|
+| `ludo.http_tester.response.content()` | string | Response body text from the HTTP Tester window |
+| `ludo.http_tester.response.header()` | string | Response headers text from the HTTP Tester window |
+
+Both throw a Lua error if the HTTP Tester window is not open.
+
+```lua
+local body = ludo.http_tester.response.content()
+local hdrs = ludo.http_tester.response.header()
+```
+
+### 6.10 `ludo.lua_tester` (GUI build only)
+
+> **GUI builds only.** These functions are `nil` in console builds.
+
+Writes output to the Lua Tester window's output widget.
+
+| Function | Description |
+|----------|-------------|
+| `ludo.lua_tester.println(msg)` | Append `msg` + newline to the Lua Tester output |
+| `ludo.lua_tester.printf(fmt, ...)` | Format like `string.format` and append to Lua Tester output (no trailing newline) |
+
+```lua
+ludo.lua_tester.println("Hello from Lua")
+ludo.lua_tester.printf("Answer: %d", 42)
 ```
 
 ---
@@ -2417,6 +2521,7 @@ return plugin
 | `http.sha256` | `(str)` | `32-byte raw binary digest` |
 | `http.aes128_cbc_decrypt` | `(data, key, iv)` | `decrypted data with PKCS7 padding stripped` |
 | `http.aes128_cbc_encrypt` | `(data, key, iv)` | `encrypted data with PKCS7 padding added` |
+| `http.aes128_encrypt_block` | `(data, key)` | `16-byte encrypted block (no padding, no IV)` |
 
 ### Ludo Functions
 
@@ -2429,7 +2534,11 @@ return plugin
 | `ludo.logSuccess` | `(msg)` | — |
 | `ludo.logInfo` | `(msg)` | — |
 | `ludo.getOutputDirectory` | `()` | `dir` |
-| `ludo.setting` | `.maxDownloadRetry`, `.maxThread`, ... | config values |
+| `ludo.http_tester.response.content` | `()` | `body` (GUI only) |
+| `ludo.http_tester.response.header` | `()` | `headers` (GUI only) |
+| `ludo.lua_tester.println` | `(msg)` | — (GUI only) |
+| `ludo.lua_tester.printf` | `(fmt, ...)` | — (GUI only) |
+| `ludo.setting` | `.maxDownloadRetry`, `.maxThread`, `.outputDir`, etc. | config values |
 
 ### Ludo Constants
 
@@ -2468,9 +2577,26 @@ return plugin
 | `ui.NewArea` | `()` | `Area` |
 | `ui.NewImage` | `(width, height)` | `Image` |
 | `ui.LoadImageFromMemory` | `(data)` | `Image, err` |
-| `ui.ImageAppend` | `(img, pixels, w, h)` | `img` (self) |
+| `img:Append` | `(pixels, width, height)` | `img` (self) |
 | `ui.NewStaticImage` | `()` | `StaticImage` |
 | `ui.DrawBitmap` | `(ctx, img, x, y, w, h)` | — |
+
+### JSON Functions
+
+| Function | Signature | Returns |
+|----------|-----------|---------|
+| `json.encode` | `(value)` | `json_string` |
+| `json.decode` | `(text)` | `lua_value` (throws on error) |
+| `json.new` | `()` | new isolated `json` module |
+| `cjson_safe.encode` | `(value)` | `json_string` or `nil, err` |
+| `cjson_safe.decode` | `(text)` | `lua_value` or `nil, err` |
+| `cjson_safe.new` | `()` | new isolated safe module |
+
+### Zip Functions
+
+| Function | Signature | Returns |
+|----------|-----------|---------|
+| `zip.create` | `(output_path, files \| dir [, glob_filter])` | `status [, errmsg]` |
 
 ---
 

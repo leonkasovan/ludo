@@ -40,16 +40,10 @@ set(LUDO_DESCRIPTION "Lua powered and streamlined download manager")
 # ------------------------------------------------------------
 # Build configurations
 # ------------------------------------------------------------
-get_property(LUDO_IS_MULTI_CONFIG GLOBAL PROPERTY GENERATOR_IS_MULTI_CONFIG)
-
-if(LUDO_IS_MULTI_CONFIG)
-    set(CMAKE_CONFIGURATION_TYPES "Debug;Release" CACHE STRING "Available build configurations" FORCE)
-else()
-    if(NOT CMAKE_BUILD_TYPE)
-        set(CMAKE_BUILD_TYPE "Debug" CACHE STRING "Build type" FORCE)
-    endif()
-    set_property(CACHE CMAKE_BUILD_TYPE PROPERTY STRINGS "Debug" "Release")
+if(NOT CMAKE_BUILD_TYPE)
+    set(CMAKE_BUILD_TYPE "Debug" CACHE STRING "Build type" FORCE)
 endif()
+set_property(CACHE CMAKE_BUILD_TYPE PROPERTY STRINGS "Debug" "Release")
 
 # Enable sanitizers for Debug builds on Linux
 if(UNIX AND NOT APPLE AND CMAKE_BUILD_TYPE STREQUAL "Debug")
@@ -72,16 +66,9 @@ find_package(Threads REQUIRED)
 set(LUDO_LIB_OUTPUT_DIR ${CMAKE_BINARY_DIR}/libs)
 
 function(set_static_archive_output target)
-    if(CMAKE_CONFIGURATION_TYPES)
-        # Keep config-specific static libraries separate when using multi-config generators.
-        set_target_properties(${target} PROPERTIES
-            ARCHIVE_OUTPUT_DIRECTORY "${LUDO_LIB_OUTPUT_DIR}/$<CONFIG>"
-        )
-    else()
-        set_target_properties(${target} PROPERTIES
-            ARCHIVE_OUTPUT_DIRECTORY ${LUDO_LIB_OUTPUT_DIR}
-        )
-    endif()
+    set_target_properties(${target} PROPERTIES
+        ARCHIVE_OUTPUT_DIRECTORY ${LUDO_LIB_OUTPUT_DIR}
+    )
 endfunction()
 
 # ------------------------------------------------------------
@@ -114,12 +101,6 @@ set_static_archive_output(zlib_static)
 set_target_properties(zlib_static PROPERTIES
     OUTPUT_NAME zlibstatic
 )
-
-if(MSVC)
-    set(ZLIB_STATIC_LIBRARY ${LUDO_LIB_OUTPUT_DIR}/zlibstatic.lib)
-else()
-    set(ZLIB_STATIC_LIBRARY ${LUDO_LIB_OUTPUT_DIR}/libzlibstatic.a)
-endif()
 
 # ------------------------------------------------------------
 # lua-5.2.4 (source list)
@@ -245,13 +226,8 @@ if(WIN32)
 
     # Tune libcurl_static to reduce size: enable sectioning and garbage-collect unused
     if(TARGET libcurl_static)
-        if(MSVC)
-            target_compile_options(libcurl_static PRIVATE $<$<CONFIG:Release>:/Gy>)
-            # final exe already uses /OPT:REF /OPT:ICF
-        else()
-            target_compile_options(libcurl_static PRIVATE $<$<CONFIG:Release>:-ffunction-sections> $<$<CONFIG:Release>:-fdata-sections> $<$<CONFIG:Release>:-O3>)
-            target_link_options(libcurl_static PRIVATE $<$<CONFIG:Release>:-Wl,--gc-sections> $<$<CONFIG:Release>:-s>)
-        endif()
+        target_compile_options(libcurl_static PRIVATE $<$<CONFIG:Release>:-ffunction-sections> $<$<CONFIG:Release>:-fdata-sections> $<$<CONFIG:Release>:-O3>)
+        target_link_options(libcurl_static PRIVATE $<$<CONFIG:Release>:-Wl,--gc-sections> $<$<CONFIG:Release>:-s>)
     endif()
 else()
     find_package(OpenSSL REQUIRED)
@@ -322,11 +298,7 @@ endif()
 
 # Helper: enable sectioning/stripping for a target in Release builds
 function(enable_dead_code_stripping target)
-    if(MSVC)
-        target_compile_options(${target} PRIVATE $<$<CONFIG:Release>:/Gy>)
-    else()
-        target_compile_options(${target} PRIVATE $<$<CONFIG:Release>:-ffunction-sections> $<$<CONFIG:Release>:-fdata-sections>)
-    endif()
+    target_compile_options(${target} PRIVATE $<$<CONFIG:Release>:-ffunction-sections> $<$<CONFIG:Release>:-fdata-sections>)
 endfunction()
 
 if(BUILD_GUI)
@@ -368,12 +340,8 @@ set_target_properties(libui_static PROPERTIES OUTPUT_NAME libui)
 # 3. Apply settings from libui's original meson.build
 target_compile_definitions(libui_static PRIVATE libui_EXPORTS _UI_STATIC)
 
-if(MSVC)
-    target_compile_options(libui_static PRIVATE /wd4100 /bigobj)
-else()
-    # Ensure we don't treat warnings as errors for external library code
-    target_compile_options(libui_static PRIVATE -Wno-unused-parameter -Wno-switch -Wno-deprecated-declarations)
-endif()
+# Suppress warnings for external library code
+target_compile_options(libui_static PRIVATE -Wno-unused-parameter -Wno-switch -Wno-deprecated-declarations)
 
 # 4. OS-Specific Linking (Propagated to Ludo)
 if(WIN32)
@@ -472,27 +440,17 @@ else()
     add_executable(ludo ${LUDO_SOURCES})
 endif()
 
-    if(TARGET ludo)
-        if(MSVC)
-            target_compile_options(ludo PRIVATE $<$<CONFIG:Release>:/Gy>)
-        else()
-            target_compile_options(ludo PRIVATE $<$<CONFIG:Release>:-ffunction-sections> $<$<CONFIG:Release>:-fdata-sections>)
-            target_link_options(ludo PRIVATE $<$<CONFIG:Release>:-Wl,--gc-sections> $<$<CONFIG:Release>:-s>)
-        endif()
-    endif()
-
-    if(TARGET libui_static)
-        enable_dead_code_stripping(libui_static)
-    endif()
-    if(TARGET libuilua_static)
-        enable_dead_code_stripping(libuilua_static)
-    endif()
-
-set(LUDO_EXTERNAL_DEPENDENCIES libcurl_static libui_static libuilua_static lua_static zlib_static)
-if(WIN32)
-    list(APPEND LUDO_EXTERNAL_DEPENDENCIES zstd_static brotlidec_static brotlienc_static brotlicommon_static)
+if(TARGET ludo)
+    target_compile_options(ludo PRIVATE $<$<CONFIG:Release>:-ffunction-sections> $<$<CONFIG:Release>:-fdata-sections>)
+    target_link_options(ludo PRIVATE $<$<CONFIG:Release>:-Wl,--gc-sections> $<$<CONFIG:Release>:-s>)
 endif()
-add_dependencies(ludo ${LUDO_EXTERNAL_DEPENDENCIES})
+
+if(TARGET libui_static)
+    enable_dead_code_stripping(libui_static)
+endif()
+if(TARGET libuilua_static)
+    enable_dead_code_stripping(libuilua_static)
+endif()
 
 target_include_directories(ludo PRIVATE
     ${CMAKE_SOURCE_DIR}/src
@@ -519,13 +477,8 @@ endif()
 
 target_link_libraries(ludo PRIVATE zlib_static)
 
-if(MSVC)
-    target_compile_options(ludo PRIVATE $<$<CONFIG:Release>:/O2>)
-    target_link_options(ludo PRIVATE $<$<CONFIG:Release>:/OPT:REF> $<$<CONFIG:Release>:/OPT:ICF>)
-else()
-    target_compile_options(ludo PRIVATE $<$<CONFIG:Release>:-O3>)
-    target_link_options(ludo PRIVATE $<$<CONFIG:Release>:-s>)
-endif()
+target_compile_options(ludo PRIVATE $<$<CONFIG:Release>:-O3>)
+target_link_options(ludo PRIVATE $<$<CONFIG:Release>:-s>)
 
 target_compile_definitions(ludo PRIVATE
     $<$<CONFIG:Debug>:DEBUG>
@@ -556,36 +509,21 @@ elseif(APPLE)
 endif()
 
 # Set Debug output executable name to ludo-debug for Debug builds
-if(CMAKE_CONFIGURATION_TYPES)
-    set_target_properties(ludo PROPERTIES OUTPUT_NAME_DEBUG ludo-debug)
-else()
-    if(CMAKE_BUILD_TYPE STREQUAL "Debug")
-        set_target_properties(ludo PROPERTIES OUTPUT_NAME ludo-debug)
-    endif()
+if(CMAKE_BUILD_TYPE STREQUAL "Debug")
+    set_target_properties(ludo PROPERTIES OUTPUT_NAME ludo-debug)
 endif()
 
-# Output Copy Commands
-add_custom_command(TARGET ludo POST_BUILD
-    COMMAND ${CMAKE_COMMAND} -E copy_directory ${CMAKE_SOURCE_DIR}/plugins $<TARGET_FILE_DIR:ludo>/plugins
-    COMMAND ${CMAKE_COMMAND} -E copy_directory ${CMAKE_SOURCE_DIR}/snippets $<TARGET_FILE_DIR:ludo>/snippets
-    COMMAND ${CMAKE_COMMAND} -E copy_directory ${CMAKE_SOURCE_DIR}/res $<TARGET_FILE_DIR:ludo>/res
-    COMMAND ${CMAKE_COMMAND} -E copy_directory ${CMAKE_SOURCE_DIR}/tools $<TARGET_FILE_DIR:ludo>/tools
-    COMMAND ${CMAKE_COMMAND} -E copy_directory ${CMAKE_SOURCE_DIR}/lualib $<TARGET_FILE_DIR:ludo>/lualib
-    COMMAND ${CMAKE_COMMAND} -E copy_if_different ${CMAKE_SOURCE_DIR}/config.ini $<TARGET_FILE_DIR:ludo>/config.ini
-    COMMAND ${CMAKE_COMMAND} -E copy_if_different ${CMAKE_SOURCE_DIR}/ludo_scripting.htm $<TARGET_FILE_DIR:ludo>/ludo_scripting.htm
-    COMMAND ${CMAKE_COMMAND} -E make_directory $<TARGET_FILE_DIR:ludo>/downloads
-    COMMENT "Copying runtime assets (plugins, snippets, res, tools, lualib, config) and initializing output directories..."
-)
-
-install(TARGETS ludo DESTINATION bin)
-install(FILES config.ini DESTINATION bin)
-install(FILES ludo_scripting.htm DESTINATION bin)
-install(DIRECTORY plugins/ DESTINATION bin/plugins)
-install(DIRECTORY snippets/ DESTINATION bin/snippets)
-install(DIRECTORY res/ DESTINATION bin/res)
-install(DIRECTORY tools/ DESTINATION bin/tools)
-install(DIRECTORY lualib/ DESTINATION bin/lualib)
+install(TARGETS ludo DESTINATION .)
+install(DIRECTORY res/ DESTINATION res)
+install(DIRECTORY tools/ DESTINATION tools)
 endif()
+
+# Common asset install rules (shared by ludo and ludocon)
+install(FILES config.ini DESTINATION .)
+install(FILES ludo_scripting.htm DESTINATION .)
+install(DIRECTORY plugins/ DESTINATION plugins)
+install(DIRECTORY snippets/ DESTINATION snippets)
+install(DIRECTORY lualib/ DESTINATION lualib)
 
 # ------------------------------------------------------------
 # ludocon — Pure console target (no GUI dependency)
@@ -647,32 +585,15 @@ else()
     target_link_libraries(ludocon PRIVATE m dl)
 endif()
 
-if(MSVC)
-    target_compile_options(ludocon PRIVATE $<$<CONFIG:Release>:/O2>)
-    target_link_options(ludocon PRIVATE $<$<CONFIG:Release>:/OPT:REF> $<$<CONFIG:Release>:/OPT:ICF>)
-else()
-    target_compile_options(ludocon PRIVATE $<$<CONFIG:Release>:-O3>)
-    target_link_options(ludocon PRIVATE $<$<CONFIG:Release>:-s>)
-endif()
+target_compile_options(ludocon PRIVATE $<$<CONFIG:Release>:-O3>)
+target_link_options(ludocon PRIVATE $<$<CONFIG:Release>:-s>)
 
 # Debug output name
-if(CMAKE_CONFIGURATION_TYPES)
-    set_target_properties(ludocon PROPERTIES OUTPUT_NAME_DEBUG ludocon-debug)
-else()
-    if(CMAKE_BUILD_TYPE STREQUAL "Debug")
-        set_target_properties(ludocon PROPERTIES OUTPUT_NAME ludocon-debug)
-    endif()
+if(CMAKE_BUILD_TYPE STREQUAL "Debug")
+    set_target_properties(ludocon PROPERTIES OUTPUT_NAME ludocon-debug)
 endif()
 
-# Copy runtime assets for ludocon too
-add_custom_command(TARGET ludocon POST_BUILD
-    COMMAND ${CMAKE_COMMAND} -E copy_directory ${CMAKE_SOURCE_DIR}/plugins $<TARGET_FILE_DIR:ludocon>/plugins
-    COMMAND ${CMAKE_COMMAND} -E copy_directory ${CMAKE_SOURCE_DIR}/snippets $<TARGET_FILE_DIR:ludocon>/snippets
-    COMMAND ${CMAKE_COMMAND} -E copy_directory ${CMAKE_SOURCE_DIR}/lualib $<TARGET_FILE_DIR:ludocon>/lualib
-    COMMAND ${CMAKE_COMMAND} -E copy_if_different ${CMAKE_SOURCE_DIR}/config.ini $<TARGET_FILE_DIR:ludocon>/config.ini
-    COMMAND ${CMAKE_COMMAND} -E make_directory $<TARGET_FILE_DIR:ludocon>/downloads
-    COMMENT "Copying runtime assets for ludocon..."
-)
+install(TARGETS ludocon DESTINATION .)
 
 set(WENATIVEHOST_SOURCES
     src/ipc/wenativehost.c
@@ -688,3 +609,18 @@ target_link_libraries(wenativehost PRIVATE Threads::Threads)
 if(WIN32)
     target_link_libraries(wenativehost PRIVATE user32)
 endif()
+
+install(TARGETS wenativehost DESTINATION .)
+
+# ------------------------------------------------------------
+# Packaging (CPack)
+# ------------------------------------------------------------
+set(CPACK_GENERATOR "ZIP")
+set(CPACK_PACKAGE_FILE_NAME "ludo-${LUDO_VERSION_STR}")
+set(CPACK_PACKAGE_VERSION "${LUDO_VERSION_STR}")
+set(CPACK_PACKAGE_DESCRIPTION_SUMMARY "${LUDO_DESCRIPTION}")
+set(CPACK_PACKAGE_VENDOR "${LUDO_COMPANY}")
+set(CPACK_RESOURCE_FILE_README "${CMAKE_SOURCE_DIR}/README.md")
+set(CPACK_INCLUDE_TOPLEVEL_DIRECTORY ON)
+
+include(CPack)

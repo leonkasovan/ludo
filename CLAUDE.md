@@ -36,12 +36,8 @@ The project produces two executable targets:
 |------|---------|
 | `CMakeLists.txt` | Root CMake build (CMake ≥ 3.16) |
 | `build/` | Out-of-source build directory |
-| `build/ludo-debug.exe` / `build/ludo-debug` | Debug executable (GUI) |
-| `build/ludo.exe` / `build/ludo` | Release GUI executable |
-| `build/ludocon-debug.exe` / `build/ludocon-debug` | Debug console executable |
-| `build/ludocon.exe` / `build/ludocon` | Release console executable |
-| `build/plugins/` | Runtime plugin directory (auto-copied at build) |
-| `build/ludo.log` | Runtime log — always check here after test runs |
+| `install/` | Installed files (all assets, executables, config) |
+| `install/ludo.log` | Runtime log — always check here after test runs |
 
 ### Build Commands
 
@@ -56,6 +52,26 @@ cmake --build build --parallel
 # Build ludocon only (no GUI dependencies)
 cmake -B build . -DBUILD_GUI=OFF
 cmake --build build --target ludocon --parallel
+
+# Install to local directory (all assets copied here)
+cmake --install build --prefix install
+
+# Create distribution package (ludo-<version>.zip)
+cmake --build build --target package
+```
+
+### Workflow Summary
+
+```
+Build  →  Install  →  Run / Test  →  Package
+ cmake    cmake       ./install/     cmake
+ --build  --install   ludo-debug    --build --target package
+```
+
+After every code change:
+```bash
+cmake --build build --parallel          # recompile
+cmake --install build --prefix install  # refresh assets
 ```
 
 ### Linux Build Prerequisites
@@ -69,8 +85,8 @@ sudo apt install cmake gcc g++ libgtk-3-dev libssl-dev pkg-config
 ```
 
 CMake automatically copies `plugins/*.lua`, `res/`, `snippets/`, and
-`config.ini` to the build directory. You **do not** need to copy plugins
-manually after a successful build.
+`config.ini` to the install directory. You **do not** need to copy plugins
+manually after a successful install.
 
 ---
 
@@ -251,15 +267,23 @@ if ck then ck:close(); http.set_cookie(cookie_path) end
 ### 4.1 Test Commands
 
 ```bash
-# Run a test script (all output goes to ludo.log, not stdout)
-cd build
-./ludo-debug.exe -s test_PLUGINNAME.lua
+# Build, install, then run a test script (all output goes to ludo.log, not stdout)
+cmake --build build --parallel
+cmake --install build --prefix install
+./install/ludo-debug.exe -s test_PLUGINNAME.lua
 
 # Check results
-grep -E "PASS|FAIL|SUCCESS|ERROR" build/ludo.log | tail -30
+grep -E "PASS|FAIL|SUCCESS|ERROR" install/ludo.log | tail -30
 
 # Watch live
-tail -f build/ludo.log
+tail -f install/ludo.log
+```
+
+After any code change, refresh and test:
+```bash
+cmake --build build --parallel
+cmake --install build --prefix install
+./install/ludo-debug.exe -s test_PLUGINNAME.lua
 ```
 
 ### 4.2 Test Script Template
@@ -300,30 +324,30 @@ ludo.logInfo("=== MyPlugin test done ===")
 
 | Script | Plugin |
 |--------|--------|
-| `build/test_instagram.lua` | instagram.lua |
-| `build/test_tiktok.lua` | tiktok.lua |
-| `build/test_facebook.lua` | facebook.lua |
-| `build/test_bluesky.lua` | bluesky.lua |
-| `build/test_twitch.lua` | twitch.lua |
-| `build/test_baidu.lua` | baidu.lua |
-| `build/test_bigo.lua` | bigo.lua |
-| `build/test_m3u8.lua` | m3u8.lua |
-| `build/test_bilibili.lua` | bilibili.lua |
-| `build/test_dailymotion.lua` | dailymotion.lua |
-| `build/test_telegram.lua` | telegram.lua |
-| `build/test_tube8.lua` | tube8.lua |
-| `build/test_vidio.lua` | vidio.lua |
-| `build/test_pinterest.lua` | pinterest.lua |
-| `build/test_douyu.lua` | douyu.lua |
-| `build/test_xiaohongshu.lua` | xiaohongshu.lua |
-| `build/test_youku.lua` | youku.lua |
-| `build/test_iqiyi.lua` | iqiyi.lua |
-| `build/test_tencent.lua` | tencent.lua |
-| `build/test_bitchute.lua` | bitchute.lua |
+| `install/test_instagram.lua` | instagram.lua |
+| `install/test_tiktok.lua` | tiktok.lua |
+| `install/test_facebook.lua` | facebook.lua |
+| `install/test_bluesky.lua` | bluesky.lua |
+| `install/test_twitch.lua` | twitch.lua |
+| `install/test_baidu.lua` | baidu.lua |
+| `install/test_bigo.lua` | bigo.lua |
+| `install/test_m3u8.lua` | m3u8.lua |
+| `install/test_bilibili.lua` | bilibili.lua |
+| `install/test_dailymotion.lua` | dailymotion.lua |
+| `install/test_telegram.lua` | telegram.lua |
+| `install/test_tube8.lua` | tube8.lua |
+| `install/test_vidio.lua` | vidio.lua |
+| `install/test_pinterest.lua` | pinterest.lua |
+| `install/test_douyu.lua` | douyu.lua |
+| `install/test_xiaohongshu.lua` | xiaohongshu.lua |
+| `install/test_youku.lua` | youku.lua |
+| `install/test_iqiyi.lua` | iqiyi.lua |
+| `install/test_tencent.lua` | tencent.lua |
+| `install/test_bitchute.lua` | bitchute.lua |
 
 ### 4.4 Test runner notes
 
-- **Delete logs before runs:** Test scripts should remove `ludo.log` at startup so each run produces a fresh, easy-to-scan log. Several test scripts in `build/` now perform `pcall(os.remove, "ludo.log")` at the top.
+- **Delete logs before runs:** Test scripts should remove `ludo.log` at startup so each run produces a fresh, easy-to-scan log. Several test scripts now perform `pcall(os.remove, "ludo.log")` at the top.
 - **TikTok WAF debugging:** When `plugins/tiktok.lua` encounters a server-side challenge page it will save the fetched HTML to the output directory as `downloads/tiktok_debug_<id>_waf.html` (and a `_waf_retry.html` on mobile-UA retry). The plugin attempts a mobile-UA retry; if the challenge persists the recommended remedies are: provide a fresh `downloads/tiktok_cookies.txt` (Netscape format), run from a different IP/proxy, or use a headless browser extractor to execute page JS and obtain the playable URL.
 
 
@@ -339,7 +363,7 @@ ludo.logInfo("=== MyPlugin test done ===")
 | `src/download_manager.c` | Threaded download queue |
 | `src/main.c` | Entry point; `-s scriptfile.lua` runs standalone |
 | `ludo_scripting.md` | Full scripting API reference (read this for detailed docs) |
-| `build/ludo.log` | Runtime log — all `ludo.log*()` calls write here |
+| `install/ludo.log` | Runtime log — all `ludo.log*()` calls write here |
 | `third_party/curl-8.19.0/` | curl 8.19.0 for Windows build (static, Schannel) |
 | `third_party/curl-8.18.0/` | curl 8.18.0 for Linux build (static, GnuTLS, brotli, zstd) |
 | `third_party/curl-8.18.0/lib/curl_config_linux.h` | curl config for Linux (brotli, zstd, GnuTLS enabled) |
@@ -387,13 +411,17 @@ See `ludo_scripting.md` §7 for the full guide. Summary:
 
 ## 8. Known Build Quirks
 
+- **w64devkit environment:** All build commands (`cmake`, `gcc`, `ninja`) **must**
+  run inside the w64devkit shell (`C:\w64devkit\w64devkit.exe`). PowerShell or
+  cmd.exe will fail with `cannot execute 'cc1'` or `cannot execute 'as'` because
+  gcc's subprocess directory (`libexec/gcc/x86_64-w64-mingw32/<version>/`) is not
+  on the PATH. The w64devkit terminal sets up PATH correctly.
 - CMake configure step logs a non-fatal `Permission denied` error for
   `ninja restat` — this is benign and can be ignored.
 - `ludo-debug.exe --help` hangs (it is a GUI app, not a CLI tool).
 - `ludocon-debug.exe --help` works (it is a console app, use `ludocon` for CLI tasks).
-- After editing a plugin, just rebuild (`cmake --build build --parallel`);
-  CMake's custom command copies all `plugins/*.lua` to `build/plugins/`
-  automatically.
+- After editing a plugin, rebuild and reinstall (`cmake --build build --parallel && cmake --install build --prefix install`);
+  CMake copies all `plugins/*.lua` to `install/plugins/` on install.
 - **Linux/Synology:** The build uses system libcurl (via `find_package(CURL)`).
   Bundled brotli and zstd are built from source as static libraries for
   potential future use. At runtime, http_module.c and download_manager.c

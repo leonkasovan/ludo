@@ -829,7 +829,8 @@ bit32.extract(0xFF, 4, 4)  --> 15  (extract 4 bits from bit 4)
         <p><strong>Key functions:</strong></p>
         <ul>
             <li><code>json.encode(value)</code> → string: serialise a Lua value (tables, numbers, booleans, strings, <code>json.null</code>) to JSON. Use <code>json.null</code> to represent JSON <code>null</code> in Lua tables.</li>
-            <li><code>json.decode(text)</code> → lua value: parse a JSON string and return the Lua representation. <code>json.decode</code> raises on malformed input — use <code>pcall(json.decode, text)</code> to catch errors, or use <code>require("cjson_safe")</code> to get the safe wrapper that returns <code>nil, err</code>.</li>
+            <li><code>json.decode(text)</code> → lua value: parse a JSON string and return the Lua representation. <code>json.decode</code> raises on malformed input — use <code>pcall(json.decode, text)</code> to catch errors, or use <code>require("cjson_safe")</code> (or the global <code>cjson_safe</code>) to get the safe wrapper that returns <code>nil, err</code>.</li>
+            <li><code>json.new()</code> → module: create a new isolated <code>json</code> module instance with its own configuration state.</li>
         </ul>
 
         <p><strong>Special values &amp; behaviour:</strong></p>
@@ -860,6 +861,44 @@ local body = json.encode({ videoId = vid, context = { client = { hl = "en" } } }
 local ok, data = pcall(json.decode, normalize_json_response(response_body))
 if not ok then
         print("JSON error:", data)
+end
+</code></pre>
+
+        <h3><code>cjson_safe</code> — Safe JSON Wrapper</h3>
+
+        <p>In addition to the <code>json</code> global, Ludo also registers <code>cjson_safe</code> as a <strong>global</strong> module (not just via <code>require</code>). It mirrors the full <code>json</code> API but its <code>encode</code> and <code>decode</code> functions return <code>nil, err</code> on failure instead of throwing a Lua error.</p>
+
+        <p><strong>Key functions:</strong></p>
+        <ul>
+            <li><code>cjson_safe.encode(value)</code> → <code>json_string, nil</code> on success, or <code>nil, err</code> on failure.</li>
+            <li><code>cjson_safe.decode(text)</code> → <code>lua_value, nil</code> on success, or <code>nil, err</code> on failure.</li>
+            <li><code>cjson_safe.new()</code> → module: create a new isolated safe module instance.</li>
+        </ul>
+
+        <p>All configuration functions are available on <code>cjson_safe</code> too:</p>
+        <ul>
+            <li><code>cjson_safe.encode_sparse_array(convert, ratio, safe)</code></li>
+            <li><code>cjson_safe.encode_max_depth(n)</code></li>
+            <li><code>cjson_safe.decode_max_depth(n)</code></li>
+            <li><code>cjson_safe.encode_number_precision(n)</code></li>
+            <li><code>cjson_safe.encode_keep_buffer(true|false)</code></li>
+            <li><code>cjson_safe.encode_invalid_numbers(option)</code></li>
+            <li><code>cjson_safe.decode_invalid_numbers(option)</code></li>
+        </ul>
+
+        <p><code>cjson_safe.null</code> is the same sentinel as <code>json.null</code>.</p>
+
+        <pre><code>lua
+-- Safe decode without pcall
+local data, err = cjson_safe.decode(body)
+if not data then
+    ludo.logError("JSON error: " .. err)
+end
+
+-- Safe encode
+local json_str, err = cjson_safe.encode(big_table)
+if not json_str then
+    ludo.logError("Encode error: " .. err)
 end
 </code></pre>
 
@@ -1410,6 +1449,68 @@ local b64_digest = http.base64_encode(http.sha256(data))
 
         <p><strong>Implementation note:</strong> Standalone FIPS 180-4 SHA-256; no external dependency.</p>
 
+        <h3>4.17 <code>http.aes128_cbc_decrypt(data, key, iv)</code> → string</h3>
+
+        <p>Decrypt AES-128-CBC encrypted data and strip PKCS7 padding.</p>
+
+        <p><strong>Parameters:</strong></p>
+        <ul>
+            <li><code>data</code> (string) — Encrypted binary data (length must be a multiple of 16).</li>
+            <li><code>key</code> (string) — 16-byte AES-128 key.</li>
+            <li><code>iv</code> (string) — 16-byte initialization vector.</li>
+        </ul>
+
+        <p><strong>Returns:</strong></p>
+        <ul>
+            <li><code>plaintext</code> (string) — Decrypted data with PKCS7 padding removed.</li>
+        </ul>
+
+        <pre><code>lua
+-- Decrypt an HLS segment
+local key = http.get(key_url)  -- 16-byte key
+local iv  = "\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0"
+local decrypted = http.aes128_cbc_decrypt(encrypted_segment, key, iv)
+</code></pre>
+
+        <p><strong>Implementation note:</strong> Standalone AES-128; no external dependency.</p>
+
+        <h3>4.18 <code>http.aes128_cbc_encrypt(data, key, iv)</code> → string</h3>
+
+        <p>Encrypt data with AES-128-CBC and add PKCS7 padding.</p>
+
+        <p><strong>Parameters:</strong></p>
+        <ul>
+            <li><code>data</code> (string) — Plaintext data (any length).</li>
+            <li><code>key</code> (string) — 16-byte AES-128 key.</li>
+            <li><code>iv</code> (string) — 16-byte initialization vector.</li>
+        </ul>
+
+        <p><strong>Returns:</strong></p>
+        <ul>
+            <li><code>ciphertext</code> (string) — Encrypted data (padded to multiple of 16 bytes).</li>
+        </ul>
+
+        <h3>4.19 <code>http.aes128_encrypt_block(data, key)</code> → string</h3>
+
+        <p>Encrypt a single 16-byte block with AES-128 ECB (no padding, no IV). Useful for implementing custom CBC modes (e.g. whitespace padding).</p>
+
+        <p><strong>Parameters:</strong></p>
+        <ul>
+            <li><code>data</code> (string) — Exactly 16 bytes of input.</li>
+            <li><code>key</code> (string) — 16-byte AES-128 key.</li>
+        </ul>
+
+        <p><strong>Returns:</strong></p>
+        <ul>
+            <li><code>block</code> (string) — Exactly 16 bytes of encrypted output.</li>
+        </ul>
+
+        <pre><code>lua
+local encrypted = http.aes128_encrypt_block(plain_block, key16)
+</code></pre>
+
+        <p><strong>Implementation note:</strong> Standalone AES-128; no external dependency.</p>
+
         <div class="note">
             <strong>Note on Compression Support</strong>
             <p>Ludo's HTTP engine supports transparent decompression for responses with <code>Accept-Encoding: gzip, deflate, zstd, br</code> (brotli). Brotli is supported if built with brotli libraries.</p>
@@ -1669,6 +1770,21 @@ ludo.logInfo("Scanning page for download links...")
 
         <p>Configuration values loaded from <code>config.ini</code> are exposed through <code>ludo.setting</code>.</p>
 
+        <table class="api-table">
+            <thead>
+                <tr><th>Key</th><th>Type</th><th>Description</th></tr>
+            </thead>
+            <tbody>
+                <tr><td><code>maxDownloadRetry</code></td><td>integer</td><td>Maximum download retry count</td></tr>
+                <tr><td><code>maxThread</code></td><td>integer</td><td>Maximum concurrent download threads</td></tr>
+                <tr><td><code>urlQueueCapacity</code></td><td>integer</td><td>Maximum URL queue size</td></tr>
+                <tr><td><code>downloadQueueCapacity</code></td><td>integer</td><td>Maximum download queue size</td></tr>
+                <tr><td><code>maxRedirect</code></td><td>integer</td><td>Maximum HTTP redirect depth</td></tr>
+                <tr><td><code>outputDir</code></td><td>string</td><td>Default output directory path</td></tr>
+                <tr><td><code>pluginDir</code></td><td>string</td><td>Plugin directory path</td></tr>
+            </tbody>
+        </table>
+
         <pre><code>lua
 print(ludo.setting.maxDownloadRetry)
 print(ludo.setting.maxThread)
@@ -1687,6 +1803,44 @@ print(ludo.setting.outputDir)
         <pre><code>lua
 local dir = ludo.getOutputDirectory()
 ludo.logInfo("Files will be saved to: " .. dir)
+</code></pre>
+
+        <h3>6.9 <code>ludo.http_tester</code> (GUI build only)</h3>
+
+        <div class="note"><p><strong>GUI builds only.</strong> These functions are <code>nil</code> in console builds.</p></div>
+
+        <p>Provides access to the HTTP Tester window's response data from Lua.</p>
+
+        <table class="api-table">
+            <thead><tr><th>Function</th><th>Returns</th><th>Description</th></tr></thead>
+            <tbody>
+                <tr><td><code>ludo.http_tester.response.content()</code></td><td>string</td><td>Response body text from the HTTP Tester window</td></tr>
+                <tr><td><code>ludo.http_tester.response.header()</code></td><td>string</td><td>Response headers text from the HTTP Tester window</td></tr>
+            </tbody>
+        </table>
+
+        <pre><code>lua
+local body = ludo.http_tester.response.content()
+local hdrs = ludo.http_tester.response.header()
+</code></pre>
+
+        <h3>6.10 <code>ludo.lua_tester</code> (GUI build only)</h3>
+
+        <div class="note"><p><strong>GUI builds only.</strong> These functions are <code>nil</code> in console builds.</p></div>
+
+        <p>Writes output to the Lua Tester window's output widget.</p>
+
+        <table class="api-table">
+            <thead><tr><th>Function</th><th>Description</th></tr></thead>
+            <tbody>
+                <tr><td><code>ludo.lua_tester.println(msg)</code></td><td>Append <code>msg</code> + newline to the Lua Tester output</td></tr>
+                <tr><td><code>ludo.lua_tester.printf(fmt, ...)</code></td><td>Format like <code>string.format</code> and append to Lua Tester output (no trailing newline)</td></tr>
+            </tbody>
+        </table>
+
+        <pre><code>lua
+ludo.lua_tester.println("Hello from Lua")
+ludo.lua_tester.printf("Answer: %d", 42)
 </code></pre>
 
         <h2 id="7-ui-library-ui">7. UI Library (<code>ui</code>)</h2>
@@ -4376,6 +4530,21 @@ end
                     <td><code>(str)</code></td>
                     <td><code>32-byte raw binary digest</code></td>
                 </tr>
+                <tr>
+                    <td><code>http.aes128_cbc_decrypt</code></td>
+                    <td><code>(data, key, iv)</code></td>
+                    <td><code>decrypted data with PKCS7 padding stripped</code></td>
+                </tr>
+                <tr>
+                    <td><code>http.aes128_cbc_encrypt</code></td>
+                    <td><code>(data, key, iv)</code></td>
+                    <td><code>encrypted data with PKCS7 padding added</code></td>
+                </tr>
+                <tr>
+                    <td><code>http.aes128_encrypt_block</code></td>
+                    <td><code>(data, key)</code></td>
+                    <td><code>16-byte encrypted block (no padding, no IV)</code></td>
+                </tr>
             </tbody>
         </table>
 
@@ -4426,8 +4595,28 @@ end
                     <td><code>dir</code></td>
                 </tr>
                 <tr>
+                    <td><code>ludo.http_tester.response.content</code></td>
+                    <td><code>()</code></td>
+                    <td><code>body</code> (GUI only)</td>
+                </tr>
+                <tr>
+                    <td><code>ludo.http_tester.response.header</code></td>
+                    <td><code>()</code></td>
+                    <td><code>headers</code> (GUI only)</td>
+                </tr>
+                <tr>
+                    <td><code>ludo.lua_tester.println</code></td>
+                    <td><code>(msg)</code></td>
+                    <td>— (GUI only)</td>
+                </tr>
+                <tr>
+                    <td><code>ludo.lua_tester.printf</code></td>
+                    <td><code>(fmt, ...)</code></td>
+                    <td>— (GUI only)</td>
+                </tr>
+                <tr>
                     <td><code>ludo.setting</code></td>
-                    <td><code>.maxDownloadRetry</code>, <code>.maxThread</code>, ...</td>
+                    <td><code>.maxDownloadRetry</code>, <code>.maxThread</code>, <code>.outputDir</code>, etc.</td>
                     <td>config values</td>
                 </tr>
             </tbody>
@@ -4599,8 +4788,8 @@ end
                     <td><code>Image, err</code></td>
                 </tr>
                 <tr>
-                    <td><code>ui.ImageAppend</code></td>
-                    <td><code>(img, pixels, w, h)</code></td>
+                    <td><code>img:Append</code></td>
+                    <td><code>(pixels, width, height)</code></td>
                     <td><code>img</code> (self)</td>
                 </tr>
                 <tr>
@@ -4613,6 +4802,29 @@ end
                     <td><code>(ctx, img, x, y, w, h)</code></td>
                     <td>—</td>
                 </tr>
+            </tbody>
+        </table>
+
+        <h3>JSON Functions</h3>
+
+        <table class="api-table">
+            <thead><tr><th>Function</th><th>Signature</th><th>Returns</th></tr></thead>
+            <tbody>
+                <tr><td><code>json.encode</code></td><td><code>(value)</code></td><td><code>json_string</code></td></tr>
+                <tr><td><code>json.decode</code></td><td><code>(text)</code></td><td><code>lua_value</code> (throws on error)</td></tr>
+                <tr><td><code>json.new</code></td><td><code>()</code></td><td>new isolated <code>json</code> module</td></tr>
+                <tr><td><code>cjson_safe.encode</code></td><td><code>(value)</code></td><td><code>json_string</code> or <code>nil, err</code></td></tr>
+                <tr><td><code>cjson_safe.decode</code></td><td><code>(text)</code></td><td><code>lua_value</code> or <code>nil, err</code></td></tr>
+                <tr><td><code>cjson_safe.new</code></td><td><code>()</code></td><td>new isolated safe module</td></tr>
+            </tbody>
+        </table>
+
+        <h3>Zip Functions</h3>
+
+        <table class="api-table">
+            <thead><tr><th>Function</th><th>Signature</th><th>Returns</th></tr></thead>
+            <tbody>
+                <tr><td><code>zip.create</code></td><td><code>(output_path, files \| dir [, glob_filter])</code></td><td><code>status [, errmsg]</code></td></tr>
             </tbody>
         </table>
     </div>

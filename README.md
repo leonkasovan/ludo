@@ -72,61 +72,70 @@ CMake builds two executables:
 | `ludo` | GUI downloader (requires libui-ng) | `ludo-debug.exe` | `ludo.exe` |
 | `ludocon` | Console-only CLI (no GUI) | `ludocon-debug.exe` | `ludocon.exe` |
 
-## Build (default Debug)
+## Workflow
 
-From repository root:
+### 1. Build
+
+Configure and compile from repository root:
 
 ```bash
+# Debug build (GUI) — default
 cmake -B build .
 cmake --build build --parallel
-```
 
-### Build Configurations (`Debug` / `Release`)
-
-This project explicitly supports `Debug` and `Release` configurations.
-
-- Single-config generators (Ninja/Makefiles): use `CMAKE_BUILD_TYPE`
-- Multi-config generators: use `--config <Debug|Release>` at build time
-
-Single-config examples:
-
-```bash
-cmake -B build -DCMAKE_BUILD_TYPE=Debug .
-cmake --build build --parallel
-```
-
-```bash
+# Release build (GUI)
 cmake -B build -DCMAKE_BUILD_TYPE=Release .
 cmake --build build --parallel
-```
 
-```bash
-cmake -B build . -DCMAKE_BUILD_TYPE=Release -DBUILD_GUI=OFF
+# Console-only (no GUI dependencies)
+cmake -B build . -DBUILD_GUI=OFF
 cmake --build build --parallel
 ```
-## Run
 
-### GUI (ludo)
+### 2. Install
 
-```bash
-./build/ludo-debug.exe
-```
-
-### Console (ludocon)
+Copy executables and all assets (plugins, config, snippets, lualib, res, tools) to a local directory:
 
 ```bash
-# Download a single URL
-./build/ludocon-debug.exe https://www.dailymotion.com/video/x5kesuj
-
-# Download multiple URLs
-./build/ludocon-debug.exe https://t.me/mychannel/123 https://www.youtube.com/watch?v=abc123
-
-# Read URLs from file
-./build/ludocon-debug.exe --file urls.txt
-
-# Show help
-./build/ludocon-debug.exe --help
+cmake --install build --prefix install
 ```
+
+This creates the `install/` directory with everything needed to run.
+
+### 3. Run
+
+```bash
+# GUI
+./install/ludo-debug.exe
+
+# Console — download a URL
+./install/ludocon-debug.exe https://www.dailymotion.com/video/x5kesuj
+
+# Console — read URLs from file
+./install/ludocon-debug.exe --file urls.txt
+
+# Console — help
+./install/ludocon-debug.exe --help
+```
+
+### 4. Test
+
+Run a test script (output goes to `install/ludo.log`):
+
+```bash
+./install/ludo-debug.exe -s test_PLUGINNAME.lua
+grep -E "PASS|FAIL|SUCCESS|ERROR" install/ludo.log | tail -30
+```
+
+### 5. Package
+
+Create a `ludo-<version>.zip` distribution archive via CPack:
+
+```bash
+cmake --build build --target package
+```
+
+The package contains all executables, config, plugins, and assets — ready to unzip and run.
 
 ## Configuration
 
@@ -177,8 +186,7 @@ Current CMake is configured so `ludo.exe` does not require local `libcurl.dll` o
 
 For `Release` builds, CMake also applies optimization and symbol stripping:
 
-- GCC/Clang/MinGW: `-O3` and linker `-s`
-- MSVC: `/O2` and linker `/OPT:REF` + `/OPT:ICF`
+- `-O3` and linker `-s`
 
 `dumpbin`/`objdump` will still show normal Windows system DLL imports (for example `KERNEL32.dll`, `USER32.dll`, `COMCTL32.dll`, etc.).
 
@@ -191,7 +199,8 @@ For `Release` builds, CMake also applies optimization and symbol stripping:
 
 ```bash
 cmake --build build --target ludo --clean-first --parallel 4
-./build/ludo.exe
+cmake --install build --prefix install
+./install/ludo.exe
 ```
 
 ### 2) `cannot open output file ludo.exe: Permission denied`
@@ -209,7 +218,7 @@ This repository builds `libui-ng` from source using CMake; Meson is not required
 
 ### 4) Plugins not loaded
 
-Make sure `plugins/` exists beside the executable (`build/plugins` is copied after build).
+Make sure `plugins/` exists beside the executable. Run `cmake --install build --prefix install` to copy all assets.
 
 ## License
 
