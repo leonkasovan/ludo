@@ -402,10 +402,12 @@ static void build_download_path(const Download *d, char *path, size_t path_sz) {
     snprintf(path, path_sz, "%s%s%s", d->output_dir, sep, d->status.filename);
 }
 
-static void probe_download_head(const char *url, HeaderCtx *hctx) {
+static void probe_download_head(const char *url, HeaderCtx *hctx,
+                                 const char *extra_headers) {
     const LudoConfig *cfg = ludo_config_get();
     CURL *head;
     curl_off_t cl = 0;
+    struct curl_slist *extra_hdrs = NULL;
 
     if (!url || !hctx) return;
 
@@ -420,6 +422,30 @@ static void probe_download_head(const char *url, HeaderCtx *hctx) {
     curl_easy_setopt(head, CURLOPT_MAXREDIRS, (long)(cfg ? cfg->max_redirect : 10));
     curl_easy_setopt(head, CURLOPT_USERAGENT,
                      "Mozilla/5.0 (Windows NT 10.0; Win64; x64)");
+
+    if (extra_headers && extra_headers[0] != '\0') {
+        char hbuf[4096];
+        strncpy(hbuf, extra_headers, sizeof(hbuf) - 1);
+        hbuf[sizeof(hbuf) - 1] = '\0';
+        char *line = strtok(hbuf, "\n");
+        while (line) {
+            size_t len = strlen(line);
+            if (len > 0 && line[len - 1] == '\r') line[--len] = '\0';
+            if (len > 0) {
+                if (strncmp(line, "Cookie:", 7) == 0) {
+                    const char *val = line + 7;
+                    while (*val == ' ' || *val == '\t') val++;
+                    curl_easy_setopt(head, CURLOPT_COOKIE, val);
+                } else {
+                    extra_hdrs = curl_slist_append(extra_hdrs, line);
+                }
+            }
+            line = strtok(NULL, "\n");
+        }
+        if (extra_hdrs)
+            curl_easy_setopt(head, CURLOPT_HTTPHEADER, extra_hdrs);
+    }
+
 #ifdef DEBUG
     curl_setup_debug(head, "dm_probe");
 #endif
@@ -431,6 +457,7 @@ static void probe_download_head(const char *url, HeaderCtx *hctx) {
     } else {
         dm_log("[probe] HEAD %s failed: %s", url, curl_easy_strerror(head_res));
     }
+    if (extra_hdrs) curl_slist_free_all(extra_hdrs);
     curl_easy_cleanup(head);
 }
 
@@ -767,7 +794,7 @@ static void perform_download(Download *d) {
             hctx.has_filename = 1;
         }
     } else {
-        probe_download_head(d->url, &hctx);
+        probe_download_head(d->url, &hctx, d->extra_headers);
     }
 
     if (hctx.has_filename) {
@@ -908,7 +935,10 @@ static void perform_download(Download *d) {
             curl_easy_setopt(curl, CURLOPT_POSTFIELDSIZE, (long)strlen(d->post_data));
         }
 
-        /* Apply any plugin-supplied extra headers */
+        /* Apply any plugin-supplied extra headers.
+           Cookie: headers set via CURLOPT_HTTPHEADER are stripped by curl
+           on redirects.  Use CURLOPT_COOKIE instead so cookies survive
+           the 302 -> view_archive.php chain. */
         struct curl_slist *extra_hdrs = NULL;
         if (d->extra_headers[0] != '\0') {
             char hbuf[sizeof(d->extra_headers)];
@@ -918,8 +948,15 @@ static void perform_download(Download *d) {
             while (line) {
                 size_t len = strlen(line);
                 if (len > 0 && line[len - 1] == '\r') line[--len] = '\0';
-                if (len > 0)
-                    extra_hdrs = curl_slist_append(extra_hdrs, line);
+                if (len > 0) {
+                    if (strncmp(line, "Cookie:", 7) == 0) {
+                        const char *val = line + 7;
+                        while (*val == ' ' || *val == '\t') val++;
+                        curl_easy_setopt(curl, CURLOPT_COOKIE, val);
+                    } else {
+                        extra_hdrs = curl_slist_append(extra_hdrs, line);
+                    }
+                }
                 line = strtok(NULL, "\n");
             }
             if (extra_hdrs)
@@ -1586,7 +1623,7 @@ int download_manager_add(const char *url, const char *output_dir, DownloadMode m
         HeaderCtx hctx;
         memset(&hctx, 0, sizeof(hctx));
         hctx.download_id = d->status.id;
-        probe_download_head(url, &hctx);
+        probe_download_head(url, &hctx, d->extra_headers);
 
         ludo_mutex_lock(&g_mgr.list_mutex);
         d->has_preflight            = 1;
