@@ -59,6 +59,7 @@ struct Download {
     int              marked_for_removal;
     char             extra_headers[4096]; /* optional "Name: Value\n" pairs appended to GET request */
     char             post_data[4096];     /* optional POST body for intercepted browser downloads */
+    char             cookie_file[512];   /* path to Netscape cookie jar for this download */
     Download        *next;
 };
 
@@ -100,12 +101,15 @@ void download_manager_shutdown(void);
    hint_filename: optional base filename (without directory) to use instead of
                   the URL-derived name. Pass NULL to keep the default behaviour.
    post_data: optional HTTP request body; when non-empty the transfer is sent as
-              a POST instead of a GET.
+               a POST instead of a GET.
+   cookie_file: optional path to a Netscape-format cookie jar to send with the
+                download request. Pass NULL for no cookies.
    When result is non-NULL, fills it with preflight status/output-path data. */
 int  download_manager_add(const char *url, const char *output_dir, DownloadMode mode,
-                          const char *original_url, const char *hint_filename,
-                          const char *extra_headers, const char *post_data,
-                          DownloadAddResult *result);
+                           const char *original_url, const char *hint_filename,
+                           const char *extra_headers, const char *post_data,
+                           const char *cookie_file,
+                           DownloadAddResult *result);
 
 /* Pause / resume / remove — may be called from the GUI thread */
 bool download_manager_pause(int id);

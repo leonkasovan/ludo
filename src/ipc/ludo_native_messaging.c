@@ -146,7 +146,8 @@ static int enqueue_direct_download(const char *url, const char *original_url,
         NULL,
         headers[0] ? headers : NULL,
         post_data && post_data[0] ? post_data : NULL,
-        NULL
+        NULL,  /* cookie_file */
+        NULL   /* result */
     );
     if (id > 0) {
         gui_log(LOG_INFO, "Browser extension added direct download #%d: %s", id, url);

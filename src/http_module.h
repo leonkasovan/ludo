@@ -19,6 +19,9 @@
  *   decoded                = http.url_decode(str)
  *   tbl                    = http.parse_url(url)
  *
+ *   Cookie state set via http.set_cookie() is automatically shared with
+ *   ludo.newDownload() — downloads will use the same cookie jar.
+ *
  * The options table may contain:
  *   user_agent       (string)
  *   follow_redirects (boolean, default true)
@@ -50,5 +53,9 @@ int   http_raw_get(const char *url, const char *headers_str, HttpRawResult *resu
 /* Shared curl setup utilities */
 void curl_setup_accept_encoding(CURL *curl);
 void curl_setup_debug(CURL *curl, const char *tag);
+
+/* Returns the per-Lua-state cookie file path set via http.set_cookie(),
+   or NULL if none is set. Thread-safe: only called from the Lua thread. */
+const char *http_module_get_cookie_file(lua_State *L);
 
 #endif /* LUDO_HTTP_MODULE_H */

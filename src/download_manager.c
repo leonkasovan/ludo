@@ -402,7 +402,7 @@ static void build_download_path(const Download *d, char *path, size_t path_sz) {
     snprintf(path, path_sz, "%s%s%s", d->output_dir, sep, d->status.filename);
 }
 
-static void probe_download_head(const char *url, HeaderCtx *hctx) {
+static void probe_download_head(const char *url, HeaderCtx *hctx, const char *cookie_file) {
     const LudoConfig *cfg = ludo_config_get();
     CURL *head;
     curl_off_t cl = 0;
@@ -420,6 +420,11 @@ static void probe_download_head(const char *url, HeaderCtx *hctx) {
     curl_easy_setopt(head, CURLOPT_MAXREDIRS, (long)(cfg ? cfg->max_redirect : 10));
     curl_easy_setopt(head, CURLOPT_USERAGENT,
                      "Mozilla/5.0 (Windows NT 10.0; Win64; x64)");
+    curl_easy_setopt(head, CURLOPT_COOKIEFILE, ""); /* activate in-memory jar */
+    if (cookie_file && cookie_file[0]) {
+        curl_easy_setopt(head, CURLOPT_COOKIEFILE, cookie_file);
+        curl_easy_setopt(head, CURLOPT_COOKIEJAR,  cookie_file);
+    }
 #ifdef DEBUG
     curl_setup_debug(head, "dm_probe");
 #endif
@@ -767,7 +772,7 @@ static void perform_download(Download *d) {
             hctx.has_filename = 1;
         }
     } else {
-        probe_download_head(d->url, &hctx);
+        probe_download_head(d->url, &hctx, d->cookie_file);
     }
 
     if (hctx.has_filename) {
@@ -889,6 +894,11 @@ static void perform_download(Download *d) {
         curl_setup_accept_encoding(curl);
         curl_easy_setopt(curl, CURLOPT_USERAGENT,
                          "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/146.0.0.0 Safari/537.36 Edg/146.0.0.0");
+        curl_easy_setopt(curl, CURLOPT_COOKIEFILE, ""); /* activate in-memory jar */
+        if (d->cookie_file[0]) {
+            curl_easy_setopt(curl, CURLOPT_COOKIEFILE, d->cookie_file);
+            curl_easy_setopt(curl, CURLOPT_COOKIEJAR,  d->cookie_file);
+        }
         curl_easy_setopt(curl, CURLOPT_HEADERFUNCTION, header_cb);
         curl_easy_setopt(curl, CURLOPT_HEADERDATA, &hctx_local);
 #ifdef DEBUG
@@ -1517,6 +1527,7 @@ void download_manager_shutdown(void) {
 int download_manager_add(const char *url, const char *output_dir, DownloadMode mode,
                          const char *original_url, const char *hint_filename,
                          const char *extra_headers, const char *post_data,
+                         const char *cookie_file,
                          DownloadAddResult *result)
 {
     (void)mode; /* DOWNLOAD_NOW vs DOWNLOAD_QUEUE handled via queue order */
@@ -1563,6 +1574,8 @@ int download_manager_add(const char *url, const char *output_dir, DownloadMode m
         strncpy(d->extra_headers, extra_headers, sizeof(d->extra_headers) - 1);
     if (post_data && post_data[0] != '\0')
         strncpy(d->post_data, post_data, sizeof(d->post_data) - 1);
+    if (cookie_file && cookie_file[0] != '\0')
+        strncpy(d->cookie_file, cookie_file, sizeof(d->cookie_file) - 1);
     d->status.state = DOWNLOAD_STATE_QUEUED;
     d->status.start_time = time(NULL);
     d->next = g_mgr.list;
@@ -1586,7 +1599,7 @@ int download_manager_add(const char *url, const char *output_dir, DownloadMode m
         HeaderCtx hctx;
         memset(&hctx, 0, sizeof(hctx));
         hctx.download_id = d->status.id;
-        probe_download_head(url, &hctx);
+        probe_download_head(url, &hctx, d->cookie_file);
 
         ludo_mutex_lock(&g_mgr.list_mutex);
         d->has_preflight            = 1;

@@ -741,17 +741,27 @@ typedef struct {
 static struct {
     lua_State *L;
     int pending;
+    int cancelled;
 } g_async_track[MAX_TRACKED_STATES];
+
+static int track_find(lua_State *L) {
+    int i;
+    for (i = 0; i < MAX_TRACKED_STATES; i++) {
+        if (g_async_track[i].L == L) return i;
+    }
+    return -1;
+}
 
 static void track_inc(lua_State *L) {
     int i;
     for (i = 0; i < MAX_TRACKED_STATES; i++) {
-        if (g_async_track[i].L == L) { g_async_track[i].pending++; return; }
+        if (g_async_track[i].L == L) { g_async_track[i].pending++; g_async_track[i].cancelled = 0; return; }
     }
     for (i = 0; i < MAX_TRACKED_STATES; i++) {
         if (g_async_track[i].L == NULL) {
             g_async_track[i].L = L;
             g_async_track[i].pending = 1;
+            g_async_track[i].cancelled = 0;
             return;
         }
     }
@@ -781,6 +791,7 @@ static void track_remove(lua_State *L) {
         if (g_async_track[i].L == L) {
             g_async_track[i].L = NULL;
             g_async_track[i].pending = 0;
+            g_async_track[i].cancelled = 0;
             return;
         }
     }
@@ -850,7 +861,13 @@ void async_http_cancel_all_for_L(lua_State *L) {
     }
     ludo_mutex_unlock(&g_async.mutex);
 
-    for (i = 0; i < 200; i++) {
+    /* Mark this Lua state as cancelled so that any in-flight async results
+       delivered after we return will be silently discarded instead of trying
+       to call into a possibly-closed Lua state. */
+    int trk = track_find(L);
+    if (trk >= 0) g_async_track[trk].cancelled = 1;
+
+    for (i = 0; i < 600; i++) {   /* 600 x 10ms = 6 seconds */
         if (track_get(L) == 0) break;
         uiMainStep(0);
         Sleep(10);
@@ -862,6 +879,29 @@ void async_http_cancel_all_for_L(lua_State *L) {
 static void async_http_on_main(void *data) {
     AsyncHttpResult *r = (AsyncHttpResult *)data;
     lua_State *L = r->main_L;
+
+    /* If the Lua state has been cancelled or removed from tracking (e.g.
+       async_http_cancel_all_for_L ran and the script is shutting down),
+       silently discard the result without touching the Lua state at all.
+       In the removed case L may already be freed, so we must not dereference it. */
+    int trk = track_find(L);
+    if (trk < 0) {
+        /* Not tracked at all – L has been removed via track_remove().
+           The Lua state may already be freed; do NOT access L. */
+        free(r->body);
+        free(r->header_data);
+        free(r);
+        return;
+    }
+    if (g_async_track[trk].cancelled) {
+        /* Cancelled but still tracked (drain loop is running). L is valid. */
+        luaL_unref(L, LUA_REGISTRYINDEX, r->callback_ref);
+        track_dec(L);
+        free(r->body);
+        free(r->header_data);
+        free(r);
+        return;
+    }
 
     lua_rawgeti(L, LUA_REGISTRYINDEX, r->callback_ref);
     luaL_unref(L, LUA_REGISTRYINDEX, r->callback_ref);
@@ -1183,6 +1223,11 @@ int http_raw_get(const char *url, const char *headers_str, HttpRawResult *result
     }
 
     return 0;
+}
+
+const char *http_module_get_cookie_file(lua_State *L) {
+    HttpSession *s = get_session(L);
+    return (s && s->cookie_file[0]) ? s->cookie_file : NULL;
 }
 
 /* ------------------------------------------------------------------ */

@@ -523,6 +523,7 @@ static void *url_worker_thread(void *arg) {
                                  NULL,
                                  NULL,  /* extra_headers */
                                  NULL,  /* post_data */
+                                 NULL,  /* cookie_file */
                                  NULL);
         }
     }

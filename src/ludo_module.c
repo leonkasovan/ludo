@@ -1,6 +1,7 @@
 #include "ludo_module.h"
 #include "config.h"
 #include "download_manager.h"
+#include "http_module.h"
 #include "gui.h"
 #include <stdlib.h>
 #ifdef BUILD_CONSOLE
@@ -69,8 +70,10 @@ static int lua_ludo_new_download(lua_State *L) {
     lua_gettable(L, LUA_REGISTRYINDEX);
     original_url = lua_tostring(L, -1);
     memset(&result, 0, sizeof(result));
+    const char *cookie_file = http_module_get_cookie_file(L);
     int id = download_manager_add(url, output_dir, (DownloadMode)mode, original_url,
-                                  hint_filename, extra_headers, NULL, &result);
+                                  hint_filename, extra_headers, NULL, cookie_file,
+                                  &result);
     lua_pop(L, 1);
     if (id < 0) result.id = id;
     lua_pushinteger(L, (lua_Integer)result.id);
