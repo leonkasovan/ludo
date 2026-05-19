@@ -58,28 +58,6 @@ local function ascii_to_hex(s)
     return (s or ""):gsub(".", function(c) return string.format("%02X", string.byte(c)) end)
 end
 
--- Parse a Netscape-format cookie file and build a Cookie header string
--- for cookies matching the given domain (exact or .domain suffix).
-local function read_cookies_for_domain(filepath, domain)
-    local f = io.open(filepath, "r")
-    if not f then return "" end
-    local cookies = {}
-    for line in f:lines() do
-        if line:sub(1, 1) ~= "#" or line:sub(1, 10) == "#HttpOnly_" then
-            local d, flag, path, secure, exp, name, value =
-                line:match("^#?(.-)\t(.-)\t(.-)\t(.-)\t(.-)\t(.-)\t(.-)$")
-            if d and name and value then
-                d = d:gsub("^HttpOnly_", "")
-                if d == domain or d:sub(-#domain - 1) == "." .. domain then
-                    table.insert(cookies, name .. "=" .. value)
-                end
-            end
-        end
-    end
-    f:close()
-    return table.concat(cookies, "; ")
-end
-
 local function search_platform(platform, query, results)
     local filepath = TOOLS_DIR .. "/" .. platform.file
     -- local filepath = platform.file
@@ -131,8 +109,6 @@ local handler = {
 }
 
 local model = ui.NewTableModel(handler)
-http.set_cookie(TOOLS_DIR .. "/archive.txt")
-ludo.logInfo("Cookie: " .. TOOLS_DIR .. "/archive.txt")
 
 -- UI construction
 local win = ui.NewWindow("Retro ROMs Downloader", 860, 600, false)
@@ -383,20 +359,10 @@ dl_btn:OnClicked(function(b, data)
     local r = search_results[idx]
     local outdir = ludo.getOutputDirectory()
 
-    -- Build download headers from the archive.org cookie jar.
-    local cookie_jar = TOOLS_DIR .. "/archive.txt"
-    local download_headers = { ["Referer"] = "https://archive.org/" }
-    local cookie_str = read_cookies_for_domain(cookie_jar, "archive.org")
-    if cookie_str ~= "" then
-        download_headers["Cookie"] = cookie_str
-    end
-
     -- Queue the PKG download.
-    local _, pkg_status, pkg_out = ludo.newDownload(r.rom_url, outdir, ludo.DOWNLOAD_NOW, nil, download_headers)
+    local _, pkg_status, pkg_out = ludo.newDownload(r.rom_url, outdir, ludo.DOWNLOAD_NOW)
     if pkg_status == 200 or pkg_status == 206 or pkg_status == 0 then
         ludo.logSuccess("Queued PKG: " .. (pkg_out))
-    elseif pkg_status == 403 then
-        ludo.logSuccess("Queued (CDN blocked HEAD probe) -> " .. (r.game_name .. r.game_ext))
     else
         ludo.logError("Preflight HTTP " .. tostring(pkg_status) .. " for " .. r.game_name)
         ui.MsgBoxError(win, "Download Failed",
