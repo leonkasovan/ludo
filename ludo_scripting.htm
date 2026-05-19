@@ -1163,7 +1163,14 @@ local body, status = http.post(
 
         <h3>4.5 <code>http.set_cookie(filepath)</code></h3>
 
-        <p>Set a file path for persistent cookie storage. All subsequent requests will read and write cookies from this file.</p>
+        <p>Set a file path for persistent cookie storage. All subsequent HTTP requests
+        (including <code>http.get</code>, <code>http.post</code>, <code>http.head</code>,
+        and <code>http.get_async</code>) will read and write cookies from this file.</p>
+
+        <p><strong>The cookie jar is also automatically shared with <code>ludo.newDownload()</code></strong> —
+        downloads queued after calling <code>http.set_cookie()</code> will use the same cookie
+        file for their CDN requests, so authenticated sessions established via
+        <code>http.get()</code>/<code>http.post()</code> carry over seamlessly to the download manager.</p>
 
         <p><strong>Parameters:</strong></p>
         <ul>
@@ -1173,9 +1180,12 @@ local body, status = http.post(
         <pre><code>lua
 http.set_cookie("cookies.txt")
 
--- Cookies are now persisted across requests
+-- Cookies are now persisted across requests AND downloads
 http.get("https://example.com/login")
 http.get("https://example.com/dashboard")  -- uses session cookies
+
+-- Any download queued after set_cookie also uses the cookie jar
+ludo.newDownload("https://example.com/video.mp4")  -- authenticated!
 </code></pre>
 
         <h3>4.6 <code>http.clear_cookies()</code></h3>
@@ -1652,6 +1662,8 @@ end
             <li><code>filename</code> (string, optional) — Suggested output filename (basename). When provided, Ludo will use this as the filename during preflight and resolution; the final path may be adjusted to avoid collisions.</li>
             <li><code>headers</code> (table, optional) — Extra HTTP headers sent with the actual CDN GET request (but <strong>not</strong> the preflight HEAD). Useful for sending <code>Referer</code>, <code>Cookie</code>, or other headers required by a CDN. Format: <code>{["Name"]="Value", ...}</code>. Multiple headers are supported.</li>
         </ul>
+
+        <p><strong>Cookie sharing:</strong> If <code>http.set_cookie()</code> has been called before <code>ludo.newDownload()</code>, the download will automatically use the same cookie jar. This means authenticated sessions (e.g. login cookies established via <code>http.get()</code>) propagate to downloads without manually passing a <code>Cookie</code> header.</p>
 
         <p><strong>Returns:</strong></p>
         <ul>

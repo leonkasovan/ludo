@@ -840,8 +840,14 @@ local body, status = http.post(
 
 ### 4.5 `http.set_cookie(filepath)`
 
-Set a file path for persistent cookie storage. All subsequent requests will
+Set a file path for persistent cookie storage. All subsequent HTTP requests
+(including `http.get`, `http.post`, `http.head`, and `http.get_async`) will
 read and write cookies from this file.
+
+**The cookie jar is also automatically shared with `ludo.newDownload()`** —
+downloads queued after calling `http.set_cookie()` will use the same cookie
+file for their CDN requests, so authenticated sessions established via
+`http.get()`/`http.post()` carry over seamlessly to the download manager.
 
 **Parameters:**
 - `filepath` (string) — Path to the cookie jar file.
@@ -849,9 +855,12 @@ read and write cookies from this file.
 ```lua
 http.set_cookie("cookies.txt")
 
--- Cookies are now persisted across requests
+-- Cookies are now persisted across requests AND downloads
 http.get("https://example.com/login")
 http.get("https://example.com/dashboard")  -- uses session cookies
+
+-- Any download queued after set_cookie also uses the cookie jar
+ludo.newDownload("https://example.com/video.mp4")  -- authenticated!
 ```
 
 ### 4.6 `http.clear_cookies()`
@@ -1234,6 +1243,12 @@ status from the preflight HEAD request, and the resolved output path.
     request (but **not** the preflight HEAD). Useful for sending `Referer`,
     `Cookie`, or other headers required by a CDN. Format: `{["Name"]="Value", ...}`.
     Multiple headers are supported.
+
+**Cookie sharing:** If `http.set_cookie()` has been called before
+`ludo.newDownload()`, the download will automatically use the same cookie jar.
+This means authenticated sessions (e.g. login cookies established via
+`http.get()`) propagate to downloads without manually passing a `Cookie`
+header.
 
 **Returns:**
 - `id` (number) - The assigned download ID for tracking.

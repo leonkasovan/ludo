@@ -37,6 +37,12 @@ local PLATFORMS = {
       col_name = "game_name",
       col_ext = "game_ext",
       col_size = "game_size" },
+    { name = "N64", file = "N64.csv",
+      source_url = "https://archive.org/download/ni-roms/roms/Nintendo%20-%20Nintendo%2064%20%28BigEndian%29.zip",
+      scrape_url = "https://api.screenscraper.fr/api2/jeuRecherche.php?output=json&devid=recalbox&devpassword=C3KbyjX8PKsUgm2tu53y&softname=Emulationstation-Recalbox-9.1&ssid=test&sspassword=test&systemeid=14&recherche=",
+      col_name = "game_name",
+      col_ext = "game_ext",
+      col_size = "game_size" },      
 }
 local MAX_RESULTS = 99
 local search_results = {}
@@ -109,6 +115,7 @@ local handler = {
 }
 
 local model = ui.NewTableModel(handler)
+http.set_cookie(TOOLS_DIR .. "/archive.org.txt")
 
 -- UI construction
 local win = ui.NewWindow("Retro ROMs Downloader", 860, 600, false)

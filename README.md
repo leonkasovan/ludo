@@ -14,6 +14,7 @@ The application lets you paste URLs in the GUI (or pass them as command-line arg
 - GUI downloader app (`libui-ng`) or **console-only CLI** (`ludocon`)
 - Static Lua runtime (`lua-5.2.4` from source)
 - HTTP module exposed to Lua (`http.get`, `http.get_async`, `http.head`, `http.post`, cookies, URL tools)
+- Cookie state shared between `http.*` requests and `ludo.newDownload()` — authenticated sessions carry over automatically
 - AES-128-CBC encryption/decryption exposed to Lua (`http.aes128_cbc_{en,de}crypt`)
 - HLS/m3u8 playlist parsing and segment download (`plugins/m3u8.lua`)
 - Host module exposed to Lua (`ludo.newDownload`, logging, output-dir helpers)
