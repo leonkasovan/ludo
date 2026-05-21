@@ -3,9 +3,22 @@
 
 This project has a CodeGraph MCP server (`codegraph_*` tools) configured. CodeGraph is a tree-sitter-parsed knowledge graph of every symbol, edge, and file. Reads are sub-millisecond and return structural information grep cannot.
 
-### When to prefer codegraph over native search
+### MANDATORY: codegraph first, always
 
-Use codegraph for **structural** questions — what calls what, what would break, where is X defined, what is X's signature. Use native grep/read only for **literal text** queries (string contents, comments, log messages) or after you already have a specific file open.
+**You are FORBIDDEN from using `grep` / `rg` / `Select-String` for code exploration.** The ONLY exception is searching for literal text in comments, log messages, documentation, or hardcoded strings. For everything else — finding symbols, tracing call graphs, locating definitions, exploring file structure — use the codegraph tools below.
+
+| You want to do this | ❌ NEVER use | ✅ MUST use |
+|---|---|---|
+| Find where a function is defined | `grep "function_name"` | `codegraph_search` |
+| Find who calls a function | `grep "function_name"` across files | `codegraph_callers` |
+| Find what a function calls | Read the source | `codegraph_callees` |
+| Understand a feature's architecture | Read multiple files | `codegraph_context` |
+| See source of several related symbols | Read each file individually | `codegraph_explore` |
+| Explore directory structure | `ls` / `Get-ChildItem` | `codegraph_files` |
+| Assess impact of a change | Manual grep across codebase | `codegraph_impact` |
+| Get a function's signature | `grep` + `read` | `codegraph_node` |
+
+### Tool reference
 
 | Question | Tool |
 |---|---|
@@ -15,16 +28,16 @@ Use codegraph for **structural** questions — what calls what, what would break
 | "What would break if I changed Z?" | `codegraph_impact` |
 | "Show me Y's signature / source / docstring" | `codegraph_node` |
 | "Give me focused context for a task/area" | `codegraph_context` |
-| "Survey an unfamiliar module/topic" | `codegraph_explore` |
+| "See several related symbols' source at once" | `codegraph_explore` |
 | "What files exist under path/" | `codegraph_files` |
 | "Is the index healthy?" | `codegraph_status` |
 
 ### Rules of thumb
 
+- **Answer directly — don't delegate exploration.** For "how does X work" / architecture / trace questions, answer with 2-3 codegraph calls: `codegraph_context` first, then ONE `codegraph_explore` for the source of the symbols it surfaces. Codegraph IS the pre-built index, so spawning a separate file-reading sub-task/agent — or running a grep + read loop — repeats work codegraph already did and costs more for the same answer.
 - **Trust codegraph results.** They come from a full AST parse. Do NOT re-verify them with grep — that's slower, less accurate, and wastes context.
-- **Don't grep first** when looking up a symbol by name. `codegraph_search` is faster and returns kind + location + signature in one call.
 - **Don't chain `codegraph_search` + `codegraph_node`** when you just want context — `codegraph_context` is one call.
-- **`codegraph_explore` is the heavy hitter** for unfamiliar areas — it returns full source from all relevant files in one call, but is token-heavy. If your harness supports parallel subagents (e.g., Claude Code's Task tool), spawn one for explore-class questions to keep main session context clean.
+- **Don't loop `codegraph_node` over many symbols** — one `codegraph_explore` call returns several symbols' source grouped in a single capped call, while each separate node/Read call re-reads the whole context and costs far more.
 - **Index lag**: the file watcher debounces ~500ms behind writes; don't re-query immediately after editing a file in the same turn.
 
 ### If `.codegraph/` doesn't exist
@@ -394,10 +407,10 @@ ludo.logInfo("=== MyPlugin test done ===")
 
 | Path | Role |
 |------|------|
-| `src/http_module.c` | C implementation of `http` global (libcurl) |
+| `src/http_module.c` | C implementation of `http` global (libcurl); shares DNS/SSL/connection cache via `curl_share` |
 | `src/lua_engine.c` | Loads and manages Lua state, plugin loader; sorts `generic.lua` last |
 | `src/ludo_module.c` | C implementation of `ludo` global |
-| `src/download_manager.c` | Threaded download queue |
+| `src/download_manager.c` | Threaded download queue; owns the global `CURLSH` share handle (DNS, SSL session, connection pool) initialized at startup |
 | `src/main.c` | Entry point; `-s scriptfile.lua` runs standalone |
 | `ludo_scripting.md` | Full scripting API reference (read this for detailed docs) |
 | `install/ludo.log` | Runtime log — all `ludo.log*()` calls write here |
