@@ -4,6 +4,7 @@
 #include <stdint.h>
 #include <stdio.h>
 #include <stdbool.h>
+#include <curl/curl.h>
 #include "thread_queue.h"
 
 /* ------------------------------------------------------------------ */
@@ -133,5 +134,8 @@ int download_manager_find_status(int id, DownloadStatus *out);
 
 /* Re-dispatch the current status of all downloads to the GUI */
 void download_manager_sync_ui(void);
+
+/* Get the global shared curl handle (DNS/SSL/connection cache) */
+CURLSH *download_manager_get_share(void);
 
 #endif /* LUDO_DOWNLOAD_MANAGER_H */

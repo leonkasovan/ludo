@@ -1,6 +1,7 @@
 #include "http_module.h"
 #include "dm_log.h"
 #include "thread_queue.h"
+#include "download_manager.h"
 
 #ifndef BUILD_CONSOLE
 #include "gui.h"
@@ -443,6 +444,7 @@ static int http_request(lua_State *L, int method) {
 
     CURL *curl = curl_easy_init();
     if (!curl) return luaL_error(L, "curl_easy_init failed");
+    curl_easy_setopt(curl, CURLOPT_SHARE, download_manager_get_share());
 
     StrBuf body_buf    = {0};
     StrBuf headers_buf = {0};
@@ -554,6 +556,7 @@ static int lua_http_url_encode(lua_State *L) {
     const char *s = luaL_checklstring(L, 1, &len);
     CURL *curl = curl_easy_init();
     if (!curl) return luaL_error(L, "curl_easy_init failed");
+    curl_easy_setopt(curl, CURLOPT_SHARE, download_manager_get_share());
     char *enc = curl_easy_escape(curl, s, (int)len);
     if (enc) {
         lua_pushstring(L, enc);
@@ -571,6 +574,7 @@ static int lua_http_url_decode(lua_State *L) {
     const char *s = luaL_checklstring(L, 1, &len);
     CURL *curl = curl_easy_init();
     if (!curl) return luaL_error(L, "curl_easy_init failed");
+    curl_easy_setopt(curl, CURLOPT_SHARE, download_manager_get_share());
     int out_len = 0;
     char *dec = curl_easy_unescape(curl, s, (int)len, &out_len);
     if (dec) {
@@ -938,6 +942,7 @@ static void *async_http_worker(void *arg) {
         if (task.main_L == NULL) continue;
         CURL *curl = curl_easy_init();
         if (!curl) continue;
+        curl_easy_setopt(curl, CURLOPT_SHARE, download_manager_get_share());
 
         StrBuf body_buf    = {0};
         StrBuf headers_buf = {0};
@@ -1115,6 +1120,7 @@ int http_raw_get(const char *url, const char *headers_str, HttpRawResult *result
         snprintf(result->error, sizeof(result->error), "curl_easy_init failed");
         return -1;
     }
+    curl_easy_setopt(curl, CURLOPT_SHARE, download_manager_get_share());
 
     StrBuf body_buf    = {0};
     StrBuf headers_buf = {0};

@@ -253,6 +253,9 @@ static struct {
 
     char                output_dir[1024];
 
+    CURLSH             *share;
+    ludo_mutex_t        share_mutex;
+
     int                 initialized;
     int                 running;
     int                 shutting_down;
@@ -268,6 +271,17 @@ static void gui_update_on_main(void *data) {
     GuiUpdatePkt *p = (GuiUpdatePkt *)data;
     p->cb(&p->update, p->user_data);
     free(p);
+}
+
+static void share_lock_cb(CURL *handle, curl_lock_data data,
+                          curl_lock_access access, void *userptr) {
+    (void)handle; (void)data; (void)access;
+    ludo_mutex_lock((ludo_mutex_t *)userptr);
+}
+
+static void share_unlock_cb(CURL *handle, curl_lock_data data, void *userptr) {
+    (void)handle; (void)data;
+    ludo_mutex_unlock((ludo_mutex_t *)userptr);
 }
 
 static void gui_dispatch_update(const ProgressUpdate *update) {
@@ -411,6 +425,7 @@ static void probe_download_head(const char *url, HeaderCtx *hctx, const char *co
 
     head = curl_easy_init();
     if (!head) return;
+    if (g_mgr.share) curl_easy_setopt(head, CURLOPT_SHARE, g_mgr.share);
 
     curl_easy_setopt(head, CURLOPT_URL, url);
     curl_easy_setopt(head, CURLOPT_NOBODY, 1L);
@@ -800,6 +815,7 @@ static void perform_download(Download *d) {
         gui_dispatch_update(&upd);
         return;
     }
+    if (g_mgr.share) curl_easy_setopt(curl, CURLOPT_SHARE, g_mgr.share);
 
     for (int attempt = 0; attempt < max_attempts; attempt++) {
         curl_off_t resume_from = 0;
@@ -1410,6 +1426,20 @@ int download_manager_init(int num_workers, const char *output_dir) {
 #endif
     }
 
+    ludo_mutex_init(&g_mgr.share_mutex);
+    g_mgr.share = curl_share_init();
+    if (g_mgr.share) {
+        curl_share_setopt(g_mgr.share, CURLSHOPT_SHARE, CURL_LOCK_DATA_DNS);
+        curl_share_setopt(g_mgr.share, CURLSHOPT_SHARE, CURL_LOCK_DATA_SSL_SESSION);
+        curl_share_setopt(g_mgr.share, CURLSHOPT_SHARE, CURL_LOCK_DATA_CONNECT);
+        curl_share_setopt(g_mgr.share, CURLSHOPT_LOCKFUNC, share_lock_cb);
+        curl_share_setopt(g_mgr.share, CURLSHOPT_UNLOCKFUNC, share_unlock_cb);
+        curl_share_setopt(g_mgr.share, CURLSHOPT_USERDATA, &g_mgr.share_mutex);
+        dm_log("[init] curl_share init OK (DNS + SSL + CONNECT)");
+    } else {
+        dm_log("[init] curl_share init failed");
+    }
+
     /* Restore previous session */
     dm_log("[init] loading db: %s", DB_PATH);
     db_load(DB_PATH);
@@ -1517,6 +1547,11 @@ void download_manager_shutdown(void) {
 
     task_queue_destroy(&g_mgr.queue);
     ludo_mutex_destroy(&g_mgr.list_mutex);
+    if (g_mgr.share) {
+        curl_share_cleanup(g_mgr.share);
+        g_mgr.share = NULL;
+    }
+    ludo_mutex_destroy(&g_mgr.share_mutex);
     curl_global_cleanup();
     g_mgr.shutdown_complete = 1;
     g_mgr.initialized = 0;
@@ -1749,6 +1784,10 @@ void download_manager_set_output_dir(const char *output_dir) {
     strncpy(g_mgr.output_dir, output_dir, sizeof(g_mgr.output_dir) - 1);
     g_mgr.output_dir[sizeof(g_mgr.output_dir) - 1] = '\0';
     ludo_mutex_unlock(&g_mgr.list_mutex);
+}
+
+CURLSH *download_manager_get_share(void) {
+    return g_mgr.share;
 }
 
 int download_manager_find_status(int id, DownloadStatus *out) {
