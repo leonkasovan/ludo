@@ -22,29 +22,8 @@
 
 #include "platform_utils.h"
 
-#ifdef _WIN32
-#include <windows.h>
-
-static FILE *fopen_utf8(const char *path, const char *mode) {
-    FILE *fp = NULL;
-    wchar_t *wpath = utf8_to_wide_dup(path);
-    wchar_t wmode[4] = {0};
-    size_t i;
-
-    if (!wpath) return NULL;
-    for (i = 0; mode[i] != '\0' && i + 1 < sizeof(wmode) / sizeof(wmode[0]); i++) {
-        wmode[i] = (wchar_t)(unsigned char)mode[i];
-    }
-    fp = _wfopen(wpath, wmode);
-    free(wpath);
-    return fp;
-}
-#else
+#ifndef _WIN32
 #include <dirent.h>
-
-static FILE *fopen_utf8(const char *path, const char *mode) {
-    return fopen(path, mode);
-}
 #endif
 
 static int lua_loadfile_utf8(lua_State *L, const char *path) {

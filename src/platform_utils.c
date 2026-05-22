@@ -1,8 +1,7 @@
 #include "platform_utils.h"
+#include <stdlib.h>
 
 #ifdef _WIN32
-
-#include <stdlib.h>
 
 wchar_t *utf8_to_wide_dup(const char *src) {
     int needed;
@@ -30,3 +29,22 @@ int wide_to_utf8(const wchar_t *src, char *dst, size_t dst_sz) {
 }
 
 #endif /* _WIN32 */
+
+FILE *fopen_utf8(const char *path, const char *mode) {
+#ifdef _WIN32
+    FILE *fp = NULL;
+    wchar_t *wpath = utf8_to_wide_dup(path);
+    wchar_t wmode[8] = {0};
+    size_t i;
+
+    if (!wpath) return NULL;
+    for (i = 0; mode[i] != '\0' && i + 1 < 7; i++) {
+        wmode[i] = (wchar_t)(unsigned char)mode[i];
+    }
+    fp = _wfopen(wpath, wmode);
+    free(wpath);
+    return fp;
+#else
+    return fopen(path, mode);
+#endif
+}

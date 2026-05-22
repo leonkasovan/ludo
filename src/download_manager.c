@@ -1,6 +1,7 @@
 #include "download_manager.h"
 #include "config.h"
 #include "http_module.h"
+#include "platform_utils.h"
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -46,7 +47,6 @@ static int g_log_mutex_init = 0;
 static int g_log_enabled = 0; /* runtime toggle: enabled in DEBUG or when LUDO_DEBUG=1 */
 
 /* Forward declarations for platform-aware helpers defined later in this file */
-static FILE *dm_fopen_utf8(const char *path, const char *mode);
 #ifdef _WIN32
 static int dm_stat_utf8(const char *path, struct _stat64 *st);
 #else
@@ -69,7 +69,7 @@ void dm_log_init(void) {
 
     if (!g_log_enabled) return;
 
-    g_log_fp = dm_fopen_utf8("ludo.log", "w");
+    g_log_fp = fopen_utf8("ludo.log", "w");
     if (!g_log_fp) { g_log_enabled = 0; return; }
     /* Header line so runs are separated */
     fprintf(g_log_fp, "\n===== dm session start =====\n");
@@ -476,49 +476,10 @@ static int download_should_retry(CURLcode res, long http_code) {
 }
 
 #ifdef _WIN32
-static wchar_t *dm_utf8_to_wide_dup(const char *src) {
-    int needed;
-    wchar_t *dst;
-
-    if (!src) return NULL;
-    needed = MultiByteToWideChar(CP_UTF8, 0, src, -1, NULL, 0);
-    if (needed <= 0) return NULL;
-    dst = (wchar_t *)malloc((size_t)needed * sizeof(wchar_t));
-    if (!dst) return NULL;
-    if (MultiByteToWideChar(CP_UTF8, 0, src, -1, dst, needed) <= 0) {
-        free(dst);
-        return NULL;
-    }
-    return dst;
-}
-
-static const wchar_t *dm_wmode(const char *mode) {
-    if (strcmp(mode, "rb") == 0) return L"rb";
-    if (strcmp(mode, "wb") == 0) return L"wb";
-    if (strcmp(mode, "ab") == 0) return L"ab";
-    if (strcmp(mode, "r") == 0) return L"r";
-    if (strcmp(mode, "w") == 0) return L"w";
-    if (strcmp(mode, "a") == 0) return L"a";
-    return NULL;
-}
-
-static FILE *dm_fopen_utf8(const char *path, const char *mode) {
-    FILE *fp = NULL;
-    wchar_t *wpath = dm_utf8_to_wide_dup(path);
-    const wchar_t *wmode = dm_wmode(mode);
-
-    if (!wpath || !wmode) {
-        free(wpath);
-        return NULL;
-    }
-    fp = _wfopen(wpath, wmode);
-    free(wpath);
-    return fp;
-}
 
 static int dm_stat_utf8(const char *path, struct _stat64 *st) {
     int rv;
-    wchar_t *wpath = dm_utf8_to_wide_dup(path);
+    wchar_t *wpath = utf8_to_wide_dup(path);
 
     if (!wpath) return -1;
     rv = _wstat64(wpath, st);
@@ -528,8 +489,8 @@ static int dm_stat_utf8(const char *path, struct _stat64 *st) {
 
 static int dm_rename_utf8(const char *old_path, const char *new_path) {
     int rv;
-    wchar_t *wold = dm_utf8_to_wide_dup(old_path);
-    wchar_t *wnew = dm_utf8_to_wide_dup(new_path);
+    wchar_t *wold = utf8_to_wide_dup(old_path);
+    wchar_t *wnew = utf8_to_wide_dup(new_path);
 
     if (!wold || !wnew) {
         free(wold);
@@ -544,7 +505,7 @@ static int dm_rename_utf8(const char *old_path, const char *new_path) {
 
 static int dm_remove_utf8(const char *path) {
     int rv;
-    wchar_t *wpath = dm_utf8_to_wide_dup(path);
+    wchar_t *wpath = utf8_to_wide_dup(path);
 
     if (!wpath) return -1;
     rv = _wremove(wpath);
@@ -552,10 +513,6 @@ static int dm_remove_utf8(const char *path) {
     return rv;
 }
 #else
-static FILE *dm_fopen_utf8(const char *path, const char *mode) {
-    return fopen(path, mode);
-}
-
 static int dm_stat_utf8(const char *path, struct stat *st) {
     return stat(path, st);
 }
@@ -682,7 +639,7 @@ static size_t write_cb(char *ptr, size_t size, size_t nmemb, void *userdata) {
         if (response_code == 200) {
             dm_log("[write_cb] id=%d server ignored resume request; restarting from byte 0", ctx->download_id);
             fclose(ctx->fp);
-            ctx->fp = dm_fopen_utf8(ctx->path, "wb");
+            ctx->fp = fopen_utf8(ctx->path, "wb");
             if (!ctx->fp) {
                 dm_log("[write_cb] id=%d reopen failed for fresh download: %s (errno=%d)",
                        ctx->download_id, ctx->path, errno);
@@ -860,7 +817,7 @@ static void perform_download(Download *d) {
         }
 
         ensure_directory(path);
-        fp = dm_fopen_utf8(path, resume_from > 0 ? "ab" : "wb");
+        fp = fopen_utf8(path, resume_from > 0 ? "ab" : "wb");
         if (!fp) {
             ProgressUpdate upd = {0};
             upd.status.id = d->status.id;
@@ -1121,7 +1078,7 @@ static void db_save_and_archive(void) {
      /* Write to a temporary file first for atomic safety against crashes.
          Use text mode so newline semantics are consistent with db_load on
          Windows (CRLF normalization when writing/reading in text mode). */
-     FILE *f_db = dm_fopen_utf8(DB_PATH ".tmp", "w");
+     FILE *f_db = fopen_utf8(DB_PATH ".tmp", "w");
     if (!f_db) return;
 
     gzFile f_gz = NULL;
@@ -1192,8 +1149,8 @@ static void db_save_and_archive(void) {
 
     /* Atomic replace: ensures data isn't corrupted if power is lost during save */
 #ifdef _WIN32
-    wchar_t *tmp_w = dm_utf8_to_wide_dup(DB_PATH ".tmp");
-    wchar_t *db_w  = dm_utf8_to_wide_dup(DB_PATH);
+    wchar_t *tmp_w = utf8_to_wide_dup(DB_PATH ".tmp");
+    wchar_t *db_w  = utf8_to_wide_dup(DB_PATH);
     if (tmp_w && db_w) MoveFileExW(tmp_w, db_w, MOVEFILE_REPLACE_EXISTING);
     free(tmp_w); free(db_w);
 #else
@@ -1207,7 +1164,7 @@ static void db_load(const char *path) {
        line at a time. */
     /* Open in text mode so CRLF is normalized on Windows. We still
        defensively strip CR/LF later to be robust on all platforms. */
-    FILE *f = dm_fopen_utf8(path, "r");
+    FILE *f = fopen_utf8(path, "r");
     if (!f) return;
 
     char *line = NULL;

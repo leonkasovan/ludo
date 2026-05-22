@@ -8,6 +8,14 @@
  */
 
 #include <stddef.h>
+#include <stdio.h>
+
+#ifdef __cplusplus
+extern "C" {
+#endif
+
+/* UTF-8 aware fopen — on Windows wraps _wfopen, on POSIX wraps fopen. */
+FILE *fopen_utf8(const char *path, const char *mode);
 
 #ifdef _WIN32
 #include <windows.h>
@@ -21,5 +29,9 @@ wchar_t *utf8_to_wide_dup(const char *src);
 int wide_to_utf8(const wchar_t *src, char *dst, size_t dst_sz);
 
 #endif /* _WIN32 */
+
+#ifdef __cplusplus
+}
+#endif
 
 #endif /* LUDO_PLATFORM_UTILS_H */

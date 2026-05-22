@@ -55,30 +55,6 @@ extern char **environ;
 
 #include "platform_utils.h"
 
-#ifdef _WIN32
-
-static FILE *gui_fopen_utf8(const char *path, const char *mode) {
-    FILE *fp = NULL;
-    wchar_t *wpath = utf8_to_wide_dup(path);
-    wchar_t wmode[8] = {0};
-    size_t i;
-
-    if (!wpath) return NULL;
-    for (i = 0; mode[i] != '\0' && i + 1 < sizeof(wmode) / sizeof(wmode[0]); i++) {
-        wmode[i] = (wchar_t)(unsigned char)mode[i];
-    }
-    fp = _wfopen(wpath, wmode);
-    free(wpath);
-    return fp;
-}
-#endif
-
-#ifndef _WIN32
-static FILE *gui_fopen_utf8(const char *path, const char *mode) {
-    return fopen(path, mode);
-}
-#endif
-
 /* ------------------------------------------------------------------ */
 /* Sound Helper                                                         */
 /* ------------------------------------------------------------------ */
@@ -93,7 +69,7 @@ static void play_sound(const char *filepath) {
     // gui_log(LOG_INFO, "play_sound: attempting to play: %s", filepath);
 
     /* Check file existence using the UTF-8 aware fopen helper */
-    FILE *f = gui_fopen_utf8(filepath, "rb");
+    FILE *f = fopen_utf8(filepath, "rb");
     if (!f) {
         gui_log(LOG_WARNING, "play_sound: file not found: %s", filepath);
     } else {
@@ -125,7 +101,7 @@ static void play_sound(const char *filepath) {
     }
     // gui_log(LOG_INFO, "play_sound: attempting to play: %s", filepath);
 
-    FILE *f = gui_fopen_utf8(filepath, "rb");
+    FILE *f = fopen_utf8(filepath, "rb");
     if (!f) {
         gui_log(LOG_WARNING, "play_sound: file not found: %s", filepath);
     } else {
@@ -150,7 +126,7 @@ static void play_sound(const char *filepath) {
     }
     // gui_log(LOG_INFO, "play_sound: attempting to play: %s", filepath);
 
-    FILE *f = gui_fopen_utf8(filepath, "rb");
+    FILE *f = fopen_utf8(filepath, "rb");
     if (!f) {
         gui_log(LOG_WARNING, "play_sound: file not found: %s", filepath);
     } else {
@@ -706,7 +682,7 @@ static int read_text_file_utf8(const char *path, char **out_text) {
     if (!out_text) return 0;
     *out_text = NULL;
 
-    f = gui_fopen_utf8(path, "rb");
+    f = fopen_utf8(path, "rb");
     if (!f) return 0;
     if (fseek(f, 0, SEEK_END) != 0) {
         fclose(f);
@@ -1282,7 +1258,7 @@ static int resolve_toolbar_png_path(const char *name, char *out, size_t out_sz) 
     };
     for (size_t i = 0; i < sizeof(candidates) / sizeof(candidates[0]); i++) {
         snprintf(out, out_sz, "%s/%s", candidates[i], name);
-        FILE *f = gui_fopen_utf8(out, "rb");
+        FILE *f = fopen_utf8(out, "rb");
         if (f) {
             fclose(f);
             return 1;
