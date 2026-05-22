@@ -1,11 +1,12 @@
 #include "console_log.h"
+#include "dm_log.h"
 
 #include <stdarg.h>
 #include <stdio.h>
 #include <time.h>
 
-/* Console-mode logging: writes timestamped messages to stderr/stdout.
- * Called from both main thread and worker threads. */
+/* Console-mode logging: writes timestamped messages to stderr/stdout
+ * and to ludo.log. Called from both main thread and worker threads. */
 void gui_log(LogLevel level, const char *fmt, ...) {
     const char *prefix;
     FILE *out;
@@ -24,15 +25,17 @@ void gui_log(LogLevel level, const char *fmt, ...) {
     if (ptm)
         strftime(ts, sizeof(ts), "%H:%M:%S", ptm);
 
-    fprintf(out, "[%s] [%s] ", ts, prefix);
-
+    char msg[1024];
     va_list ap;
     va_start(ap, fmt);
-    vfprintf(out, fmt, ap);
+    vsnprintf(msg, sizeof(msg), fmt, ap);
     va_end(ap);
 
-    fprintf(out, "\n");
+    fprintf(out, "[%s] [%s] %s\n", ts, prefix, msg);
     fflush(out);
+
+    static const char *log_prefixes[] = { "[INFO] ", "[SUCCESS] ", "[WARNING] ", "[ERROR]  " };
+    dm_log("%s%s", log_prefixes[level], msg);
 }
 
 /* In console mode, no UI event loop — execute callback directly. */
