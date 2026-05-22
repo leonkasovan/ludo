@@ -1534,13 +1534,6 @@ static void begin_app_shutdown(void) {
     download_manager_shutdown();
     lua_engine_shutdown();
 
-    gui_log(LOG_INFO, "[shutdown] begin_app_shutdown: done");
-    g_gui.shutdown_requested = 1;
-    task_queue_shutdown(&g_url_queue);
-    gui_shutdown();
-    download_manager_shutdown();
-    lua_engine_shutdown();
-
 #ifdef _WIN32
     toolbar_icons_shutdown();
     if (g_gui.app_icon && g_gui.app_icon_from_file) {
