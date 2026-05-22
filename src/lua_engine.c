@@ -279,7 +279,7 @@ void lua_engine_load_plugins(const char *plugin_dir) {
         lua_close(check_L);
 
         if (local_count < MAX_PLUGINS) {
-            memcpy(local_list[local_count].path, utf8_path, sizeof(utf8_path));
+            strncpy(local_list[local_count].path, utf8_path, sizeof(local_list[local_count].path) - 1);
             local_count++;
         } else {
             gui_log(LOG_WARNING, "[lua_engine] MAX_PLUGINS (%d) reached; skipping %s",
@@ -321,7 +321,7 @@ void lua_engine_load_plugins(const char *plugin_dir) {
         lua_close(check_L);
 
         if (local_count < MAX_PLUGINS) {
-            memcpy(local_list[local_count].path, path, sizeof(path));
+            strncpy(local_list[local_count].path, path, sizeof(local_list[local_count].path) - 1);
             local_count++;
         } else {
             gui_log(LOG_WARNING, "[lua_engine] MAX_PLUGINS (%d) reached; skipping %s",
