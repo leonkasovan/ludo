@@ -49,14 +49,7 @@ static void msleep(int ms) { usleep((unsigned int)(ms * 1000)); }
 #endif
 
 static int has_active_downloads(void) {
-    Download *d = download_manager_get_list();
-    while (d) {
-        if (d->status.state == DOWNLOAD_STATE_RUNNING ||
-            d->status.state == DOWNLOAD_STATE_QUEUED)
-            return 1;
-        d = d->next;
-    }
-    return 0;
+    return download_manager_has_active();
 }
 
 int main(int argc, char *argv[]) {

@@ -120,6 +120,9 @@ bool download_manager_remove(int id);
 /* Access the global list (call only from GUI/main thread) */
 Download *download_manager_get_list(void);
 
+/* Thread-safe: returns 1 if any download is RUNNING or QUEUED */
+int download_manager_has_active(void);
+
 /* Register a progress callback invoked (via uiQueueMain) on the GUI thread */
 void download_manager_set_progress_cb(progress_callback_t cb, void *user_data);
 

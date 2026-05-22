@@ -1768,6 +1768,20 @@ Download *download_manager_get_list(void) {
     return g_mgr.list; /* caller should hold list_mutex before reading */
 }
 
+int download_manager_has_active(void) {
+    int active = 0;
+    ludo_mutex_lock(&g_mgr.list_mutex);
+    for (Download *d = g_mgr.list; d; d = d->next) {
+        if (d->status.state == DOWNLOAD_STATE_RUNNING ||
+            d->status.state == DOWNLOAD_STATE_QUEUED) {
+            active = 1;
+            break;
+        }
+    }
+    ludo_mutex_unlock(&g_mgr.list_mutex);
+    return active;
+}
+
 void download_manager_set_progress_cb(progress_callback_t cb, void *user_data) {
     g_mgr.progress_cb      = cb;
     g_mgr.progress_cb_data = user_data;
