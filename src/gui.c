@@ -1212,7 +1212,7 @@ static void downloads_modelSetCellValue(uiTableModelHandler *mh, uiTableModel *m
             gui_log(LOG_INFO, "Scheduled removal of download id=%d via inline button", target_id);
         } else if (r->status.state == DOWNLOAD_STATE_QUEUED || r->status.state == DOWNLOAD_STATE_RUNNING) {
             download_manager_pause(target_id);
-        } else if (r->status.state == DOWNLOAD_STATE_PAUSED || r->status.state == DOWNLOAD_STATE_FAILED) {
+        } else if (r->status.state == DOWNLOAD_STATE_PAUSED) {
             download_manager_resume(target_id);
         }
     }
