@@ -2,6 +2,7 @@
 #include "dm_log.h"
 #include "thread_queue.h"
 #include "download_manager.h"
+#include "platform_utils.h"
 
 #ifndef BUILD_CONSOLE
 #include "gui.h"
@@ -658,7 +659,16 @@ static int lua_http_read_cookie(lua_State *L) {
     const char *filepath = luaL_checkstring(L, 1);
     const char *name     = luaL_checkstring(L, 2);
 
-    FILE *f = fopen(filepath, "r");
+    FILE *f = NULL;
+#ifdef _WIN32
+    wchar_t *wpath = utf8_to_wide_dup(filepath);
+    if (wpath) {
+        f = _wfopen(wpath, L"r");
+        free(wpath);
+    }
+#else
+    f = fopen(filepath, "r");
+#endif
     if (!f) {
         lua_pushnil(L);
         return 1;
