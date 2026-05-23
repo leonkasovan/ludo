@@ -212,6 +212,11 @@ int main(int argc, char *argv[])
                             strcpy(script_path, next_utf8);
                             run_script = 1;
                         }
+                    } else {
+                        fprintf(stderr, "Error: --script requires a script path\n");
+                        LocalFree(argv_w_pre);
+                        ludo_config_shutdown();
+                        return 1;
                     }
                     break;
                 }
@@ -226,6 +231,10 @@ int main(int argc, char *argv[])
                 script_path = malloc(strlen(argv[i+1]) + 1);
                 strcpy(script_path, argv[i+1]);
                 run_script = 1;
+            } else {
+                fprintf(stderr, "Error: --script requires a script path\n");
+                ludo_config_shutdown();
+                return 1;
             }
             break;
         }
