@@ -1,27 +1,65 @@
+#include "lua_engine.h"
+#include "download_manager.h"
+#include "config.h"
+#include "thread_queue.h"
+
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <signal.h>
+
+/* ------------------------------------------------------------------ */
+/* Global URL task queue                                               */
+/* ------------------------------------------------------------------ */
+TaskQueue g_url_queue;
+
+/* ------------------------------------------------------------------ */
+/* Common subsystem init/shutdown (shared by console, script, GUI)    */
+/* ------------------------------------------------------------------ */
+
+static int ludo_subsystem_init(const LudoConfig *cfg) {
+    if (task_queue_init(&g_url_queue, cfg ? cfg->url_queue_capacity : 256) != 0) {
+        fprintf(stderr, "Failed to initialise task queue\n");
+        return 0;
+    }
+    if (!download_manager_init(cfg ? cfg->max_thread : 2,
+                               cfg ? cfg->output_dir : "downloads/")) {
+        fprintf(stderr, "Failed to initialise download manager\n");
+        task_queue_shutdown(&g_url_queue);
+        task_queue_destroy(&g_url_queue);
+        return 0;
+    }
+    lua_engine_init();
+    lua_engine_load_plugins(cfg ? cfg->plugin_dir : "plugins");
+    return 1;
+}
+
+static void ludo_subsystem_shutdown(void) {
+    task_queue_shutdown(&g_url_queue);
+    download_manager_shutdown();
+    lua_engine_shutdown();
+    task_queue_destroy(&g_url_queue);
+}
+
 #ifdef BUILD_CONSOLE
 /* ================================================================== */
 /* Console-only build (ludocon)                                       */
 /* ================================================================== */
 
-#include "lua_engine.h"
-#include "download_manager.h"
-#include "config.h"
-#include "thread_queue.h"
 #include "console_log.h"
-
-#include <stdio.h>
-#include <stdlib.h>
-#include <string.h>
 
 #ifdef _WIN32
 #include <windows.h>
 #include "platform_utils.h"
 #endif
 
-/* ------------------------------------------------------------------ */
-/* Global URL task queue                                               */
-/* ------------------------------------------------------------------ */
-TaskQueue g_url_queue;
+/* Signal handler for Ctrl+C — sets flag for graceful shutdown */
+static volatile sig_atomic_t g_shutdown_requested = 0;
+
+static void console_signal_handler(int sig) {
+    (void)sig;
+    g_shutdown_requested = 1;
+}
 
 static void print_usage(const char *prog) {
     fprintf(stderr,
@@ -81,18 +119,12 @@ int main(int argc, char *argv[]) {
         fprintf(stderr, "Warning: failed to load config.ini\n");
     const LudoConfig *cfg = ludo_config_get();
 
-    if (task_queue_init(&g_url_queue, cfg ? cfg->url_queue_capacity : 256) != 0) {
-        fprintf(stderr, "Failed to initialise task queue\n");
-        ludo_config_shutdown(); return 1;
+    if (!ludo_subsystem_init(cfg)) {
+        ludo_config_shutdown();
+        return 1;
     }
-    if (!download_manager_init(cfg ? cfg->max_thread : 2,
-                               cfg ? cfg->output_dir : "downloads/")) {
-        fprintf(stderr, "Failed to initialise download manager\n");
-        task_queue_shutdown(&g_url_queue); task_queue_destroy(&g_url_queue);
-        ludo_config_shutdown(); return 1;
-    }
-    lua_engine_init();
-    lua_engine_load_plugins(cfg ? cfg->plugin_dir : "plugins");
+
+    signal(SIGINT, console_signal_handler);
 
     int total = 0, handled = 0;
 
@@ -129,15 +161,17 @@ int main(int argc, char *argv[]) {
         }
     }
 
-    while (has_active_downloads()) msleep(500);
+    while (has_active_downloads() && !g_shutdown_requested) msleep(500);
+
+    if (g_shutdown_requested) {
+        fprintf(stderr, "\nInterrupted — pausing active downloads...\n");
+        download_manager_prepare_for_shutdown();
+    }
     msleep(500);
 
     fprintf(stderr, "\nDone: %d / %d URLs handled\n", handled, total);
 
-    task_queue_shutdown(&g_url_queue);
-    download_manager_shutdown();
-    lua_engine_shutdown();
-    task_queue_destroy(&g_url_queue);
+    ludo_subsystem_shutdown();
     ludo_config_shutdown();
     return 0;
 }
@@ -148,22 +182,14 @@ int main(int argc, char *argv[]) {
 /* ================================================================== */
 
 #include "gui.h"
-#include "lua_engine.h"
-#include "download_manager.h"
-#include "config.h"
 #include "ipc/ludo_native_messaging.h"
-#include "thread_queue.h"
 #include "ui.h"
 
-#include <stdio.h>
-#include <stdlib.h>
-#include <string.h>
-
-/* ------------------------------------------------------------------ */
-/* Global URL task queue — shared between main.c, gui.c, and workers  */
-/* ------------------------------------------------------------------ */
-
-TaskQueue g_url_queue;
+#ifdef _WIN32
+#include <windows.h>
+#include <shellapi.h>
+#include "platform_utils.h"
+#endif
 
 /* ------------------------------------------------------------------ */
 /* Entry point                                                          */
@@ -244,24 +270,15 @@ int main(int argc, char *argv[])
 #endif
 
     if (script_path) {
-        if (task_queue_init(&g_url_queue, cfg ? cfg->url_queue_capacity : 256) != 0) {
-            fprintf(stderr, "Failed to initialise task queue\n");
-            ludo_config_shutdown(); return 1;
+        if (!ludo_subsystem_init(cfg)) {
+            free(script_path);
+            ludo_config_shutdown();
+            return 1;
         }
-        if (!download_manager_init(cfg ? cfg->max_thread : 2,
-                                   cfg ? cfg->output_dir : "downloads/")) {
-            fprintf(stderr, "Failed to initialise download manager\n");
-            task_queue_shutdown(&g_url_queue); task_queue_destroy(&g_url_queue);
-            free(script_path); ludo_config_shutdown(); return 1;
-        }
-        lua_engine_init();
-        lua_engine_load_plugins(cfg ? cfg->plugin_dir : "plugins");
         int script_ok = lua_engine_run_script(script_path);
-
-        task_queue_shutdown(&g_url_queue);
-        download_manager_shutdown(); lua_engine_shutdown();
-        task_queue_destroy(&g_url_queue);
-        free(script_path); ludo_config_shutdown();
+        ludo_subsystem_shutdown();
+        free(script_path);
+        ludo_config_shutdown();
         return script_ok ? 0 : 1;
     }
 
@@ -284,28 +301,13 @@ int main(int argc, char *argv[])
     }
 
     /* -------------------------------------------------------------- */
-    /* 2. Initialise the URL task queue                                 */
+    /* 2-4. Initialise subsystems (task queue, download manager, Lua)  */
     /* -------------------------------------------------------------- */
-    if (task_queue_init(&g_url_queue, cfg ? cfg->url_queue_capacity : 256) != 0) {
-        fprintf(stderr, "Failed to initialise task queue\n");
-        uiUninit(); ludo_config_shutdown(); return 1;
+    if (!ludo_subsystem_init(cfg)) {
+        uiUninit();
+        ludo_config_shutdown();
+        return 1;
     }
-
-    /* -------------------------------------------------------------- */
-    /* 3. Initialise the download manager (2 concurrent downloads)     */
-    /* -------------------------------------------------------------- */
-    if (!download_manager_init(cfg ? cfg->max_thread : 2,
-                               cfg ? cfg->output_dir : "downloads/")) {
-        fprintf(stderr, "Failed to initialise download manager\n");
-        task_queue_shutdown(&g_url_queue); task_queue_destroy(&g_url_queue);
-        uiUninit(); ludo_config_shutdown(); return 1;
-    }
-
-    /* -------------------------------------------------------------- */
-    /* 4. Initialise the Lua plugin engine and load plugins             */
-    /* -------------------------------------------------------------- */
-    lua_engine_init();
-    lua_engine_load_plugins(cfg ? cfg->plugin_dir : "plugins");
     ludo_native_messaging_start();
 
     /* --------------------------------------------------------------------- */
