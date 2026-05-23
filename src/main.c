@@ -194,7 +194,6 @@ int main(int argc, char *argv[])
     /* -------------------------------------------------------------- */
     /* Early-Check: Headless script mode                              */
     /* -------------------------------------------------------------- */
-    int run_script = 0;
     char *script_path = NULL;
 
 #ifdef _WIN32
@@ -210,7 +209,11 @@ int main(int argc, char *argv[])
                         if (wide_to_utf8(argv_w_pre[i+1], next_utf8, sizeof(next_utf8))) {
                             script_path = malloc(strlen(next_utf8) + 1);
                             strcpy(script_path, next_utf8);
-                            run_script = 1;
+                        } else {
+                            fprintf(stderr, "Error: failed to convert script path encoding\n");
+                            LocalFree(argv_w_pre);
+                            ludo_config_shutdown();
+                            return 1;
                         }
                     } else {
                         fprintf(stderr, "Error: --script requires a script path\n");
@@ -230,7 +233,6 @@ int main(int argc, char *argv[])
             if (i + 1 < argc) {
                 script_path = malloc(strlen(argv[i+1]) + 1);
                 strcpy(script_path, argv[i+1]);
-                run_script = 1;
             } else {
                 fprintf(stderr, "Error: --script requires a script path\n");
                 ludo_config_shutdown();
@@ -241,7 +243,7 @@ int main(int argc, char *argv[])
     }
 #endif
 
-    if (run_script && script_path) {
+    if (script_path) {
         if (task_queue_init(&g_url_queue, cfg ? cfg->url_queue_capacity : 256) != 0) {
             fprintf(stderr, "Failed to initialise task queue\n");
             ludo_config_shutdown(); return 1;
