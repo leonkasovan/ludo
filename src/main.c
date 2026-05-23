@@ -224,26 +224,26 @@ int main(int argc, char *argv[])
 
 #ifdef _WIN32
     int argc_w = 0;
-    LPWSTR *argv_w_pre = CommandLineToArgvW(GetCommandLineW(), &argc_w);
-    if (argv_w_pre) {
+    LPWSTR *argv_w = CommandLineToArgvW(GetCommandLineW(), &argc_w);
+    if (argv_w) {
         for (int i = 1; i < argc_w; i++) {
             char arg_utf8[4096];
-            if (wide_to_utf8(argv_w_pre[i], arg_utf8, sizeof(arg_utf8)) && arg_utf8[0] != '\0') {
+            if (wide_to_utf8(argv_w[i], arg_utf8, sizeof(arg_utf8)) && arg_utf8[0] != '\0') {
                 if (strcmp(arg_utf8, "--script") == 0 || strcmp(arg_utf8, "-s") == 0) {
                     if (i + 1 < argc_w) {
                         char next_utf8[4096];
-                        if (wide_to_utf8(argv_w_pre[i+1], next_utf8, sizeof(next_utf8))) {
+                        if (wide_to_utf8(argv_w[i+1], next_utf8, sizeof(next_utf8))) {
                             script_path = malloc(strlen(next_utf8) + 1);
                             strcpy(script_path, next_utf8);
                         } else {
                             fprintf(stderr, "Error: failed to convert script path encoding\n");
-                            LocalFree(argv_w_pre);
+                            LocalFree(argv_w);
                             ludo_config_shutdown();
                             return 1;
                         }
                     } else {
                         fprintf(stderr, "Error: --script requires a script path\n");
-                        LocalFree(argv_w_pre);
+                        LocalFree(argv_w);
                         ludo_config_shutdown();
                         return 1;
                     }
@@ -251,7 +251,6 @@ int main(int argc, char *argv[])
                 }
             }
         }
-        LocalFree(argv_w_pre);
     }
 #else
     for (int i = 1; i < argc; i++) {
@@ -272,12 +271,18 @@ int main(int argc, char *argv[])
     if (script_path) {
         if (!ludo_subsystem_init(cfg)) {
             free(script_path);
+#ifdef _WIN32
+            if (argv_w) LocalFree(argv_w);
+#endif
             ludo_config_shutdown();
             return 1;
         }
         int script_ok = lua_engine_run_script(script_path);
         ludo_subsystem_shutdown();
         free(script_path);
+#ifdef _WIN32
+        if (argv_w) LocalFree(argv_w);
+#endif
         ludo_config_shutdown();
         return script_ok ? 0 : 1;
     }
@@ -295,6 +300,7 @@ int main(int argc, char *argv[])
         wchar_t *werr = utf8_to_wide_dup(err);
         MessageBoxW(NULL, werr ? werr : L"uiInit error", L"LUDO startup error", MB_ICONERROR | MB_OK);
         free(werr);
+        if (argv_w) LocalFree(argv_w);
 #endif
         uiFreeInitError(err);
         return 1;
@@ -304,6 +310,9 @@ int main(int argc, char *argv[])
     /* 2-4. Initialise subsystems (task queue, download manager, Lua)  */
     /* -------------------------------------------------------------- */
     if (!ludo_subsystem_init(cfg)) {
+#ifdef _WIN32
+        if (argv_w) LocalFree(argv_w);
+#endif
         uiUninit();
         ludo_config_shutdown();
         return 1;
@@ -320,7 +329,6 @@ int main(int argc, char *argv[])
     /* 5b. Process command-line arguments (URLs)                             */
     /* --------------------------------------------------------------------- */
 #ifdef _WIN32
-    LPWSTR *argv_w = CommandLineToArgvW(GetCommandLineW(), &argc_w);
     if (argv_w) {
         for (int i = 1; i < argc_w; i++) {
             char arg_utf8[4096];
