@@ -320,15 +320,25 @@ int main(int argc, char *argv[])
     if (argv_w) {
         for (int i = 1; i < argc_w; i++) {
             char arg_utf8[4096];
-            if (wide_to_utf8(argv_w[i], arg_utf8, sizeof(arg_utf8)) && arg_utf8[0] != '\0')
+            if (wide_to_utf8(argv_w[i], arg_utf8, sizeof(arg_utf8)) && arg_utf8[0] != '\0') {
+                if (strcmp(arg_utf8, "--script") == 0 || strcmp(arg_utf8, "-s") == 0) {
+                    i++;  // skip the script path too
+                    continue;
+                }
                 task_queue_push(&g_url_queue, arg_utf8);
+            }
         }
         LocalFree(argv_w);
     }
 #else
-    for (int i = 1; i < argc; i++)
-        if (argv[i] && strlen(argv[i]) > 0)
-            task_queue_push(&g_url_queue, argv[i]);
+    for (int i = 1; i < argc; i++) {
+        if (!argv[i] || strlen(argv[i]) == 0) continue;
+        if (strcmp(argv[i], "--script") == 0 || strcmp(argv[i], "-s") == 0) {
+            i++;  // skip the script path too
+            continue;
+        }
+        task_queue_push(&g_url_queue, argv[i]);
+    }
 #endif
 
     /* -------------------------------------------------------------- */
