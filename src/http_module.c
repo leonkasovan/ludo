@@ -592,7 +592,7 @@ static int lua_http_url_decode(lua_State *L) {
 static int lua_http_parse_url(lua_State *L) {
     const char *url = luaL_checkstring(L, 1);
 
-    /* Manual parse: scheme://[host[:port]][/path][?query] */
+    /* Manual parse: scheme://[userinfo@]host[:port][/path][?query][#fragment] */
     lua_newtable(L);
 
     /* scheme */
@@ -606,10 +606,21 @@ static int lua_http_parse_url(lua_State *L) {
         lua_setfield(L, -2, "scheme");
     }
 
-    /* host[:port] until first '/' */
+    /* skip userinfo (user:pass@) */
+    const char *at = strchr(url, '@');
+    if (at && at < strpbrk(url, "/?#"))   /* @ before path/query/fragment */
+        url = at + 1;
+
+    /* locate delimiters for the host[:port] part */
     const char *slash = strchr(url, '/');
     const char *q     = strchr(url, '?');
-    const char *host_end = slash ? slash : (q ? q : url + strlen(url));
+    const char *hash  = strchr(url, '#');
+    const char *host_end = url + strlen(url);
+    if (slash && slash < host_end) host_end = slash;
+    if (q && q < host_end) host_end = q;
+    if (hash && hash < host_end) host_end = hash;
+
+    /* host[:port] */
     const char *colon = memchr(url, ':', (size_t)(host_end - url));
     if (colon) {
         lua_pushlstring(L, url, (size_t)(colon - url));
@@ -623,8 +634,11 @@ static int lua_http_parse_url(lua_State *L) {
         lua_setfield(L, -2, "port");
     }
 
+    /* path */
     if (slash) {
-        const char *path_end = q ? q : slash + strlen(slash);
+        const char *path_end = slash + strlen(slash);
+        if (q && q < path_end) path_end = q;
+        if (hash && hash < path_end) path_end = hash;
         lua_pushlstring(L, slash, (size_t)(path_end - slash));
         lua_setfield(L, -2, "path");
     } else {
@@ -632,8 +646,11 @@ static int lua_http_parse_url(lua_State *L) {
         lua_setfield(L, -2, "path");
     }
 
+    /* query (strip fragment) */
     if (q) {
-        lua_pushstring(L, q + 1);
+        const char *qend = q + 1 + strlen(q + 1);
+        if (hash && hash > q) qend = hash;
+        lua_pushlstring(L, q + 1, (size_t)(qend - q - 1));
         lua_setfield(L, -2, "query");
     } else {
         lua_pushstring(L, "");
