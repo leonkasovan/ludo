@@ -42,7 +42,13 @@ local PLATFORMS = {
       scrape_url = "https://api.screenscraper.fr/api2/jeuRecherche.php?output=json&devid=recalbox&devpassword=C3KbyjX8PKsUgm2tu53y&softname=Emulationstation-Recalbox-9.1&ssid=test&sspassword=test&systemeid=14&recherche=",
       col_name = "game_name",
       col_ext = "game_ext",
-      col_size = "game_size" },      
+      col_size = "game_size" },
+    { name = "NES", file = "NES.csv",
+      source_url = "https://archive.org/download/ni-roms/roms/Nintendo%20-%20Nintendo%20Entertainment%20System%20%28Headered%29.zip",
+      scrape_url = "https://api.screenscraper.fr/api2/jeuRecherche.php?output=json&devid=recalbox&devpassword=C3KbyjX8PKsUgm2tu53y&softname=Emulationstation-Recalbox-9.1&ssid=test&sspassword=test&systemeid=3&recherche=",
+      col_name = "game_name",
+      col_ext = "game_ext",
+      col_size = "game_size" },
 }
 local MAX_RESULTS = 99
 local search_results = {}
@@ -331,6 +337,7 @@ search_btn:OnClicked(function(b, data)
     -- 0-based index passed to RowDeleted is always valid at the time of the
     -- call (data count decreases by 1 after each removal).
     local old_count = #search_results
+    if old_count > MAX_RESULTS then old_count = MAX_RESULTS end
     for i = old_count, 1, -1 do
         table.remove(search_results, i)
         model:RowDeleted(i - 1)
