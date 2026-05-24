@@ -9,7 +9,7 @@ G_DEFINE_TYPE_WITH_CODE(uiTableModel, uiTableModel, G_TYPE_OBJECT,
 
 static void uiTableModel_init(uiTableModel *m)
 {
-	// nothing to do
+	m->nRows = 0;
 }
 
 static void uiTableModel_dispose(GObject *obj)
@@ -256,6 +256,7 @@ void uiTableModelRowInserted(uiTableModel *m, int newIndex)
 	iter.user_data = GINT_TO_POINTER(newIndex);
 	gtk_tree_model_row_inserted(GTK_TREE_MODEL(m), path, &iter);
 	gtk_tree_path_free(path);
+	m->nRows++;
 }
 
 void uiTableModelRowChanged(uiTableModel *m, int index)
@@ -277,17 +278,17 @@ void uiTableModelRowDeleted(uiTableModel *m, int oldIndex)
 	path = gtk_tree_path_new_from_indices(oldIndex, -1);
 	gtk_tree_model_row_deleted(GTK_TREE_MODEL(m), path);
 	gtk_tree_path_free(path);
+	m->nRows--;
 }
 
 void uiTableModelReset(uiTableModel *m)
 {
 	GtkTreePath *path;
 	GtkTreeIter iter;
-	int i, oldRows, newRows;
+	int i, newRows;
 
-	oldRows = gtk_tree_model_iter_n_children(GTK_TREE_MODEL(m), NULL);
 	// delete all old rows (from last to first for proper indexing)
-	for (i = oldRows - 1; i >= 0; i--) {
+	for (i = m->nRows - 1; i >= 0; i--) {
 		path = gtk_tree_path_new_from_indices(i, -1);
 		gtk_tree_model_row_deleted(GTK_TREE_MODEL(m), path);
 		gtk_tree_path_free(path);
@@ -301,6 +302,7 @@ void uiTableModelReset(uiTableModel *m)
 		gtk_tree_model_row_inserted(GTK_TREE_MODEL(m), path, &iter);
 		gtk_tree_path_free(path);
 	}
+	m->nRows = newRows;
 }
 
 uiTableModelHandler *uiprivTableModelHandler(uiTableModel *m)

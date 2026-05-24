@@ -13,6 +13,7 @@ struct uiTableModel {
 	GObject parent_instance;
 	gint stamp;
 	uiTableModelHandler *mh;
+	gint nRows;			// tracked internally for Reset()
 };
 struct uiTableModelClass {
 	GObjectClass parent_class;
