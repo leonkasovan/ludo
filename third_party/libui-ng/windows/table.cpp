@@ -59,6 +59,22 @@ void uiTableModelRowDeleted(uiTableModel *m, int oldIndex)
 	}
 }
 
+void uiTableModelReset(uiTableModel *m)
+{
+	int n;
+
+	n = uiprivTableModelNumRows(m);
+	for (auto t : *(m->tables)) {
+		if (ListView_DeleteAllItems(t->hwnd) == FALSE)
+			logLastError(L"error calling ListView_DeleteAllItems in uiTableModelReset()");
+		if (SendMessageW(t->hwnd, LVM_SETITEMCOUNT, (WPARAM) n, 0) == 0)
+			logLastError(L"error calling LVM_SETITEMCOUNT in uiTableModelReset()");
+		if (n > 0)
+			if (ListView_RedrawItems(t->hwnd, 0, n - 1) == FALSE)
+				logLastError(L"error calling ListView_RedrawItems in uiTableModelReset()");
+	}
+}
+
 static void defaultOnRowClicked(uiTable *table, int row, void *data)
 {
 	// do nothing

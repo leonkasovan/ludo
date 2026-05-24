@@ -3569,6 +3569,19 @@ _UI_EXTERN void uiTableModelRowChanged(uiTableModel *m, int index);
  * @memberof uiTableModel
  */
 _UI_EXTERN void uiTableModelRowDeleted(uiTableModel *m, int oldIndex);
+
+/**
+ * Informs all associated uiTable views that the entire model has been reset.
+ *
+ * Call this after you have completely replaced or rebuilt the underlying data,
+ * for example after clearing and reloading all rows.
+ *
+ * NumRows() must represent the new row count before you call this function.
+ *
+ * @param m Table model that has been reset.
+ * @memberof uiTableModel
+ */
+_UI_EXTERN void uiTableModelReset(uiTableModel *m);
 // TODO reordering/moving
 
 /** Parameter to editable model columns to signify all rows are never editable. */

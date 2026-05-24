@@ -1827,10 +1827,18 @@ int l_TableModelRowDeleted(lua_State *L)
 	RETURN_SELF;
 }
 
+int l_TableModelReset(lua_State *L)
+{
+	struct tmwrap *tw = (struct tmwrap *)lua_touserdata(L, 1);
+	uiTableModelReset(tw->model);
+	RETURN_SELF;
+}
+
 static struct luaL_Reg meta_TableModel[] = {
 	{ "RowInserted",          l_TableModelRowInserted },
 	{ "RowChanged",           l_TableModelRowChanged },
 	{ "RowDeleted",           l_TableModelRowDeleted },
+	{ "Reset",                l_TableModelReset },
 	{ NULL }
 };
 

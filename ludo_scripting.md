@@ -2034,6 +2034,7 @@ tbl:AppendTextColumn("Age",  1, ui.TableModelColumnAlwaysEditable)
 model:RowInserted(newIndex)   -- after inserting a row
 model:RowChanged(index)       -- after modifying a row
 model:RowDeleted(oldIndex)    -- after deleting a row
+model:Reset()                 -- after replacing all rows (full reload)
 ```
 
 #### CellValue return types

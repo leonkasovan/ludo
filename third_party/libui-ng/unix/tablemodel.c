@@ -279,6 +279,30 @@ void uiTableModelRowDeleted(uiTableModel *m, int oldIndex)
 	gtk_tree_path_free(path);
 }
 
+void uiTableModelReset(uiTableModel *m)
+{
+	GtkTreePath *path;
+	GtkTreeIter iter;
+	int i, oldRows, newRows;
+
+	oldRows = gtk_tree_model_iter_n_children(GTK_TREE_MODEL(m), NULL);
+	// delete all old rows (from last to first for proper indexing)
+	for (i = oldRows - 1; i >= 0; i--) {
+		path = gtk_tree_path_new_from_indices(i, -1);
+		gtk_tree_model_row_deleted(GTK_TREE_MODEL(m), path);
+		gtk_tree_path_free(path);
+	}
+	// insert all new rows
+	newRows = uiprivTableModelNumRows(m);
+	for (i = 0; i < newRows; i++) {
+		path = gtk_tree_path_new_from_indices(i, -1);
+		iter.stamp = m->stamp;
+		iter.user_data = GINT_TO_POINTER(i);
+		gtk_tree_model_row_inserted(GTK_TREE_MODEL(m), path, &iter);
+		gtk_tree_path_free(path);
+	}
+}
+
 uiTableModelHandler *uiprivTableModelHandler(uiTableModel *m)
 {
 	return m->mh;

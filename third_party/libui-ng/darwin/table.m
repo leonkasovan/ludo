@@ -214,6 +214,14 @@ void uiTableModelRowDeleted(uiTableModel *m, int oldIndex)
 	// set is autoreleased
 }
 
+void uiTableModelReset(uiTableModel *m)
+{
+	NSTableView *tv;
+
+	for (tv in m->tables)
+		[tv reloadData];
+}
+
 uiTableModelHandler *uiprivTableModelHandler(uiTableModel *m)
 {
 	return m->mh;
