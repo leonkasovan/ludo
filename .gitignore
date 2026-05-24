@@ -1,8 +1,15 @@
 /build*
 /.claude
+.vscode
 *.tsv
 *.exe
 src/ipc/extension/**
 *.db
 *.log
 /install
+/node_modules
+opencode.jsonc
+package-lock.json
+package.json
+.codegraph
+.commandcode
