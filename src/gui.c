@@ -23,6 +23,7 @@
 #include <gtk/gtk.h>
 #include <dirent.h>
 #include <spawn.h>
+#include <sys/stat.h>
 #include <unistd.h>
 extern char **environ;
 #endif
@@ -185,8 +186,9 @@ typedef struct {
 #define MAX_TOOL_SCRIPTS 32
 
 typedef struct {
-    char name[256];
-    char path[1024];
+    char name[256];       /* display name (filename without .lua) */
+    char path[1024];      /* absolute path to .lua file */
+    char submenu[256];    /* subdirectory name, or "" if directly in tools/ */
 } ToolScriptEntry;
 
 static ToolScriptEntry g_tool_scripts[MAX_TOOL_SCRIPTS];
@@ -205,13 +207,15 @@ static void scan_tools_directory(const char *tools_dir) {
     g_tool_script_count = 0;
 
 #ifdef _WIN32
-    wchar_t pattern[512];
+    wchar_t *tools_dir_w = utf8_to_wide_dup(tools_dir);
+    wchar_t pattern[1024];
     WIN32_FIND_DATAW fd;
     HANDLE hFind;
-    wchar_t *tools_dir_w = utf8_to_wide_dup(tools_dir);
 
     if (!tools_dir_w) return;
-    if (_snwprintf(pattern, 512, L"%ls\\*.lua", tools_dir_w) < 0) {
+
+    /* First pass: list all entries in tools_dir/ */
+    if (_snwprintf(pattern, 1024, L"%ls\\*", tools_dir_w) < 0) {
         free(tools_dir_w);
         return;
     }
@@ -221,19 +225,58 @@ static void scan_tools_directory(const char *tools_dir) {
         return;
     }
     do {
-        char filename_utf8[512];
-        ToolScriptEntry *e;
-
-        if (fd.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) continue;
-        if (g_tool_script_count >= MAX_TOOL_SCRIPTS) break;
-        if (!wide_to_utf8(fd.cFileName, filename_utf8, sizeof(filename_utf8)))
+        if (wcscmp(fd.cFileName, L".") == 0 || wcscmp(fd.cFileName, L"..") == 0)
             continue;
 
-        e = &g_tool_scripts[g_tool_script_count];
-        trim_tool_name(filename_utf8, e->name, sizeof(e->name));
-        snprintf(e->path, sizeof(e->path), "%s\\%s", tools_dir, filename_utf8);
-        g_tool_script_count++;
-    } while (FindNextFileW(hFind, &fd));
+        char name_utf8[512];
+        if (!wide_to_utf8(fd.cFileName, name_utf8, sizeof(name_utf8)))
+            continue;
+
+        if (fd.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) {
+            /* Scan inside subdirectory for *.lua */
+            wchar_t sub_pattern[1024];
+            WIN32_FIND_DATAW sub_fd;
+            HANDLE hSub;
+
+            if (_snwprintf(sub_pattern, 1024, L"%ls\\%ls\\*.lua", tools_dir_w, fd.cFileName) < 0)
+                continue;
+            hSub = FindFirstFileW(sub_pattern, &sub_fd);
+            if (hSub == INVALID_HANDLE_VALUE)
+                continue;
+            do {
+                if (sub_fd.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY)
+                    continue;
+                if (g_tool_script_count >= MAX_TOOL_SCRIPTS)
+                    break;
+
+                char sub_name[512];
+                if (!wide_to_utf8(sub_fd.cFileName, sub_name, sizeof(sub_name)))
+                    continue;
+
+                ToolScriptEntry *e = &g_tool_scripts[g_tool_script_count];
+                trim_tool_name(sub_name, e->name, sizeof(e->name));
+                snprintf(e->path, sizeof(e->path), "%s\\%s\\%s",
+                         tools_dir, name_utf8, sub_name);
+                strncpy(e->submenu, name_utf8, sizeof(e->submenu) - 1);
+                e->submenu[sizeof(e->submenu) - 1] = '\0';
+                g_tool_script_count++;
+            } while (FindNextFileW(hSub, &sub_fd) && g_tool_script_count < MAX_TOOL_SCRIPTS);
+            FindClose(hSub);
+        } else {
+            /* File directly in tools/ — only .lua files */
+            size_t nlen = strlen(name_utf8);
+            if (nlen < 5 || strcmp(name_utf8 + nlen - 4, ".lua") != 0)
+                continue;
+            if (g_tool_script_count >= MAX_TOOL_SCRIPTS)
+                break;
+
+            ToolScriptEntry *e = &g_tool_scripts[g_tool_script_count];
+            trim_tool_name(name_utf8, e->name, sizeof(e->name));
+            snprintf(e->path, sizeof(e->path), "%s\\%s", tools_dir, name_utf8);
+            e->submenu[0] = '\0';
+            g_tool_script_count++;
+        }
+    } while (FindNextFileW(hFind, &fd) && g_tool_script_count < MAX_TOOL_SCRIPTS);
     FindClose(hFind);
     free(tools_dir_w);
 #else
@@ -241,18 +284,55 @@ static void scan_tools_directory(const char *tools_dir) {
     struct dirent *ent;
 
     if (!dir) return;
+
     while ((ent = readdir(dir))) {
-        size_t nlen = strlen(ent->d_name);
-        ToolScriptEntry *e;
+        if (strcmp(ent->d_name, ".") == 0 || strcmp(ent->d_name, "..") == 0)
+            continue;
 
-        if (nlen < 5) continue;
-        if (strcmp(ent->d_name + nlen - 4, ".lua") != 0) continue;
-        if (g_tool_script_count >= MAX_TOOL_SCRIPTS) break;
+        char full[1024];
+        snprintf(full, sizeof(full), "%s/%s", tools_dir, ent->d_name);
 
-        e = &g_tool_scripts[g_tool_script_count];
-        trim_tool_name(ent->d_name, e->name, sizeof(e->name));
-        snprintf(e->path, sizeof(e->path), "%s/%s", tools_dir, ent->d_name);
-        g_tool_script_count++;
+        struct stat st;
+        if (stat(full, &st) != 0)
+            continue;
+
+        if (S_ISDIR(st.st_mode)) {
+            /* Scan inside subdirectory for *.lua */
+            char subdir[1024];
+            snprintf(subdir, sizeof(subdir), "%s/%s", tools_dir, ent->d_name);
+
+            DIR *sub = opendir(subdir);
+            if (!sub) continue;
+
+            struct dirent *subent;
+            while ((subent = readdir(sub))) {
+                size_t nlen = strlen(subent->d_name);
+                if (nlen < 5) continue;
+                if (strcmp(subent->d_name + nlen - 4, ".lua") != 0) continue;
+                if (g_tool_script_count >= MAX_TOOL_SCRIPTS) break;
+
+                ToolScriptEntry *e = &g_tool_scripts[g_tool_script_count];
+                trim_tool_name(subent->d_name, e->name, sizeof(e->name));
+                snprintf(e->path, sizeof(e->path), "%s/%s/%s",
+                         tools_dir, ent->d_name, subent->d_name);
+                strncpy(e->submenu, ent->d_name, sizeof(e->submenu) - 1);
+                e->submenu[sizeof(e->submenu) - 1] = '\0';
+                g_tool_script_count++;
+            }
+            closedir(sub);
+        } else {
+            /* File directly in tools/ — only .lua files */
+            size_t nlen = strlen(ent->d_name);
+            if (nlen < 5) continue;
+            if (strcmp(ent->d_name + nlen - 4, ".lua") != 0) continue;
+            if (g_tool_script_count >= MAX_TOOL_SCRIPTS) break;
+
+            ToolScriptEntry *e = &g_tool_scripts[g_tool_script_count];
+            trim_tool_name(ent->d_name, e->name, sizeof(e->name));
+            snprintf(e->path, sizeof(e->path), "%s/%s", tools_dir, ent->d_name);
+            e->submenu[0] = '\0';
+            g_tool_script_count++;
+        }
     }
     closedir(dir);
 #endif
@@ -1993,13 +2073,47 @@ static void setup_menus(void) {
     item = uiMenuAppendItem(menu, "LUA Tester\tCtrl+L");
     uiMenuItemOnClicked(item, on_lua_clicked, NULL);
 
-    /* Tool scripts from tools/ directory */
-    if (g_tool_script_count > 0) {
-        int i;
-        uiMenuAppendSeparator(menu);
-        for (i = 0; i < g_tool_script_count; i++) {
-            item = uiMenuAppendItem(menu, g_tool_scripts[i].name);
-            uiMenuItemOnClicked(item, on_tool_script_clicked, g_tool_scripts[i].path);
+    /* Tool scripts directly in tools/ (no subdirectory) — under Tools menu */
+    {
+        int root_count = 0;
+        for (int i = 0; i < g_tool_script_count; i++) {
+            if (g_tool_scripts[i].submenu[0] == '\0') root_count++;
+        }
+        if (root_count > 0) {
+            uiMenuAppendSeparator(menu);
+            for (int i = 0; i < g_tool_script_count; i++) {
+                if (g_tool_scripts[i].submenu[0] != '\0') continue;
+                item = uiMenuAppendItem(menu, g_tool_scripts[i].name);
+                uiMenuItemOnClicked(item, on_tool_script_clicked, g_tool_scripts[i].path);
+            }
+        }
+    }
+
+    /* Sub-menus: one top-level menu per subdirectory */
+    {
+        /* Collect unique submenu names ordered by first occurrence */
+        char seen[32][256];
+        int seen_count = 0;
+        for (int i = 0; i < g_tool_script_count; i++) {
+            const char *sm = g_tool_scripts[i].submenu;
+            if (sm[0] == '\0') continue;
+            int dup = 0;
+            for (int j = 0; j < seen_count; j++) {
+                if (strcmp(seen[j], sm) == 0) { dup = 1; break; }
+            }
+            if (!dup && seen_count < 32) {
+                strncpy(seen[seen_count], sm, 255);
+                seen[seen_count][255] = '\0';
+                seen_count++;
+            }
+        }
+        for (int s = 0; s < seen_count; s++) {
+            uiMenu *sub = uiNewMenu(seen[s]);
+            for (int i = 0; i < g_tool_script_count; i++) {
+                if (strcmp(g_tool_scripts[i].submenu, seen[s]) != 0) continue;
+                item = uiMenuAppendItem(sub, g_tool_scripts[i].name);
+                uiMenuItemOnClicked(item, on_tool_script_clicked, g_tool_scripts[i].path);
+            }
         }
     }
 
