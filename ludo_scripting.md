@@ -601,10 +601,10 @@ Perform an HTTP GET request.
 
 **Parameters:**
 - `url` (string) — The URL to fetch.
-- `options` (table, optional) — Request options (see [Options Table](#47-options-table)).
+- `options` (table, optional) — Request options (see [Options Table](#48-options-table)).
 
 **Returns:**
-- `body` (string) - Response body.
+- `body` (string|nil) - Response body, or `nil` when `file` option is set.
 - `status` (number) - HTTP status code.
 - `headers` (table) - Response headers as key-value pairs.
 
@@ -895,6 +895,7 @@ All HTTP request functions accept an optional `options` table:
 | `timeout` | number | none | Request timeout in seconds |
 | `headers` | table | none | Custom headers as `{["Name"] = "value"}` |
 | `cookies` | string | none | Path to cookie jar file |
+| `file` | string | none | Path to save response body to file; body return is `nil` |
 
 ### 4.9 `http.url_encode(str)` → string
 

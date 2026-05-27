@@ -918,7 +918,7 @@ end
 
         <p><strong>Returns:</strong></p>
         <ul>
-            <li><code>body</code> (string) - Response body.</li>
+            <li><code>body</code> (string|nil) - Response body, or <code>nil</code> when <code>file</code> option is set.</li>
             <li><code>status</code> (number) - HTTP status code.</li>
             <li><code>headers</code> (table) - Response headers as key-value pairs.</li>
         </ul>
@@ -1254,6 +1254,12 @@ print(final_url)  --> https://github.com/user/repo/releases/tag/v1.2.3
                     <td>string</td>
                     <td>none</td>
                     <td>Path to cookie jar file</td>
+                </tr>
+                <tr>
+                    <td><code>file</code></td>
+                    <td>string</td>
+                    <td>none</td>
+                    <td>Path to save response body to file; body return is <code>nil</code></td>
                 </tr>
             </tbody>
         </table>

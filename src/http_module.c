@@ -138,6 +138,12 @@ static size_t curl_write_body(char *ptr, size_t size, size_t nmemb, void *ud) {
     return total; /* always claim we consumed all — prevents curl abort */
 }
 
+static size_t curl_write_file(char *ptr, size_t size, size_t nmemb, void *ud) {
+    FILE *fp = (FILE *)ud;
+    if (!fp) return 0;
+    return fwrite(ptr, size, nmemb, fp);
+}
+
 static size_t curl_write_headers(char *ptr, size_t size, size_t nmemb, void *ud) {
     StrBuf *buf = (StrBuf *)ud;
     size_t total = size * nmemb;
@@ -447,12 +453,39 @@ static int http_request(lua_State *L, int method) {
     if (!curl) return luaL_error(L, "curl_easy_init failed");
     curl_easy_setopt(curl, CURLOPT_SHARE, download_manager_get_share());
 
+    const char *outfile = NULL;
+    if (opts_idx) {
+        lua_getfield(L, opts_idx, "file");
+        if (lua_isstring(L, -1))
+            outfile = lua_tostring(L, -1);
+        lua_pop(L, 1);
+    }
+
     StrBuf body_buf    = {0};
     StrBuf headers_buf = {0};
 
+    FILE *file_fp = NULL;
+    if (outfile) {
+#ifdef _WIN32
+        wchar_t *wpath = utf8_to_wide_dup(outfile);
+        if (wpath) {
+            file_fp = _wfopen(wpath, L"wb");
+            free(wpath);
+        }
+#else
+        file_fp = fopen(outfile, "wb");
+#endif
+        if (!file_fp) {
+            curl_easy_cleanup(curl);
+            return luaL_error(L, "cannot open file for writing: %s", outfile);
+        }
+        curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION,  curl_write_file);
+        curl_easy_setopt(curl, CURLOPT_WRITEDATA,      file_fp);
+    } else {
+        curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION,  curl_write_body);
+        curl_easy_setopt(curl, CURLOPT_WRITEDATA,      &body_buf);
+    }
     curl_easy_setopt(curl, CURLOPT_URL,            url);
-    curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION,  curl_write_body);
-    curl_easy_setopt(curl, CURLOPT_WRITEDATA,      &body_buf);
     curl_easy_setopt(curl, CURLOPT_HEADERFUNCTION, curl_write_headers);
     curl_easy_setopt(curl, CURLOPT_HEADERDATA,     &headers_buf);
     curl_easy_setopt(curl, CURLOPT_FOLLOWLOCATION, 1L);
@@ -501,15 +534,21 @@ static int http_request(lua_State *L, int method) {
     curl_easy_cleanup(curl);
 
     if (res != CURLE_OK) {
+        if (file_fp) fclose(file_fp);
         strbuf_free(&body_buf);
         strbuf_free(&headers_buf);
         return luaL_error(L, "http request failed: %s",
                           curl_easy_strerror(res));
     }
 
-    /* Return: body, status, headers */
-    lua_pushlstring(L, body_buf.data ? body_buf.data : "",
-                    body_buf.data ? body_buf.len : 0);
+    /* Return: body (nil if file), status, headers */
+    if (file_fp) {
+        fclose(file_fp);
+        lua_pushnil(L);
+    } else {
+        lua_pushlstring(L, body_buf.data ? body_buf.data : "",
+                        body_buf.data ? body_buf.len : 0);
+    }
     lua_pushinteger(L, (lua_Integer)status);
     push_headers_table(L, headers_buf.data ? headers_buf.data : "");
 

@@ -470,6 +470,11 @@ See `ludo_scripting.md` §7 for the full guide. Summary:
   `ninja restat` — this is benign and can be ignored.
 - `ludo-debug.exe --help` hangs (it is a GUI app, not a CLI tool).
 - `ludocon-debug.exe --help` works (it is a console app, use `ludocon` for CLI tasks).
+- **Building outside w64devkit terminal:** If you experience `cannot execute 'cc1': CreateProcess: No such file or directory`,
+  run cmake via `cmd.exe` with w64devkit bin directory on PATH:
+  ```
+  cmd.exe /c "set PATH=C:\w64devkit\bin;C:\w64devkit\libexec\gcc\x86_64-w64-mingw32\15.2.0;%PATH% && cmake --build build --parallel"
+  ```
 - After editing a plugin, rebuild and reinstall (`cmake --build build --parallel && cmake --install build --prefix install`);
   CMake copies all `plugins/*.lua` to `install/plugins/` on install.
 - **Linux/Synology:** The build uses system libcurl (via `find_package(CURL)`).
