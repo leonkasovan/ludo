@@ -31,7 +31,6 @@ extern char **environ;
 #ifdef _WIN32
 #include <windows.h>
 #include <shellapi.h>
-#include "win_toolbar_icons.h"
 
 #define IDI_APP_ICON 101
 #endif
@@ -387,7 +386,6 @@ static struct {
     int              url_worker_started;
 
 #ifdef _WIN32
-    void            *toolbar_icon_ctx;
     HICON            app_icon;
     int              app_icon_from_file;
 #endif
@@ -1347,12 +1345,6 @@ static int resolve_toolbar_png_path(const char *name, char *out, size_t out_sz) 
     return 0;
 }
 
-static void toolbar_icons_shutdown(void) {
-    if (g_gui.toolbar_icon_ctx) {
-        ludo_icons_shutdown(g_gui.toolbar_icon_ctx);
-        g_gui.toolbar_icon_ctx = NULL;
-    }
-}
 #endif
 
 static DownloadRow *add_row(int id, const char *filename) {
@@ -1591,7 +1583,6 @@ static void begin_app_shutdown(void) {
     lua_engine_shutdown();
 
 #ifdef _WIN32
-    toolbar_icons_shutdown();
     if (g_gui.app_icon && g_gui.app_icon_from_file) {
         DestroyIcon(g_gui.app_icon);
         g_gui.app_icon = NULL;

@@ -429,10 +429,6 @@ set(LUDO_SOURCES
 )
 
 if(WIN32)
-    list(APPEND LUDO_SOURCES src/win_toolbar_icons.cpp)
-endif()
-
-if(WIN32)
     configure_file(${CMAKE_SOURCE_DIR}/src/ludo.rc.in ${CMAKE_BINARY_DIR}/ludo.rc @ONLY)
     list(APPEND LUDO_SOURCES ${CMAKE_BINARY_DIR}/ludo.rc)
     add_executable(ludo WIN32 ${LUDO_SOURCES})
