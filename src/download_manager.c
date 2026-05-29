@@ -1516,6 +1516,82 @@ void download_manager_shutdown(void) {
     dm_log_close();
 }
 
+/* Normalize URL by percent-encoding unencoded spaces and unsafe characters in the path.
+ * Preserves already-encoded sequences (%XX) and the scheme/host parts. */
+static void url_normalize(const char *src, char *dst, size_t dst_sz) {
+    if (!src || !dst || dst_sz < 1) {
+        if (dst && dst_sz > 0) dst[0] = '\0';
+        return;
+    }
+
+    const char *scheme_end = strstr(src, "://");
+    if (!scheme_end) {
+        /* No scheme; just copy as-is */
+        strncpy(dst, src, dst_sz - 1);
+        dst[dst_sz - 1] = '\0';
+        return;
+    }
+
+    /* Find start of path: first '/' after the scheme */
+    const char *path_start = strchr(scheme_end + 3, '/');
+    if (!path_start) {
+        /* No path component, just copy as-is */
+        strncpy(dst, src, dst_sz - 1);
+        dst[dst_sz - 1] = '\0';
+        return;
+    }
+
+    size_t scheme_host_len = (size_t)(path_start - src);
+
+    /* Copy scheme and host unchanged */
+    if (scheme_host_len >= dst_sz) scheme_host_len = dst_sz - 1;
+    memcpy(dst, src, scheme_host_len);
+    size_t dst_pos = scheme_host_len;
+
+    /* Encode path component */
+    const char *src_pos = path_start;
+    while (*src_pos && dst_pos + 1 < dst_sz) {
+        unsigned char ch = (unsigned char)*src_pos;
+
+        /* Check if this is already a %XX sequence */
+        if (ch == '%' && src_pos[1] && src_pos[2] &&
+            dm_hex_value((unsigned char)src_pos[1]) >= 0 &&
+            dm_hex_value((unsigned char)src_pos[2]) >= 0) {
+            /* Already encoded; copy %XX as-is */
+            if (dst_pos + 3 < dst_sz) {
+                dst[dst_pos++] = ch;
+                dst[dst_pos++] = src_pos[1];
+                dst[dst_pos++] = src_pos[2];
+                src_pos += 3;
+                continue;
+            } else {
+                break;
+            }
+        }
+
+        /* Encode unsafe characters */
+        if (ch == ' ' || ch == '{' || ch == '}' || ch == '|' || ch == '\\' ||
+            ch == '^' || ch == '`' || ch == '<' || ch == '>' || ch == '"' ||
+            (ch < 32) || (ch >= 127)) {
+            /* Percent-encode this character */
+            if (dst_pos + 3 < dst_sz) {
+                dst[dst_pos++] = '%';
+                dst[dst_pos++] = "0123456789ABCDEF"[(ch >> 4) & 0x0F];
+                dst[dst_pos++] = "0123456789ABCDEF"[ch & 0x0F];
+                src_pos++;
+            } else {
+                break;
+            }
+        } else {
+            /* Safe character; copy as-is */
+            dst[dst_pos++] = ch;
+            src_pos++;
+        }
+    }
+
+    dst[dst_pos] = '\0';
+}
+
 int download_manager_add(const char *url, const char *output_dir, DownloadMode mode,
                          const char *original_url, const char *hint_filename,
                          const char *extra_headers, const char *post_data,
@@ -1541,7 +1617,8 @@ int download_manager_add(const char *url, const char *output_dir, DownloadMode m
     }
 
     d->status.id = g_mgr.next_id++;
-    strncpy(d->url, url, sizeof(d->url) - 1);
+    /* Normalize URL to percent-encode unencoded spaces and unsafe characters */
+    url_normalize(url, d->url, sizeof(d->url));
     /* Preserve the original user-supplied URL so redirects or plugin-resolved
        mirror URLs do not overwrite what the user entered. */
     if (original_url && original_url[0] != '\0')
@@ -1591,7 +1668,7 @@ int download_manager_add(const char *url, const char *output_dir, DownloadMode m
         HeaderCtx hctx;
         memset(&hctx, 0, sizeof(hctx));
         hctx.download_id = d->status.id;
-        probe_download_head(url, &hctx, d->cookie_file);
+        probe_download_head(d->url, &hctx, d->cookie_file);
 
         ludo_mutex_lock(&g_mgr.list_mutex);
         d->has_preflight            = 1;
@@ -1614,7 +1691,7 @@ int download_manager_add(const char *url, const char *output_dir, DownloadMode m
 
     memset(&task, 0, sizeof(task));
     task.download_id = d->status.id;
-    strncpy(task.url, url, sizeof(task.url) - 1);
+    strncpy(task.url, d->url, sizeof(task.url) - 1);
     strncpy(task.output_dir, d->output_dir, sizeof(task.output_dir) - 1);
     task_queue_push_task(&g_mgr.queue, &task);
     return d->status.id;
