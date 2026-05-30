@@ -87,12 +87,25 @@ local function search_platform(platform, query, results)
         ludo.logInfo("Arcade ROMs Downloader: cannot open " .. filepath .. ": " .. tostring(iter))
         return
     end
-    local q = query:lower()
+    local q_lower = query:lower()
+    local words = {}
+    for w in q_lower:gmatch("%S+") do
+        table.insert(words, w)
+    end
     for _, row in iter do
         if #results >= MAX_RESULTS then break end
         local id   = trim(row[platform.col_id])
         local name = trim(row[platform.col_name])
-        if (name:lower():find(q, 1, true) or id:lower():find(q, 1, true)) then
+        local name_lower = name:lower()
+        local id_lower = id:lower()
+        local all_match = true
+        for _, w in ipairs(words) do
+            if not name_lower:find(w, 1, true) and not id_lower:find(w, 1, true) then
+                all_match = false
+                break
+            end
+        end
+        if all_match then
 			-- Search results: { platform, game_id, game_name, game_info, rom_url, rom_size }
 			table.insert(results, {
 				platform  = platform.name,
@@ -216,13 +229,13 @@ local function update_details(idx)
     local scrape_url = nil
     for _, p in ipairs(PLATFORMS) do
         if p.name == r.platform then
-            scrape_url = p.scrape_url .. r.game_id
+            scrape_url = p.scrape_url .. http.url_encode(r.game_id)
             break
         end
     end
     if scrape_url then
         entry_info:SetText("Loading details...")
-        http.get_async(scrape_url, { timeout = 30 }, function(body, status)
+        http.get_async(scrape_url, { timeout = 10 }, function(body, status)
             if not window_alive or current_details_id ~= r.game_id then return end
             if status ~= 200 or not body or #body == 0 then
                 entry_info:SetText("Failed to fetch details (HTTP " .. tostring(status) .. ")\n" .. scrape_url)
@@ -302,7 +315,7 @@ local function update_details(idx)
             -- end
             entry_info:SetText(table.concat(lines, "\n"))
             if ss_url then
-                http.get_async(ss_url, { timeout = 30 }, function(img_body, img_status)
+                http.get_async(ss_url, { timeout = 10 }, function(img_body, img_status)
                     if not window_alive or current_details_id ~= r.game_id then return end
                     if img_status ~= 200 or not img_body or #img_body == 0 then return end
                     ss_img:SetImageFromMemory(img_body)
@@ -324,49 +337,47 @@ results_tbl:OnSelectionChanged(function()
     end
 end)
 
-search_btn:OnClicked(function(b, data)
-    local query = search_entry:Text()
-    if not query or query:match("^%s*$") then
-        status_lbl:SetText("Please enter a search term.")
-        return
-    end
-    local any = false
-    for _, p in ipairs(PLATFORMS) do
-        if plat_cbs[p.name]:Checked() == 1 then any = true; break end
-    end
-    if not any then
-        status_lbl:SetText("Please select at least one platform.")
-        return
-    end
-
-    status_lbl:SetText("Searching...")
-
-    -- Remove all current rows.  Iterate from last to first so that the
-    -- 0-based index passed to RowDeleted is always valid at the time of the
-    -- call (data count decreases by 1 after each removal).
-    local old_count = #search_results
-    for i = old_count, 1, -1 do
-        table.remove(search_results, i)
-        model:RowDeleted(i - 1)
-    end
-
-    -- Populate search_results from selected platforms.
-    for _, p in ipairs(PLATFORMS) do
-        if plat_cbs[p.name]:Checked() == 1 then
-            search_platform(p, query, search_results)
+    local function do_search()
+        local query = search_entry:Text()
+        if not query or query:match("^%s*$") then
+            status_lbl:SetText("Please enter a search term.")
+            return
         end
+        local any = false
+        for _, p in ipairs(PLATFORMS) do
+            if plat_cbs[p.name]:Checked() == 1 then any = true; break end
+        end
+        if not any then
+            status_lbl:SetText("Please select at least one platform.")
+            return
+        end
+
+        status_lbl:SetText("Searching...")
+
+        local old_count = #search_results
+        for i = old_count, 1, -1 do
+            table.remove(search_results, i)
+            model:RowDeleted(i - 1)
+        end
+
+        for _, p in ipairs(PLATFORMS) do
+            if plat_cbs[p.name]:Checked() == 1 then
+                search_platform(p, query, search_results)
+            end
+        end
+
+        for i = 1, #search_results do
+            model:RowInserted(i - 1)
+        end
+
+        update_details(nil)
+        status_lbl:SetText(string.format("Found %d result(s) for '%s'.", #search_results, query))
     end
 
-    -- Notify the model about all newly added rows.
-    for i = 1, #search_results do
-        model:RowInserted(i - 1)
-    end
+    search_btn:OnClicked(function(b, data) do_search() end, nil)
+    search_entry:OnEnter(function(e, data) do_search() end, nil)
 
-    update_details(nil)
-    status_lbl:SetText(string.format("Found %d result(s) for '%s'.", #search_results, query))
-end, nil)
-
-dl_btn:OnClicked(function(b, data)
+    dl_btn:OnClicked(function(b, data)
     local sel = results_tbl:GetSelection()
     if not sel or #sel == 0 then
         status_lbl:SetText("No game selected. Run a search first.")
@@ -409,6 +420,7 @@ win:OnClosing(function(w, data)
     return 1
 end, nil)
 win:Show()
+search_entry:SetFocus()
 while win_open do
     if ui.MainStep(true) == 0 then break end
 end

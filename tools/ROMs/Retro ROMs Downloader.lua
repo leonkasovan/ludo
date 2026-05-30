@@ -224,10 +224,6 @@ local function format_size(s)
     else return tostring(n) .. " B" end
 end
 
-local function ascii_to_hex(s)
-    return (s or ""):gsub(".", function(c) return string.format("%02X", string.byte(c)) end)
-end
-
 local function search_system(system, query, results)
     local filepath = TOOLS_DIR .. "/" .. system.file
     ludo.logInfo("Searching using " .. filepath)
@@ -236,11 +232,23 @@ local function search_system(system, query, results)
         ludo.logInfo("Retro ROMs Downloader: cannot open " .. filepath .. ": " .. tostring(iter))
         return
     end
-    local q = query:lower()
+    local q_lower = query:lower()
+    local words = {}
+    for w in q_lower:gmatch("%S+") do
+        table.insert(words, w)
+    end
     for _, row in iter do
         if #results >= MAX_RESULTS then break end
         local name = trim(row[system.col_name])
-        if name:lower():find(q, 1, true) then
+        local name_lower = name:lower()
+        local all_match = true
+        for _, w in ipairs(words) do
+            if not name_lower:find(w, 1, true) then
+                all_match = false
+                break
+            end
+        end
+        if all_match then
             local ext = trim(row[system.col_ext])
             local sz  = trim(row[system.col_size])
             table.insert(results, {
@@ -255,35 +263,40 @@ local function search_system(system, query, results)
     end
 end
 
-function generate_csv(system, f_csv)
+function generate_csv(system, f_csv, callback)
     local url = "https://archive.org/download/ni-roms/roms/" .. http.url_encode(system.brand .. " - " .. system.name) .. ".zip/"
-    local html, status = http.get(url, { timeout = 60 })
-    if status ~= 200 or not html then
-        ludo.logError("HTTP " .. tostring(status) .. " for " .. system.name)
-        return
-    end
-    f_csv:write("game_name|game_ext|game_size\n")
-    local count = 0
-    local pos = 1
-    while true do
-        local s = html:find("<tr><td><a href=\"", pos)
-        if not s then break end
-        local href_start = s + 17
-        local href_end = html:find("\"", href_start)
-        local href = html:sub(href_start, href_end - 1)
-        local name_start = html:find(">", href_end)
-        local name_end = html:find("</a>", name_start)
-        local name_display = html:sub(name_start + 1, name_end - 1)
-        local ext = name_display:match("(%.[^%.]+)$") or ""
-        name_display = ext ~= "" and name_display:sub(1, -#ext - 1) or name_display
-        local size_tag = html:find("<td id=\"size\">", name_end)
-        local size_end = html:find("</tr>", size_tag)
-        local size_val = html:sub(size_tag + 14, size_end - 1)
-        f_csv:write(name_display .. "|" .. ext .. "|" .. size_val .. "\n")
-        count = count + 1
-        pos = size_end + 5
-    end
-    ludo.logInfo(string.format("Extracted %d rows to %q", count, system.name .. ".csv"))
+    http.get_async(url, { timeout = 60 }, function(html, status)
+        if status ~= 200 or not html then
+            ludo.logError("HTTP " .. tostring(status) .. " for " .. system.name)
+            if callback then callback(false) end
+            return
+        end
+        f_csv:write("game_name|game_ext|game_size\n")
+        local count = 0
+        local pos = 1
+        while true do
+            local s = html:find("<tr><td><a href=\"", pos)
+            if not s then break end
+            local href_start = s + 17
+            local href_end = html:find("\"", href_start)
+            local href = html:sub(href_start, href_end - 1)
+            local name_start = html:find(">", href_end)
+            local name_end = html:find("</a>", name_start)
+            local name_display = html:sub(name_start + 1, name_end - 1)
+            local ext = name_display:match("(%.[^%.]+)$") or ""
+            name_display = ext ~= "" and name_display:sub(1, -#ext - 1) or name_display
+            local size_tag = html:find("<td id=\"size\">", name_end)
+            local size_end = html:find("</tr>", size_tag)
+            local size_val = html:sub(size_tag + 14, size_end - 1)
+            -- replace &amp; with & and &nbsp; with space in name_display
+            name_display = name_display:gsub("&amp;", "&"):gsub("&nbsp;", " ")
+            f_csv:write(name_display .. "|" .. ext .. "|" .. size_val .. "\n")
+            count = count + 1
+            pos = size_end + 5
+        end
+        ludo.logInfo(string.format("Extracted %d rows to %q", count, system.name .. ".csv"))
+        if callback then callback(true) end
+    end)
 end
 
 -- Table model column indices (0-based, matches AppendTextColumn order).
@@ -297,7 +310,7 @@ local handler = {
     ColumnType  = function(m, col) return ui.TableValueTypeString end,
     NumRows     = function(m) return #search_results end,
     CellValue   = function(m, row, col)
-        local r = search_results[row + 1]   -- model rows are 0-based
+        local r = search_results[row + 1]
         if not r then return "" end
         if     col == COL_NUM      then return tostring(row + 1)
         elseif col == COL_SYSTEM then return r.system or ""
@@ -306,27 +319,303 @@ local handler = {
         end
         return ""
     end,
-    SetCellValue = function(m, row, col, val) end,  -- read-only
+    SetCellValue = function(m, row, col, val) end,
 }
 
 local model = ui.NewTableModel(handler)
 http.set_cookie(TOOLS_DIR .. "/archive.org.txt")
 
--- UI construction
 local win = ui.NewWindow("Retro ROMs Downloader", 860, 600, false)
 win:SetMargined(1)
 
--- if config_path is not exists, generate the config
+local function setup_ui(SYSTEMS)
+    local root = ui.NewVerticalBox()
+    root:SetPadded(1)
+
+    local sys_group = ui.NewGroup("System")
+    sys_group:SetMargined(1)
+    local sys_box = ui.NewHorizontalBox()
+    sys_box:SetPadded(1)
+    local sys_cbs = {}
+    for _, p in ipairs(SYSTEMS) do
+        local system_name = p.sname or p.name
+        local cb = ui.NewCheckbox(system_name)
+        cb:SetChecked(1)
+        sys_cbs[system_name] = cb
+        sys_box:Append(cb, false)
+    end
+    sys_group:SetChild(sys_box)
+    root:Append(sys_group, false)
+
+    local search_hbox = ui.NewHorizontalBox()
+    search_hbox:SetPadded(1)
+    search_hbox:Append(ui.NewLabel("Search:"), false)
+    local search_entry = ui.NewEntry()
+    local search_btn   = ui.NewButton("  Search  ")
+    search_hbox:Append(search_entry, true)
+    search_hbox:Append(search_btn, false)
+    root:Append(search_hbox, false)
+
+    local status_lbl = ui.NewLabel("Select systems, type a game name then click Search.")
+    root:Append(status_lbl, false)
+
+    root:Append(ui.NewLabel("Results (up to " .. MAX_RESULTS .. "):"), false)
+    local results_tbl = ui.NewTable(model)
+    results_tbl:AppendTextColumn("#",        COL_NUM,      ui.TableModelColumnNeverEditable)
+    results_tbl:AppendTextColumn("System", COL_SYSTEM, ui.TableModelColumnNeverEditable)
+    results_tbl:AppendTextColumn("Name",     COL_NAME,     ui.TableModelColumnNeverEditable)
+    results_tbl:AppendTextColumn("Info",     COL_INFO,     ui.TableModelColumnNeverEditable)
+    results_tbl:SetSelectionMode(ui.TableSelectionModeZeroOrOne)
+    results_tbl:ColumnSetWidth(0, 30)
+    results_tbl:ColumnSetWidth(1, 160)
+    results_tbl:ColumnSetWidth(2, 550)
+    results_tbl:ColumnSetWidth(3, 100)
+    root:Append(results_tbl, true)
+
+    local det_group = ui.NewGroup("Rom Details")
+    det_group:SetMargined(1)
+    local det_box = ui.NewHorizontalBox()
+    det_box:SetPadded(1)
+    local entry_info = ui.NewMultilineEntry()
+    entry_info:SetReadOnly(1)
+    det_box:Append(entry_info, true)
+    local ss_img = ui.NewStaticImage()
+    det_box:Append(ss_img, true)
+    det_group:SetChild(det_box)
+    root:Append(det_group, true)
+
+    local dl_btn = ui.NewButton("  Download Selected  ")
+    root:Append(dl_btn, false)
+
+    win:SetChild(root)
+
+    local current_details_id = nil
+    local function update_details(idx)
+        if not idx or idx < 1 or idx > #search_results then
+            entry_info:SetText("")
+            ss_img:Clear()
+            current_details_id = nil
+            return
+        end
+        local r = search_results[idx]
+        current_details_id = r.game_name
+        ss_img:Clear()
+        local scrape_url = nil
+        for _, p in ipairs(SYSTEMS) do
+            if p.name == r.system then
+                scrape_url = p.scrape_url .. http.url_encode(r.game_name:gsub("%s*%(.*%)%s*", " "):gsub("^%s*(.-)%s*$", "%1"):gsub("%s+", " "))
+                break
+            end
+        end
+        if scrape_url then
+            entry_info:SetText("Loading details...\n" .. scrape_url)
+            ludo.logInfo("Fetching details for " .. r.game_name .. " from " .. scrape_url)
+            http.get_async(scrape_url, { timeout = 10 }, function(body, status)
+                if not window_alive or current_details_id ~= r.game_name then return end
+                if status ~= 200 or not body or #body == 0 then
+                    entry_info:SetText("Failed to fetch details (HTTP " .. tostring(status) .. ")\n" .. scrape_url)
+                    return
+                end
+                local ok, data = pcall(json.decode, body)
+                if not ok or not data or not data.response or not data.response.jeux then
+                    entry_info:SetText("Failed to parse response.")
+                    return
+                end
+                local jeu = data.response.jeux[1]
+                if not jeu or not jeu.noms or #jeu.noms == 0 then
+                    entry_info:SetText("No details found." .. "\n" .. scrape_url)
+                    return
+                end
+                local lines = {}
+                local names = jeu.noms
+                if names and #names > 0 then
+                    local name_text = ""
+                    for _, n in ipairs(names) do
+                        if n.region == "en" or n.region == "ss" or n.region == "wor" then
+                            name_text = n.text; break
+                        end
+                    end
+                    if name_text == "" then name_text = names[1].text end
+                    table.insert(lines, "Name: " .. name_text)
+                end
+                if jeu.developpeur and jeu.developpeur.text ~= "" then
+                    table.insert(lines, "Developer: " .. jeu.developpeur.text)
+                end
+                if jeu.editeur and jeu.editeur.text ~= "" then
+                    table.insert(lines, "Publisher: " .. jeu.editeur.text)
+                end
+                if jeu.dates and #jeu.dates > 0 and jeu.dates[1].text ~= "" then
+                    table.insert(lines, "Year: " .. jeu.dates[1].text)
+                end
+                if jeu.genres and #jeu.genres > 0 then
+                    for _, g in ipairs(jeu.genres) do
+                        if g.noms and g.principale == "1" then
+                            for _, n in ipairs(g.noms) do
+                                if n.langue == "en" then
+                                    table.insert(lines, "Genre: " .. n.text); break
+                                end
+                            end
+                            break
+                        end
+                    end
+                end
+                if jeu.joueurs and jeu.joueurs.text ~= "" then
+                    table.insert(lines, "Players: " .. jeu.joueurs.text)
+                end
+                if jeu.note and jeu.note.text ~= "" then
+                    table.insert(lines, "Rating: " .. jeu.note.text .. "/20")
+                end
+                if jeu.resolution and jeu.resolution ~= "" then
+                    table.insert(lines, "Resolution: " .. jeu.resolution)
+                end
+                if jeu.synopsis and #jeu.synopsis > 0 then
+                    local synopsis = ""
+                    for _, s in ipairs(jeu.synopsis) do
+                        if s.langue == "en" then synopsis = s.text; break end
+                    end
+                    if synopsis == "" then synopsis = jeu.synopsis[1].text end
+                    table.insert(lines, "")
+                    table.insert(lines, "Synopsis:")
+                    synopsis = synopsis:gsub("&quot;", '"')
+                    table.insert(lines, synopsis:match("^%s*(.-)%s*$"))
+                end
+                local ss_url = nil
+                if jeu.medias and #jeu.medias > 0 then
+                    for _, m in ipairs(jeu.medias) do
+                        if m.type == "ss" and m.url and m.url ~= "" then
+                            ss_url = m.url; break
+                        end
+                    end
+                end
+                entry_info:SetText(table.concat(lines, "\n"))
+                if ss_url then
+                    http.get_async(ss_url, { timeout = 10 }, function(img_body, img_status)
+                        if not window_alive or current_details_id ~= r.game_name then return end
+                        if img_status ~= 200 or not img_body or #img_body == 0 then return end
+                        ss_img:SetImageFromMemory(img_body)
+                    end)
+                end
+            end)
+        else
+            entry_info:SetText("Details not available.")
+        end
+    end
+
+    results_tbl:OnSelectionChanged(function()
+        local sel = results_tbl:GetSelection()
+        if sel and #sel > 0 then
+            update_details(sel[1] + 1)
+        else
+            update_details(nil)
+        end
+    end)
+
+    local function do_search()
+        local query = search_entry:Text()
+        if not query or query:match("^%s*$") then
+            status_lbl:SetText("Please enter a search term.")
+            return
+        end
+        local any = false
+        local system_name
+        for _, p in ipairs(SYSTEMS) do
+            system_name = p.sname or p.name
+            if sys_cbs[system_name]:Checked() == 1 then any = true; break end
+        end
+        if not any then
+            status_lbl:SetText("Please select at least one system.")
+            return
+        end
+
+        status_lbl:SetText("Searching...")
+
+        local old_count = #search_results
+        if old_count > MAX_RESULTS then old_count = MAX_RESULTS end
+        for i = old_count, 1, -1 do
+            table.remove(search_results, i)
+            model:RowDeleted(i - 1)
+        end
+
+        for _, p in ipairs(SYSTEMS) do
+            system_name = p.sname or p.name
+            ludo.logInfo("Checking system " .. system_name .. " checkbox: " .. tostring(sys_cbs[system_name]:Checked()))
+            if sys_cbs[system_name]:Checked() == 1 then
+                search_system(p, query, search_results)
+            end
+        end
+
+        for i = 1, #search_results do
+            model:RowInserted(i - 1)
+        end
+
+        update_details(nil)
+        status_lbl:SetText(string.format("Found %d result(s) for '%s'.", #search_results, query))
+    end
+
+    search_btn:OnClicked(function(b, data) do_search() end, nil)
+    search_entry:OnEnter(function(e, data) do_search() end, nil)
+
+    dl_btn:OnClicked(function(b, data)
+        local sel = results_tbl:GetSelection()
+        if not sel or #sel == 0 then
+            status_lbl:SetText("No game selected. Run a search first.")
+            return
+        end
+        local idx = sel[1] + 1
+        if idx < 1 or idx > #search_results then
+            status_lbl:SetText("No game selected.")
+            return
+        end
+        local r = search_results[idx]
+        local outdir = ludo.getOutputDirectory()
+
+        local _, pkg_status, pkg_out = ludo.newDownload(r.rom_url, outdir, ludo.DOWNLOAD_NOW)
+        if pkg_status == 200 or pkg_status == 206 or pkg_status == 0 then
+            ludo.logSuccess("Queued PKG: " .. (pkg_out))
+        else
+            ludo.logError("Preflight HTTP " .. tostring(pkg_status) .. " for " .. r.game_name)
+            ui.MsgBoxError(win, "Download Failed",
+                "Preflight check returned HTTP " .. tostring(pkg_status) .. " for\n" .. r.game_name)
+            return
+        end
+
+        status_lbl:SetText("Download queued: " .. r.game_name)
+
+        window_alive = false
+        win_open = false
+        win:Destroy()
+    end, nil)
+
+    win:OnClosing(function(w, data)
+        window_alive = false
+        win_open = false
+        return 1
+    end, nil)
+    win:Show()
+    search_entry:SetFocus()
+    while win_open do
+        if ui.MainStep(true) == 0 then break end
+    end
+end
+
 local config_path = "lualib/roms/retro.lua"
 local f_config = io.open(config_path, "r")
+
 if not f_config then
-    -- ui.MsgBoxError(win, "Configuration Error", config_path .. " not found")
     f_config = io.open(config_path, "w")
     if not f_config then
         ui.MsgBoxError(win, "Configuration Error", "Cannot create " .. config_path)
         return
     end
     f_config:write("-- Retro Systems Configuration\nlocal SYSTEMS = {\n")
+    local sys_processed = 0
+    local total_used = 0
+    for _, system in ipairs(retro_systems) do
+        if system.used == 1 then total_used = total_used + 1 end
+    end
+    local function on_system_done()
+        sys_processed = sys_processed + 1
+    end
     for i, system in ipairs(retro_systems) do
         if system.used == 1 then
             local csv_name = system.brand .. " - " .. system.name .. ".csv"
@@ -334,313 +623,53 @@ if not f_config then
             local f_csv = io.open(csv_path, "w")
             if f_csv then
                 ludo.logInfo("Processing " .. system.name)
-                generate_csv(system, f_csv)
-                f_csv:close()
-                if system.sname then
-                    f_config:write(string.format("\t{\n\tsname = %q,\n\tname = %q,\n\tfile = %q,\n\tsource_url = %q,\n\tscrape_url = %q,\n\tcol_name = \"game_name\",\n\tcol_ext = \"game_ext\",\n\tcol_size = \"game_size\"\n\t},\n",
-                    system.sname,
-                    system.name,
-                    csv_name,
-                    "https://archive.org/download/ni-roms/roms/" .. system.brand .. " - " .. system.name .. ".zip",
-                    "https://api.screenscraper.fr/api2/jeuRecherche.php?output=json&devid=recalbox&devpassword=C3KbyjX8PKsUgm2tu53y&softname=Emulationstation-Recalbox-9.1&ssid=test&sspassword=test&systemeid=" .. system.id .. "&recherche="
-                    ))
-                else
-                    f_config:write(string.format("\t{\n\tname = %q,\n\tfile = %q,\n\tsource_url = %q,\n\tscrape_url = %q,\n\tcol_name = \"game_name\",\n\tcol_ext = \"game_ext\",\n\tcol_size = \"game_size\"\n\t},\n",
-                    system.name,
-                    csv_name,
-                    "https://archive.org/download/ni-roms/roms/" .. system.brand .. " - " .. system.name .. ".zip",
-                    "https://api.screenscraper.fr/api2/jeuRecherche.php?output=json&devid=recalbox&devpassword=C3KbyjX8PKsUgm2tu53y&softname=Emulationstation-Recalbox-9.1&ssid=test&sspassword=test&systemeid=" .. system.id .. "&recherche="
-                    ))
-                end
-                
-            end
-        end
-    end
-    f_config:write("}\nreturn SYSTEMS\n")
-end
-f_config:close()
-local SYSTEMS = require("roms.retro")
-
-local root = ui.NewVerticalBox()
-root:SetPadded(1)
-
--- System checkboxes
-local sys_group = ui.NewGroup("System")
-sys_group:SetMargined(1)
-local sys_box = ui.NewHorizontalBox()
-sys_box:SetPadded(1)
-local sys_cbs = {}
-for _, p in ipairs(SYSTEMS) do
-    local system_name = p.sname or p.name
-    local cb = ui.NewCheckbox(system_name)
-    cb:SetChecked(1)
-    sys_cbs[system_name] = cb
-    sys_box:Append(cb, false)
-end
-sys_group:SetChild(sys_box)
-root:Append(sys_group, false)
-
--- Search row
-local search_hbox = ui.NewHorizontalBox()
-search_hbox:SetPadded(1)
-search_hbox:Append(ui.NewLabel("Search:"), false)
-local search_entry = ui.NewEntry()
-local search_btn   = ui.NewButton("  Search  ")
-search_hbox:Append(search_entry, true)
-search_hbox:Append(search_btn, false)
-root:Append(search_hbox, false)
-
--- Status label
-local status_lbl = ui.NewLabel("Select systems, type a game name then click Search.")
-root:Append(status_lbl, false)
-
--- Results table (stretchy — takes remaining vertical space)
-root:Append(ui.NewLabel("Results (up to " .. MAX_RESULTS .. "):"), false)
-local results_tbl = ui.NewTable(model)
-results_tbl:AppendTextColumn("#",        COL_NUM,      ui.TableModelColumnNeverEditable)
-results_tbl:AppendTextColumn("System", COL_SYSTEM, ui.TableModelColumnNeverEditable)
-results_tbl:AppendTextColumn("Name",     COL_NAME,     ui.TableModelColumnNeverEditable)
-results_tbl:AppendTextColumn("Info",     COL_INFO,     ui.TableModelColumnNeverEditable)
-results_tbl:SetSelectionMode(ui.TableSelectionModeZeroOrOne)
-results_tbl:ColumnSetWidth(0, 40)
-results_tbl:ColumnSetWidth(1, 80)
-results_tbl:ColumnSetWidth(2, 300)
-results_tbl:ColumnSetWidth(3, 400)
-root:Append(results_tbl, true)
-
--- Game details group
-local det_group = ui.NewGroup("Rom Details")
-det_group:SetMargined(1)
-local det_box = ui.NewHorizontalBox()
-det_box:SetPadded(1)
-local entry_info = ui.NewMultilineEntry()
-entry_info:SetReadOnly(1)
-det_box:Append(entry_info, true)
-local ss_img = ui.NewStaticImage()
-det_box:Append(ss_img, true)
-det_group:SetChild(det_box)
-root:Append(det_group, true)
-
--- Download button
-local dl_btn = ui.NewButton("  Download Selected  ")
-root:Append(dl_btn, false)
-
-win:SetChild(root)
-
--- Callbacks
-local current_details_id = nil
-local function update_details(idx)
-    if not idx or idx < 1 or idx > #search_results then
-        entry_info:SetText("")
-        ss_img:Clear()
-        current_details_id = nil
-        return
-    end
-    local r = search_results[idx]
-    current_details_id = r.game_name
-    ss_img:Clear()
-    local scrape_url = nil
-    for _, p in ipairs(SYSTEMS) do
-        if p.name == r.system then
-            scrape_url = p.scrape_url .. http.url_encode(r.game_name:gsub("%s*%(.*%)%s*", " "):gsub("^%s*(.-)%s*$", "%1"):gsub("%s+", " "):gsub("[^%w%s]", ""))
-            break
-        end
-    end
-    if scrape_url then
-        entry_info:SetText("Loading details...\n" .. scrape_url)
-        ludo.logInfo("Fetching details for " .. r.game_name .. " from " .. scrape_url)
-        http.get_async(scrape_url, { timeout = 30 }, function(body, status)
-            if not window_alive or current_details_id ~= r.game_name then return end
-            if status ~= 200 or not body or #body == 0 then
-                entry_info:SetText("Failed to fetch details (HTTP " .. tostring(status) .. ")\n" .. scrape_url)
-                return
-            end
-            local ok, data = pcall(json.decode, body)
-            if not ok or not data or not data.response or not data.response.jeux then
-                entry_info:SetText("Failed to parse response.")
-                return
-            end
-            local jeu = data.response.jeux[1]  -- Take the first result, which should be the best match
-            if not jeu or not jeu.noms or #jeu.noms == 0 then
-                entry_info:SetText("No details found." .. "\n" .. scrape_url)
-                return
-            end
-            local lines = {}
-            local names = jeu.noms
-            if names and #names > 0 then
-                local name_text = ""
-                for _, n in ipairs(names) do
-                    if n.region == "en" or n.region == "ss" or n.region == "wor" then
-                        name_text = n.text; break
-                    end
-                end
-                if name_text == "" then name_text = names[1].text end
-                table.insert(lines, "Name: " .. name_text)
-            end
-            if jeu.developpeur and jeu.developpeur.text ~= "" then
-                table.insert(lines, "Developer: " .. jeu.developpeur.text)
-            end
-            if jeu.editeur and jeu.editeur.text ~= "" then
-                table.insert(lines, "Publisher: " .. jeu.editeur.text)
-            end
-            if jeu.dates and #jeu.dates > 0 and jeu.dates[1].text ~= "" then
-                table.insert(lines, "Year: " .. jeu.dates[1].text)
-            end
-            if jeu.genres and #jeu.genres > 0 then
-                for _, g in ipairs(jeu.genres) do
-                    if g.noms and g.principale == "1" then
-                        for _, n in ipairs(g.noms) do
-                            if n.langue == "en" then
-                                table.insert(lines, "Genre: " .. n.text); break
-                            end
+                generate_csv(system, f_csv, function(ok)
+                    f_csv:close()
+                    if ok then
+                        if system.sname then
+                            f_config:write(string.format("\t{\n\tsname = %q,\n\tname = %q,\n\tfile = %q,\n\tsource_url = %q,\n\tscrape_url = %q,\n\tcol_name = \"game_name\",\n\tcol_ext = \"game_ext\",\n\tcol_size = \"game_size\"\n\t},\n",
+                            system.sname,
+                            system.name,
+                            csv_name,
+                            "https://archive.org/download/ni-roms/roms/" .. system.brand .. " - " .. system.name .. ".zip",
+                            "https://api.screenscraper.fr/api2/jeuRecherche.php?output=json&devid=recalbox&devpassword=C3KbyjX8PKsUgm2tu53y&softname=Emulationstation-Recalbox-9.1&ssid=test&sspassword=test&systemeid=" .. system.id .. "&recherche="
+                            ))
+                        else
+                            f_config:write(string.format("\t{\n\tname = %q,\n\tfile = %q,\n\tsource_url = %q,\n\tscrape_url = %q,\n\tcol_name = \"game_name\",\n\tcol_ext = \"game_ext\",\n\tcol_size = \"game_size\"\n\t},\n",
+                            system.name,
+                            csv_name,
+                            "https://archive.org/download/ni-roms/roms/" .. system.brand .. " - " .. system.name .. ".zip",
+                            "https://api.screenscraper.fr/api2/jeuRecherche.php?output=json&devid=recalbox&devpassword=C3KbyjX8PKsUgm2tu53y&softname=Emulationstation-Recalbox-9.1&ssid=test&sspassword=test&systemeid=" .. system.id .. "&recherche="
+                            ))
                         end
-                        break
                     end
-                end
-            end
-            if jeu.joueurs and jeu.joueurs.text ~= "" then
-                table.insert(lines, "Players: " .. jeu.joueurs.text)
-            end
-            if jeu.note and jeu.note.text ~= "" then
-                table.insert(lines, "Rating: " .. jeu.note.text .. "/20")
-            end
-            if jeu.resolution and jeu.resolution ~= "" then
-                table.insert(lines, "Resolution: " .. jeu.resolution)
-            end
-            if jeu.synopsis and #jeu.synopsis > 0 then
-                local synopsis = ""
-                for _, s in ipairs(jeu.synopsis) do
-                    if s.langue == "en" then synopsis = s.text; break end
-                end
-                if synopsis == "" then synopsis = jeu.synopsis[1].text end
-                table.insert(lines, "")
-                table.insert(lines, "Synopsis:")
-                -- replace &quot; with actual quotes, and trim whitespace
-                synopsis = synopsis:gsub("&quot;", '"')
-                table.insert(lines, synopsis:match("^%s*(.-)%s*$"))
-            end
-            local ss_url = nil
-            if jeu.medias and #jeu.medias > 0 then
-                for _, m in ipairs(jeu.medias) do
-                    if m.type == "ss" and m.url and m.url ~= "" then
-                        ss_url = m.url; break
-                    end
-                end
-            end
-            entry_info:SetText(table.concat(lines, "\n"))
-            if ss_url then
-                http.get_async(ss_url, { timeout = 30 }, function(img_body, img_status)
-                    if not window_alive or current_details_id ~= r.game_name then return end
-                    if img_status ~= 200 or not img_body or #img_body == 0 then return end
-                    ss_img:SetImageFromMemory(img_body)
+                    on_system_done()
                 end)
+            else
+                on_system_done()
             end
-        end)
-    else
-        entry_info:SetText("Details not available.")
-    end
-end
-
--- Clicking a row in the table updates the details panel.
-results_tbl:OnSelectionChanged(function()
-    local sel = results_tbl:GetSelection()
-    if sel and #sel > 0 then
-        update_details(sel[1] + 1)  -- GetSelection returns 0-based indices
-    else
-        update_details(nil)
-    end
-end)
-
-search_btn:OnClicked(function(b, data)
-    local query = search_entry:Text()
-    if not query or query:match("^%s*$") then
-        status_lbl:SetText("Please enter a search term.")
-        return
-    end
-    local any = false
-    local system_name
-    for _, p in ipairs(SYSTEMS) do
-        system_name = p.sname or p.name
-        if sys_cbs[system_name]:Checked() == 1 then any = true; break end
-    end
-    if not any then
-        status_lbl:SetText("Please select at least one system.")
-        return
-    end
-
-    status_lbl:SetText("Searching...")
-
-    -- Remove all current rows.  Iterate from last to first so that the
-    -- 0-based index passed to RowDeleted is always valid at the time of the
-    -- call (data count decreases by 1 after each removal).
-    local old_count = #search_results
-    if old_count > MAX_RESULTS then old_count = MAX_RESULTS end
-    for i = old_count, 1, -1 do
-        table.remove(search_results, i)
-        model:RowDeleted(i - 1)
-    end
-
-    -- Populate search_results from selected systems.
-    for _, p in ipairs(SYSTEMS) do
-        system_name = p.sname or p.name
-        ludo.logInfo("Checking system " .. system_name .. " checkbox: " .. tostring(sys_cbs[system_name]:Checked()))
-        if sys_cbs[system_name]:Checked() == 1 then
-            search_system(p, query, search_results)
         end
     end
-
-    -- Notify the model about all newly added rows.
-    for i = 1, #search_results do
-        model:RowInserted(i - 1)
-    end
-
-    update_details(nil)
-    status_lbl:SetText(string.format("Found %d result(s) for '%s'.", #search_results, query))
-end, nil)
-
-dl_btn:OnClicked(function(b, data)
-    local sel = results_tbl:GetSelection()
-    if not sel or #sel == 0 then
-        status_lbl:SetText("No game selected. Run a search first.")
-        return
-    end
-    local idx = sel[1] + 1  -- convert 0-based to 1-based Lua index
-    if idx < 1 or idx > #search_results then
-        status_lbl:SetText("No game selected.")
-        return
-    end
-    local r = search_results[idx]
-    local outdir = ludo.getOutputDirectory()
-
-    -- Queue the PKG download.
-    local _, pkg_status, pkg_out = ludo.newDownload(r.rom_url, outdir, ludo.DOWNLOAD_NOW)
-    if pkg_status == 200 or pkg_status == 206 or pkg_status == 0 then
-        ludo.logSuccess("Queued PKG: " .. (pkg_out))
+    if total_used == 0 then
+        f_config:write("}\nreturn SYSTEMS\n")
+        f_config:close()
+        local ok, SYSTEMS = pcall(require, "roms.retro")
+        if ok and SYSTEMS then setup_ui(SYSTEMS) end
     else
-        ludo.logError("Preflight HTTP " .. tostring(pkg_status) .. " for " .. r.game_name)
-        ui.MsgBoxError(win, "Download Failed",
-            "Preflight check returned HTTP " .. tostring(pkg_status) .. " for\n" .. r.game_name)
-        return  -- Don't close window on error
+        while sys_processed < total_used do
+            if ui.MainStep(true) == 0 then break end
+        end
+        f_config:write("}\nreturn SYSTEMS\n")
+        f_config:close()
+        local ok, SYSTEMS = pcall(require, "roms.retro")
+        if ok and SYSTEMS then
+            setup_ui(SYSTEMS)
+        else
+            ui.MsgBoxError(win, "Configuration Error", "Failed to load generated config.")
+        end
     end
-
-    status_lbl:SetText("Download queued: " .. r.game_name)
-
-    -- Close the window: win:Close() does not exist in libuilua.
-    -- Set win_open=false to exit the MainStep loop, then Destroy the window.
-    window_alive = false
-    win_open = false
-    win:Destroy()
-end, nil)
-
--- Show window and drive a nested event loop until the window is closed.
--- Tool scripts must NOT call ui.Main()/ui.Uninit() — Ludo's own event loop
--- is already running.  Use MainStep() instead.
-win:OnClosing(function(w, data)
-    window_alive = false
-    win_open = false
-    return 1
-end, nil)
-win:Show()
-while win_open do
-    if ui.MainStep(true) == 0 then break end
+else
+    f_config:close()
+    local ok, SYSTEMS = pcall(require, "roms.retro")
+    if ok and SYSTEMS then setup_ui(SYSTEMS) end
 end

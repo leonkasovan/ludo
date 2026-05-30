@@ -45,7 +45,7 @@ This project has a CodeGraph MCP server (`codegraph_*` tools) configured. CodeGr
 The MCP server returns "not initialized." Ask the user: *"I notice this project doesn't have CodeGraph initialized. Want me to run `codegraph init -i` to build the index?"*
 <!-- CODEGRAPH_END -->
 
-# Ludo Project Reference
+# Ludo Project Guidance
 
 1. Do not silently guess. State your assumptions clearly. If anything is ambiguous, ask instead of choosing one interpretation silently. If a simpler solution exists, recommend it before implementing.
 2. Solve the requested problem with the minimum necessary code. Do not add features that were not asked for. Do not introduce abstractions for one-time use. Prefer simple, readable code over clever code.
@@ -56,6 +56,7 @@ The MCP server returns "not initialized." Ask the user: *"I notice this project 
 7. Do not accidentally erase meaning while making changes. Preserve comments unless they are clearly outdated. Preserve public interfaces unless changing them is necessary.
 8. Do not continue blindly when the risk is high. Pause and ask if: the request is ambiguous, the codebase contains conflicting patterns, or the task requires an architectural decision.
 9. Before considering the task complete, confirm: the request was actually addressed, the change is no larger than necessary, and the final result matches the requested scope.
+10. Leave comment as is. Don't delete it.
 
 ---
 
@@ -281,37 +282,6 @@ subsequent `ludo.newDownload()` call automatically uses the same cookie jar.
 There is no need to manually pass `Cookie` headers unless you need different
 cookies per download.
 
-### 3.4 Plugin-Specific Notes
-
-| Plugin | Strategy | Auth needed? |
-|--------|----------|-------------|
-| `youtube.lua` | InnerTube API (android_vr/ios client) | No (public) |
-| `instagram.lua` | REST API → GraphQL → embed scrape | `sessionid` cookie for most content |
-| `facebook.lua` | Relay `playable_url` → `browser_native` → VideoConfig → `<video>` | Cookie for most content |
-| `tiktok.lua` | SIGI_STATE → __UNIVERSAL_DATA__ → regex; **WAF bypass via SHA-256 PoW** (yt-dlp technique) | Cookies for private content |
-| `mediafire.lua` | HTML scrape `a.popsok` href | No |
-| `dropbox.lua` | Redirect `?dl=0` → `?dl=1` | No |
-| `gdrive.lua` | Google Drive direct download URL | No (public) |
-| `bluesky.lua` | AT Protocol: resolveHandle → getPostThread → getBlob | No (public) |
-| `twitch.lua` | GraphQL persisted queries for clips (ShareClipRenderStatus); VODs/streams via usher HLS + m3u8 module | No (public) |
-| `baidu.lua` | REST API (xqinfo/xqsingle) → episode list → queue each URL | No (public) |
-| `bigo.lua` | POST API (getInternalStudioInfo) → HLS stream download via m3u8 module | No (public) |
-| `m3u8.lua` | Pure Lua HLS/m3u8 playlist parser + segment downloader (shared module, not a plugin) | No (public m3u8) |
-| `bilibili.lua` | Webpage scrape → __INITIAL_STATE__ → playinfo API → DASH/durl download | No (public) |
-| `dailymotion.lua` | REST API (player metadata endpoint) → direct MP4 or HLS via m3u8 module | No (public) |
-| `telegram.lua` | HTML scrape embed page → `<video src>` → direct MP4 download | No (public) |
-| `tube8.lua` | Flashvars JSON extraction → quality_NNNp direct MP4 URLs | No (public) |
-| `vidio.lua` | REST API (videos/{id}) → HLS playlist → m3u8 module download | No (public) |
-| `pinterest.lua` | Pinterest API (PinResource) → video_list or story_pin_data → MP4/HLS | No (public) |
-| `douyu.lua` | Webpage scrape → $DATA JSON → VOD metadata (stream URLs require JS signing) | No (public VOD metadata) |
-| `xiaohongshu.lua` | Webpage scrape → __INITIAL_STATE__ → direct MP4 URLs (SPA anti-bot blocks non-JS) | No (public, but CAPTCHA blocks) |
-| `youku.lua` | REST API (ups.get.json) with cna/utid → HLS streams → m3u8 module download | No (public) |
-| `iqiyi.lua` | MD5-signed API (tmts) → HLS stream download via m3u8 module | No (public) |
-| `tencent.lua` | AES-CBC-whitespace signed API (getvinfo) → HLS via m3u8 module | No (public) |
-| `bitchute.lua` | REST API (video/media + video + channel) → direct MP4 + seed host fallback | No (public) |
-
----
-
 ## 4. Testing
 
 ### 4.1 Test Commands
@@ -369,37 +339,6 @@ if not ok2 then ludo.logError("process() error: " .. tostring(err)) end
 
 ludo.logInfo("=== MyPlugin test done ===")
 ```
-
-### 4.3 Existing Test Scripts
-
-| Script | Plugin |
-|--------|--------|
-| `install/test_instagram.lua` | instagram.lua |
-| `install/test_tiktok.lua` | tiktok.lua |
-| `install/test_facebook.lua` | facebook.lua |
-| `install/test_bluesky.lua` | bluesky.lua |
-| `install/test_twitch.lua` | twitch.lua |
-| `install/test_baidu.lua` | baidu.lua |
-| `install/test_bigo.lua` | bigo.lua |
-| `install/test_m3u8.lua` | m3u8.lua |
-| `install/test_bilibili.lua` | bilibili.lua |
-| `install/test_dailymotion.lua` | dailymotion.lua |
-| `install/test_telegram.lua` | telegram.lua |
-| `install/test_tube8.lua` | tube8.lua |
-| `install/test_vidio.lua` | vidio.lua |
-| `install/test_pinterest.lua` | pinterest.lua |
-| `install/test_douyu.lua` | douyu.lua |
-| `install/test_xiaohongshu.lua` | xiaohongshu.lua |
-| `install/test_youku.lua` | youku.lua |
-| `install/test_iqiyi.lua` | iqiyi.lua |
-| `install/test_tencent.lua` | tencent.lua |
-| `install/test_bitchute.lua` | bitchute.lua |
-
-### 4.4 Test runner notes
-
-- **Delete logs before runs:** Test scripts should remove `ludo.log` at startup so each run produces a fresh, easy-to-scan log. Several test scripts now perform `pcall(os.remove, "ludo.log")` at the top.
-- **TikTok WAF debugging:** When `plugins/tiktok.lua` encounters a server-side challenge page it will save the fetched HTML to the output directory as `downloads/tiktok_debug_<id>_waf.html` (and a `_waf_retry.html` on mobile-UA retry). The plugin attempts a mobile-UA retry; if the challenge persists the recommended remedies are: provide a fresh `downloads/tiktok_cookies.txt` (Netscape format), run from a different IP/proxy, or use a headless browser extractor to execute page JS and obtain the playable URL.
-
 
 ---
 
