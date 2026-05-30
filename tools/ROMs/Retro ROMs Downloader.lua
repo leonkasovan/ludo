@@ -66,7 +66,7 @@ local retro_systems = {
   { brand = "Bally", name = "Astrocade", size = 295947, id = 44, used = 0 },
   { brand = "Bandai", name = "Design Master Denshi Mangajuku", size = 478363, id = 0, used = 0 },
   { brand = "Bandai", name = "Gundam RX-78", size = 1919566, id = 0, used = 0 },
-  { brand = "Bandai", name = "WonderSwan Color", size = 201375266, id = 45, used = 1 },
+  { brand = "Bandai", name = "WonderSwan Color", size = 201375266, id = 45, used = 1, sname = "WS Color" },
   { brand = "Bandai", name = "WonderSwan", size = 126139611, id = 45, used = 0 },
   { brand = "Bandai", name = "Little Jammer (BIN)", size = 1884551, id = 0, used = 0 },
   { brand = "Bandai", name = "Little Jammer Pro (BIN)", size = 606955, id = 0, used = 0 },
@@ -146,12 +146,12 @@ local retro_systems = {
   { brand = "Nintendo", name = "Game Boy Advance (Play-Yan)", size = 1855188, id = 12, used = 0 },
   { brand = "Nintendo", name = "Game Boy Advance (Video)", size = 3136842225, id = 12, used = 0 },
   { brand = "Nintendo", name = "Game Boy Advance (e-Reader)", size = 12618365, id = 12, used = 0 },
-  { brand = "Nintendo", name = "Game Boy Advance", size = 14451190196, id = 12, used = 1 },
+  { brand = "Nintendo", name = "Game Boy Advance", size = 14451190196, id = 12, used = 1, sname = "GBA" },
   { brand = "Nintendo", name = "Game Boy Color", size = 1034255828, id = 9, used = 0 },
   { brand = "Nintendo", name = "Game Boy", size = 256607123, id = 9, used = 0 },
   { brand = "Nintendo", name = "Kiosk Video Compact Flash (CardImage)", size = 2067499084, id = 0, used = 0 },
   { brand = "Nintendo", name = "Kiosk Video Compact Flash (Extracted)", size = 2009554033, id = 0, used = 0 },
-  { brand = "Nintendo", name = "Nintendo 64 (BigEndian)", size = 15469211933, id = 14, used = 1 },
+  { brand = "Nintendo", name = "Nintendo 64 (BigEndian)", size = 15469211933, id = 14, used = 1, sname = "N64" },
   { brand = "Nintendo", name = "Nintendo 64 (ByteSwapped)", size = 15636762163, id = 14, used = 0 },
   { brand = "Nintendo", name = "Nintendo 64 (Mario no Photopi SmartMedia)", size = 8592242, id = 14, used = 0 },
   { brand = "Nintendo", name = "Nintendo 64DD", size = 299425222, id = 14, used = 0 },
@@ -162,12 +162,12 @@ local retro_systems = {
   { brand = "Nintendo", name = "Nintendo DSi (Digital) (CDN) (Encrypted)", size = 14044058098, id = 15, used = 0 },
   { brand = "Nintendo", name = "Nintendo DSi (Digital)", size = 5279903782, id = 15, used = 0 },
   { brand = "Nintendo", name = "Nintendo DSi (Encrypted)", size = 858115540, id = 15, used = 0 },
-  { brand = "Nintendo", name = "Nintendo Entertainment System (Headered)", size = 1261909450, id = 3, used = 1 },
+  { brand = "Nintendo", name = "Nintendo Entertainment System (Headered)", size = 1261909450, id = 3, used = 1, sname = "NES" },
   { brand = "Nintendo", name = "Nintendo Entertainment System (Unheadered)", size = 1262218050, id = 3, used = 0 },
   { brand = "Nintendo", name = "Pokemon Mini", size = 6089782, id = 211, used = 0 },
   { brand = "Nintendo", name = "Satellaview", size = 156272704, id = 4, used = 0 },
   { brand = "Nintendo", name = "Sufami Turbo", size = 4620821, id = 4, used = 0 },
-  { brand = "Nintendo", name = "Super Nintendo Entertainment System", size = 3755288573, id = 4, used = 1 },
+  { brand = "Nintendo", name = "Super Nintendo Entertainment System", size = 3755288573, id = 4, used = 1, sname = "SNES" },
   { brand = "Nintendo", name = "Virtual Boy", size = 36100528, id = 11, used = 0 },
   { brand = "Nintendo", name = "Wallpapers", size = 3334259813, id = 0, used = 0 },
   { brand = "Nintendo", name = "amiibo", size = 667301, id = 0, used = 0 },
@@ -183,7 +183,7 @@ local retro_systems = {
   { brand = "Sega", name = "Dreamcast (Visual Memory Unit)", size = 11302, id = 23, used = 0 },
   { brand = "Sega", name = "Game Gear", size = 158435993, id = 21, used = 0 },
   { brand = "Sega", name = "Master System - Mark III", size = 113599980, id = 2, used = 0 },
-  { brand = "Sega", name = "Mega Drive - Genesis", size = 2416464290, id = 1, used = 1 },
+  { brand = "Sega", name = "Mega Drive - Genesis", size = 2416464290, id = 1, used = 1, sname = "Genesis" },
   { brand = "Sega", name = "PICO", size = 305374483, id = 250, used = 0 },
   { brand = "Sega", name = "SG-1000", size = 4045314, id = 109, used = 0 },
   { brand = "Seta", name = "Aleck64 (BigEndian)", size = 181637657, id = 0, used = 0 },
@@ -230,7 +230,7 @@ end
 
 local function search_system(system, query, results)
     local filepath = TOOLS_DIR .. "/" .. system.file
-    -- local filepath = system.file
+    ludo.logInfo("Searching using " .. filepath)
     local ok, iter = pcall(ftcsv.parseLine, filepath, "|")
     if not ok then
         ludo.logInfo("Retro ROMs Downloader: cannot open " .. filepath .. ": " .. tostring(iter))
@@ -336,12 +336,23 @@ if not f_config then
                 ludo.logInfo("Processing " .. system.name)
                 generate_csv(system, f_csv)
                 f_csv:close()
-                f_config:write(string.format("\t{\n\tname = %q,\n\tfile = %q,\n\tsource_url = %q,\n\tscrape_url = %q,\n\tcol_name = \"game_name\",\n\tcol_ext = \"game_ext\",\n\tcol_size = \"game_size\"\n\t},\n",
-                system.name,
-                csv_name,
-                "https://archive.org/download/ni-roms/roms/" .. system.brand .. " - " .. system.name .. ".zip",
-                "https://api.screenscraper.fr/api2/jeuRecherche.php?output=json&devid=recalbox&devpassword=C3KbyjX8PKsUgm2tu53y&softname=Emulationstation-Recalbox-9.1&ssid=test&sspassword=test&systemeid=" .. system.id .. "&recherche="
-                ))
+                if system.sname then
+                    f_config:write(string.format("\t{\n\tsname = %q,\n\tname = %q,\n\tfile = %q,\n\tsource_url = %q,\n\tscrape_url = %q,\n\tcol_name = \"game_name\",\n\tcol_ext = \"game_ext\",\n\tcol_size = \"game_size\"\n\t},\n",
+                    system.sname,
+                    system.name,
+                    csv_name,
+                    "https://archive.org/download/ni-roms/roms/" .. system.brand .. " - " .. system.name .. ".zip",
+                    "https://api.screenscraper.fr/api2/jeuRecherche.php?output=json&devid=recalbox&devpassword=C3KbyjX8PKsUgm2tu53y&softname=Emulationstation-Recalbox-9.1&ssid=test&sspassword=test&systemeid=" .. system.id .. "&recherche="
+                    ))
+                else
+                    f_config:write(string.format("\t{\n\tname = %q,\n\tfile = %q,\n\tsource_url = %q,\n\tscrape_url = %q,\n\tcol_name = \"game_name\",\n\tcol_ext = \"game_ext\",\n\tcol_size = \"game_size\"\n\t},\n",
+                    system.name,
+                    csv_name,
+                    "https://archive.org/download/ni-roms/roms/" .. system.brand .. " - " .. system.name .. ".zip",
+                    "https://api.screenscraper.fr/api2/jeuRecherche.php?output=json&devid=recalbox&devpassword=C3KbyjX8PKsUgm2tu53y&softname=Emulationstation-Recalbox-9.1&ssid=test&sspassword=test&systemeid=" .. system.id .. "&recherche="
+                    ))
+                end
+                
             end
         end
     end
@@ -360,9 +371,10 @@ local sys_box = ui.NewHorizontalBox()
 sys_box:SetPadded(1)
 local sys_cbs = {}
 for _, p in ipairs(SYSTEMS) do
-    local cb = ui.NewCheckbox(p.name)
+    local system_name = p.sname or p.name
+    local cb = ui.NewCheckbox(system_name)
     cb:SetChecked(1)
-    sys_cbs[p.name] = cb
+    sys_cbs[system_name] = cb
     sys_box:Append(cb, false)
 end
 sys_group:SetChild(sys_box)
@@ -546,8 +558,10 @@ search_btn:OnClicked(function(b, data)
         return
     end
     local any = false
+    local system_name
     for _, p in ipairs(SYSTEMS) do
-        if sys_cbs[p.name]:Checked() == 1 then any = true; break end
+        system_name = p.sname or p.name
+        if sys_cbs[system_name]:Checked() == 1 then any = true; break end
     end
     if not any then
         status_lbl:SetText("Please select at least one system.")
@@ -568,7 +582,9 @@ search_btn:OnClicked(function(b, data)
 
     -- Populate search_results from selected systems.
     for _, p in ipairs(SYSTEMS) do
-        if sys_cbs[p.name]:Checked() == 1 then
+        system_name = p.sname or p.name
+        ludo.logInfo("Checking system " .. system_name .. " checkbox: " .. tostring(sys_cbs[system_name]:Checked()))
+        if sys_cbs[system_name]:Checked() == 1 then
             search_system(p, query, search_results)
         end
     end
