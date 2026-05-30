@@ -59,6 +59,8 @@ struct uiEntry {
 	NSTextField *textfield;
 	void (*onChanged)(uiEntry *, void *);
 	void *onChangedData;
+	void (*onEnter)(uiEntry *, void *);
+	void *onEnterData;
 };
 
 static BOOL isSearchField(NSTextField *tf)
@@ -71,6 +73,7 @@ static BOOL isSearchField(NSTextField *tf)
 }
 - (id)initWithEntry:(uiEntry *)e;
 - (void)controlTextDidChange:(NSNotification *)notification;
+- (void)controlTextDidEndEditing:(NSNotification *)notification;
 - (IBAction)onChanged:(id)sender;
 @end
 
@@ -87,6 +90,16 @@ static BOOL isSearchField(NSTextField *tf)
 - (void)controlTextDidChange:(NSNotification *)notification
 {
 	[self onChanged:[notification object]];
+}
+
+- (void)controlTextDidEndEditing:(NSNotification *)notification
+{
+	NSNumber *movement = [notification userInfo][@"NSTextMovement"];
+	if (movement && [movement integerValue] == NSReturnTextMovement) {
+		uiEntry *e = self->entry;
+		if (e->onEnter)
+			(*(e->onEnter))(e, e->onEnterData);
+	}
 }
 
 - (IBAction)onChanged:(id)sender
@@ -135,6 +148,12 @@ void uiEntryOnChanged(uiEntry *e, void (*f)(uiEntry *, void *), void *data)
 	e->onChangedData = data;
 }
 
+void uiEntryOnEnter(uiEntry *e, void (*f)(uiEntry *, void *), void *data)
+{
+	e->onEnter = f;
+	e->onEnterData = data;
+}
+
 int uiEntryReadOnly(uiEntry *e)
 {
 	return [e->textfield isEditable] == NO;
@@ -151,6 +170,11 @@ void uiEntrySetReadOnly(uiEntry *e, int readonly)
 }
 
 static void defaultOnChanged(uiEntry *e, void *data)
+{
+	// do nothing
+}
+
+static void defaultOnEnter(uiEntry *e, void *data)
 {
 	// do nothing
 }
@@ -187,6 +211,7 @@ static uiEntry *finishNewEntry(Class class)
 	}
 
 	uiEntryOnChanged(e, defaultOnChanged, NULL);
+	uiEntryOnEnter(e, defaultOnEnter, NULL);
 
 	return e;
 }

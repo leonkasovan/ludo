@@ -7,6 +7,9 @@ struct uiEntry {
 	void (*onChanged)(uiEntry *, void *);
 	void *onChangedData;
 	BOOL inhibitChanged;
+	void (*onEnter)(uiEntry *, void *);
+	void *onEnterData;
+	WNDPROC origWndProc;
 };
 
 static BOOL onWM_COMMAND(uiControl *c, HWND hwnd, WORD code, LRESULT *lResult)
@@ -22,10 +25,36 @@ static BOOL onWM_COMMAND(uiControl *c, HWND hwnd, WORD code, LRESULT *lResult)
 	return TRUE;
 }
 
+static LRESULT CALLBACK entryWndProc(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lParam)
+{
+	uiEntry *e;
+	WNDPROC origProc;
+
+	e = (uiEntry *)GetPropW(hwnd, L"LUDO_ENTRY_PTR");
+	if (e != NULL) {
+		origProc = e->origWndProc;
+		if ((uMsg == WM_KEYDOWN || uMsg == WM_KEYUP) && wParam == VK_RETURN) {
+			if (e->onEnter) {
+				(*(e->onEnter))(e, e->onEnterData);
+				return 0;
+			}
+		}
+		if (uMsg == WM_CHAR && wParam == 0x0D) {
+			if (e->onEnter) {
+				(*(e->onEnter))(e, e->onEnterData);
+				return 0;
+			}
+		}
+		return CallWindowProcW(origProc, hwnd, uMsg, wParam, lParam);
+	}
+	return DefWindowProcW(hwnd, uMsg, wParam, lParam);
+}
+
 static void uiEntryDestroy(uiControl *c)
 {
 	uiEntry *e = uiEntry(c);
 
+	RemovePropW(e->hwnd, L"LUDO_ENTRY_PTR");
 	uiWindowsUnregisterWM_COMMANDHandler(e->hwnd);
 	uiWindowsEnsureDestroyWindow(e->hwnd);
 	uiFreeControl(uiControl(e));
@@ -56,6 +85,11 @@ static void defaultOnChanged(uiEntry *e, void *data)
 	// do nothing
 }
 
+static void defaultOnEnter(uiEntry *e, void *data)
+{
+	// do nothing
+}
+
 char *uiEntryText(uiEntry *e)
 {
 	return uiWindowsWindowText(e->hwnd);
@@ -80,6 +114,12 @@ void uiEntryOnChanged(uiEntry *e, void (*f)(uiEntry *, void *), void *data)
 {
 	e->onChanged = f;
 	e->onChangedData = data;
+}
+
+void uiEntryOnEnter(uiEntry *e, void (*f)(uiEntry *, void *), void *data)
+{
+	e->onEnter = f;
+	e->onEnterData = data;
 }
 
 int uiEntryReadOnly(uiEntry *e)
@@ -107,6 +147,11 @@ static uiEntry *finishNewEntry(DWORD style)
 
 	uiWindowsRegisterWM_COMMANDHandler(e->hwnd, onWM_COMMAND, uiControl(e));
 	uiEntryOnChanged(e, defaultOnChanged, NULL);
+	uiEntryOnEnter(e, defaultOnEnter, NULL);
+
+	// Subclass to intercept WM_KEYDOWN for Enter key
+	SetPropW(e->hwnd, L"LUDO_ENTRY_PTR", (HANDLE)e);
+	e->origWndProc = (WNDPROC)SetWindowLongPtrW(e->hwnd, GWLP_WNDPROC, (LONG_PTR)entryWndProc);
 
 	return e;
 }

@@ -1647,6 +1647,8 @@ url_entry:SetText("https://example.com")
 | `entry:ReadOnly()` → bool | Whether entry is read-only |
 | `entry:SetReadOnly(bool)` | Set read-only state |
 | `entry:OnChanged(fn, data)` | Change handler: `fn(entry, data)` |
+| `entry:OnEnter(fn, data)` | Enter key handler: `fn(entry, data)` |
+| `entry:SetFocus()` | Move keyboard focus to this entry |
 
 ---
 

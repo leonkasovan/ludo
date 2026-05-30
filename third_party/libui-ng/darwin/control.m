@@ -82,3 +82,9 @@ void uiDarwinNotifyVisibilityChanged(uiDarwinControl *c)
 	if (parent != NULL)
 		uiDarwinControlChildVisibilityChanged(uiDarwinControl(parent));
 }
+
+void uiControlSetFocus(uiControl *c)
+{
+	NSView *v = (NSView *)uiControlHandle(c);
+	[[v window] makeFirstResponder:v];
+}

@@ -587,6 +587,12 @@ int l_ControlDestroy(lua_State *L)
 	return 0;
 }
 
+int l_ControlSetFocus(lua_State *L)
+{
+	uiControlSetFocus(CAST_ARG(1, Control));
+	return 0;
+}
+
 
 
 /*
@@ -625,6 +631,18 @@ int l_EntryOnChanged(lua_State *L)
 	RETURN_SELF;
 }
 
+static void on_entry_enter(uiEntry *e, void *data)
+{
+	callback(data, e);
+}
+
+int l_EntryOnEnter(lua_State *L)
+{
+	uiEntryOnEnter(CAST_ARG(1, Entry), on_entry_enter, L);
+	create_callback_data(L, 1, 2, 3);
+	RETURN_SELF;
+}
+
 int l_EntryReadOnly(lua_State *L)
 {
 	lua_pushboolean(L, uiEntryReadOnly(CAST_ARG(1, Entry)));
@@ -641,6 +659,8 @@ static struct luaL_Reg meta_Entry[] = {
 	{ "Text",                 l_EntryText },
 	{ "SetText",              l_EntrySetText },
 	{ "OnChanged",            l_EntryOnChanged },
+	{ "OnEnter",              l_EntryOnEnter },
+	{ "SetFocus",             l_ControlSetFocus },
 	{ "ReadOnly",             l_EntryReadOnly },
 	{ "SetReadOnly",          l_EntrySetReadOnly },
 	{ NULL }
@@ -1451,6 +1471,7 @@ static struct luaL_Reg meta_Window[] = {
 	{ "Visible",             l_ControlVisible },
 	{ "Enabled",             l_ControlEnabled },
 	{ "Destroy",             l_ControlDestroy },
+	{ "SetFocus",            l_ControlSetFocus },
 	{ NULL }
 };
 
@@ -2538,6 +2559,7 @@ static struct luaL_Reg lui_table[] = {
 	{ "ControlVisible",         l_ControlVisible },
 	{ "ControlEnabled",         l_ControlEnabled },
 	{ "ControlDestroy",         l_ControlDestroy },
+	{ "ControlSetFocus",        l_ControlSetFocus },
 
 	/* Dialogs */
 	{ "OpenFile",               l_OpenFile },

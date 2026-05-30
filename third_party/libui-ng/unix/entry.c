@@ -9,6 +9,8 @@ struct uiEntry {
 	void (*onChanged)(uiEntry *, void *);
 	void *onChangedData;
 	gulong onChangedSignal;
+	void (*onEnter)(uiEntry *, void *);
+	void *onEnterData;
 };
 
 uiUnixControlAllDefaults(uiEntry)
@@ -21,6 +23,18 @@ static void onChanged(GtkEditable *editable, gpointer data)
 }
 
 static void defaultOnChanged(uiEntry *e, void *data)
+{
+	// do nothing
+}
+
+static void onEnter(GtkEntry *entry, gpointer data)
+{
+	uiEntry *e = uiEntry(data);
+
+	(*(e->onEnter))(e, e->onEnterData);
+}
+
+static void defaultOnEnter(uiEntry *e, void *data)
 {
 	// do nothing
 }
@@ -43,6 +57,12 @@ void uiEntryOnChanged(uiEntry *e, void (*f)(uiEntry *, void *), void *data)
 {
 	e->onChanged = f;
 	e->onChangedData = data;
+}
+
+void uiEntryOnEnter(uiEntry *e, void (*f)(uiEntry *, void *), void *data)
+{
+	e->onEnter = f;
+	e->onEnterData = data;
 }
 
 int uiEntryReadOnly(uiEntry *e)
@@ -72,6 +92,8 @@ static uiEntry *finishNewEntry(GtkWidget *w, const gchar *signal)
 
 	e->onChangedSignal = g_signal_connect(e->widget, signal, G_CALLBACK(onChanged), e);
 	uiEntryOnChanged(e, defaultOnChanged, NULL);
+	g_signal_connect(e->entry, "activate", G_CALLBACK(onEnter), e);
+	uiEntryOnEnter(e, defaultOnEnter, NULL);
 
 	return e;
 }

@@ -6,6 +6,11 @@ void uiUnixControlSetContainer(uiUnixControl *c, GtkContainer *container, gboole
 	(*(c->SetContainer))(c, container, remove);
 }
 
+void uiControlSetFocus(uiControl *c)
+{
+	gtk_widget_grab_focus(GTK_WIDGET(uiControlHandle(c)));
+}
+
 #define uiUnixControlSignature 0x556E6978
 
 uiUnixControl *uiUnixAllocControl(size_t n, uint32_t typesig, const char *typenamestr)

@@ -119,3 +119,8 @@ void uiWindowsControlNotifyVisibilityChanged(uiWindowsControl *c)
 	// TODO we really need to figure this out; the duplication is a mess
 	uiWindowsControlContinueMinimumSizeChanged(c);
 }
+
+void uiControlSetFocus(uiControl *c)
+{
+	SetFocus((HWND)uiControlHandle(c));
+}

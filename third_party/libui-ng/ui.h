@@ -134,6 +134,14 @@ struct uiControl {
 _UI_EXTERN void uiControlDestroy(uiControl *c);
 
 /**
+ * Sets the keyboard focus to the control.
+ *
+ * @param c uiControl instance.
+ * @memberof uiControl
+ */
+_UI_EXTERN void uiControlSetFocus(uiControl *c);
+
+/**
  * Returns the control's OS-level handle.
  *
  * @param c uiControl instance.
@@ -808,6 +816,20 @@ _UI_EXTERN void uiEntrySetText(uiEntry *e, const char *text);
  * @memberof uiEntry
  */
 _UI_EXTERN void uiEntryOnChanged(uiEntry *e,
+	void (*f)(uiEntry *sender, void *senderData), void *data);
+
+/**
+ * Registers a callback for when the user presses Enter in the entry.
+ *
+ * @param e uiEntry instance.
+ * @param f Callback function.\n
+ *          @p sender Back reference to the instance that initiated the callback.\n
+ *          @p senderData User data registered with the sender instance.\n
+ * @param data User data to be passed to the callback.
+ *
+ * @memberof uiEntry
+ */
+_UI_EXTERN void uiEntryOnEnter(uiEntry *e,
 	void (*f)(uiEntry *sender, void *senderData), void *data);
 
 /**
