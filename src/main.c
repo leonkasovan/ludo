@@ -2,6 +2,9 @@
 #include "download_manager.h"
 #include "config.h"
 #include "thread_queue.h"
+#ifndef BUILD_CONSOLE
+#include "http_module.h"
+#endif
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -126,6 +129,14 @@ int main(int argc, char *argv[]) {
 
     signal(SIGINT, console_signal_handler);
 
+    lua_State *L = lua_engine_create_state();
+    if (!L) {
+        fprintf(stderr, "Failed to create Lua state\n");
+        ludo_subsystem_shutdown();
+        ludo_config_shutdown();
+        return 1;
+    }
+
     int total = 0, handled = 0;
 
     for (int i = 1; i < argc; i++) {
@@ -133,7 +144,7 @@ int main(int argc, char *argv[]) {
         if (argv[i][0] == '-') continue;
         total++;
         fprintf(stderr, "Processing: %s\n", argv[i]);
-        if (lua_engine_process_url(argv[i])) handled++;
+        if (lua_engine_process_url_l(L, argv[i])) handled++;
     }
 
     if (file_path) {
@@ -155,11 +166,13 @@ int main(int argc, char *argv[]) {
                 if (len == 0 || line[0] == '#' || line[0] == ';') continue;
                 total++;
                 fprintf(stderr, "Processing: %s\n", line);
-                if (lua_engine_process_url(line)) handled++;
+                if (lua_engine_process_url_l(L, line)) handled++;
             }
             fclose(f);
         }
     }
+
+    lua_engine_close_state(L);
 
     while (has_active_downloads() && !g_shutdown_requested) msleep(500);
 
@@ -269,7 +282,28 @@ int main(int argc, char *argv[])
 #endif
 
     if (script_path) {
+        /* Initialise libui first so scripts that use async HTTP callbacks
+           (uiQueueMain requires libui's utility window, created in uiInit)
+           and the UI bindings work. */
+        uiInitOptions sopts;
+        memset(&sopts, 0, sizeof(sopts));
+        sopts.Size = sizeof(uiInitOptions);
+        const char *serr = uiInit(&sopts);
+        if (serr) {
+            fprintf(stderr, "uiInit error: %s\n", serr);
+#ifdef _WIN32
+            wchar_t *swerr = utf8_to_wide_dup(serr);
+            MessageBoxW(NULL, swerr ? swerr : L"uiInit error", L"LUDO startup error", MB_ICONERROR | MB_OK);
+            free(swerr);
+            if (argv_w) LocalFree(argv_w);
+#endif
+            uiFreeInitError(serr);
+            free(script_path);
+            ludo_config_shutdown();
+            return 1;
+        }
         if (!ludo_subsystem_init(cfg)) {
+            uiUninit();
             free(script_path);
 #ifdef _WIN32
             if (argv_w) LocalFree(argv_w);
@@ -277,8 +311,11 @@ int main(int argc, char *argv[])
             ludo_config_shutdown();
             return 1;
         }
+        async_http_init();
         int script_ok = lua_engine_run_script(script_path);
+        async_http_shutdown();
         ludo_subsystem_shutdown();
+        uiUninit();
         free(script_path);
 #ifdef _WIN32
         if (argv_w) LocalFree(argv_w);

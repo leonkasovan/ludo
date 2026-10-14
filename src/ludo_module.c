@@ -19,8 +19,38 @@ static void uiMultilineEntryAppend(uiMultilineEntry *e, const char *t) { (void)e
 #include <lualib.h>
 #include <string.h>
 
+/* Defined in main.c; consumed by the GUI url worker thread (plugin pipeline,
+   see gui.c url_worker_thread). Pushed via ludo.addURL(). */
+extern TaskQueue g_url_queue;
+
 static char ludo_tester_bindings_key;
 static char ludo_current_source_url_key;
+
+/* Collect an optional headers table {"Name": "Value", ...} at stack index
+   idx into buf as "Name: Value\n" lines. Returns buf, or NULL when the
+   argument is not a non-empty table. */
+static const char *collect_headers(lua_State *L, int idx, char *buf, size_t bufsz) {
+    int pos = 0, truncated = 0;
+    if (!lua_istable(L, idx)) return NULL;
+    lua_pushnil(L);
+    while (lua_next(L, idx) != 0) {
+        const char *key = lua_tostring(L, -2);
+        const char *val = lua_tostring(L, -1);
+        if (key && val) {
+            if (pos < (int)bufsz - 128) {
+                pos += snprintf(buf + pos, bufsz - pos, "%s: %s\n", key, val);
+            } else {
+                truncated = 1;
+            }
+        }
+        lua_pop(L, 1);
+    }
+    if (truncated) {
+        gui_log(LOG_WARNING, "Extra headers exceeded %d bytes — some headers were dropped",
+                (int)bufsz - 128);
+    }
+    return pos > 0 ? buf : NULL;
+}
 
 /* ------------------------------------------------------------------ */
 /* ludo.newDownload(url, output_dir, mode [, filename])               */
@@ -37,30 +67,7 @@ static int lua_ludo_new_download(lua_State *L) {
 
     /* Collect optional 5th argument: headers table {"Name": "Value", ...} */
     char headers_buf[4096] = {0};
-    const char *extra_headers = NULL;
-    int header_truncated = 0;
-    if (lua_istable(L, 5)) {
-        int pos = 0;
-        lua_pushnil(L);
-        while (lua_next(L, 5) != 0) {
-            const char *key = lua_tostring(L, -2);
-            const char *val = lua_tostring(L, -1);
-            if (key && val) {
-                if (pos < (int)sizeof(headers_buf) - 128) {
-                    pos += snprintf(headers_buf + pos, sizeof(headers_buf) - pos,
-                                    "%s: %s\n", key, val);
-                } else {
-                    header_truncated = 1;
-                }
-            }
-            lua_pop(L, 1);
-        }
-        if (pos > 0) extra_headers = headers_buf;
-    }
-    if (header_truncated) {
-        gui_log(LOG_WARNING, "Extra headers exceeded %d bytes — some headers were dropped",
-                (int)sizeof(headers_buf) - 128);
-    }
+    const char *extra_headers = collect_headers(L, 5, headers_buf, sizeof(headers_buf));
 
     /* Use default output dir if none provided */
     if (!output_dir || output_dir[0] == '\0')
@@ -225,6 +232,92 @@ static int lua_ludo_get_output_dir(lua_State *L) {
 }
 
 /* ------------------------------------------------------------------ */
+/* Agent / download-status APIs                                        */
+/* ------------------------------------------------------------------ */
+
+/* ludo.addURL(url) -> true
+   Push onto the URL queue consumed by the GUI url worker thread (plugin
+   validate/process pipeline with direct-download fallback). Never blocks
+   the caller; the queue copies the string. */
+static int lua_ludo_add_url(lua_State *L) {
+    const char *url = luaL_checkstring(L, 1);
+    if (!url[0]) return luaL_error(L, "addURL: empty url");
+    task_queue_push(&g_url_queue, url);
+    lua_pushboolean(L, 1);
+    return 1;
+}
+
+/* ludo.queueDownload(url [, filename [, headers_table]]) -> id
+   Like newDownload but skips the synchronous HEAD preflight (result=NULL),
+   so it returns immediately and never blocks the caller. The worker thread
+   performs the HEAD probe at transfer start. */
+static int lua_ludo_queue_download(lua_State *L) {
+    const char *url          = luaL_checkstring(L, 1);
+    const char *hint_filename = luaL_optstring(L, 2, NULL);
+    char headers_buf[4096] = {0};
+    const char *extra_headers = collect_headers(L, 3, headers_buf, sizeof(headers_buf));
+    const char *cookie_file = http_module_get_cookie_file(L);
+    int id = download_manager_add(url, NULL, DOWNLOAD_NOW, NULL, hint_filename,
+                                  extra_headers, NULL, cookie_file, NULL);
+    if (id < 0) return luaL_error(L, "queueDownload failed");
+    lua_pushinteger(L, id);
+    return 1;
+}
+
+static void push_status_table(lua_State *L, const DownloadStatus *st) {
+    static const char *state_names[] = {
+        "queued", "running", "paused", "completed", "failed"
+    };
+    lua_newtable(L);
+    lua_pushinteger(L, st->id);
+    lua_setfield(L, -2, "id");
+    lua_pushstring(L, st->filename);
+    lua_setfield(L, -2, "filename");
+    lua_pushstring(L, (st->state >= 0 && st->state < 5) ? state_names[st->state]
+                                                        : "unknown");
+    lua_setfield(L, -2, "state");
+    lua_pushnumber(L, st->progress);
+    lua_setfield(L, -2, "progress");
+    lua_pushnumber(L, st->speed_bps);
+    lua_setfield(L, -2, "speed");
+    lua_pushinteger(L, (lua_Integer)st->total_bytes);
+    lua_setfield(L, -2, "total_bytes");
+    lua_pushinteger(L, (lua_Integer)st->downloaded_bytes);
+    lua_setfield(L, -2, "downloaded_bytes");
+}
+
+/* ludo.downloadStatus(id) -> table | nil */
+static int lua_ludo_download_status(lua_State *L) {
+    int id = (int)luaL_checkinteger(L, 1);
+    DownloadStatus st;
+    if (!download_manager_find_status(id, &st)) {
+        lua_pushnil(L);
+        return 1;
+    }
+    push_status_table(L, &st);
+    return 1;
+}
+
+/* ludo.listDownloads() -> array of status tables (newest first, cap 64) */
+static int lua_ludo_list_downloads(lua_State *L) {
+    DownloadStatus snapshot[64];
+    int n = download_manager_snapshot(snapshot, 64);
+    lua_newtable(L);
+    for (int i = 0; i < n; i++) {
+        push_status_table(L, &snapshot[i]);
+        lua_rawseti(L, -2, i + 1);
+    }
+    return 1;
+}
+
+/* ludo.resumeDownload(id) -> bool */
+static int lua_ludo_resume_download(lua_State *L) {
+    int id = (int)luaL_checkinteger(L, 1);
+    lua_pushboolean(L, download_manager_resume(id) ? 1 : 0);
+    return 1;
+}
+
+/* ------------------------------------------------------------------ */
 /* Module registration                                                  */
 /* ------------------------------------------------------------------ */
 
@@ -236,6 +329,11 @@ static const luaL_Reg ludo_funcs[] = {
     { "logSuccess",        lua_ludo_log_success     },
     { "logInfo",           lua_ludo_log_info        },
     { "getOutputDirectory",lua_ludo_get_output_dir  },
+    { "addURL",            lua_ludo_add_url         },
+    { "queueDownload",     lua_ludo_queue_download  },
+    { "downloadStatus",    lua_ludo_download_status },
+    { "listDownloads",     lua_ludo_list_downloads  },
+    { "resumeDownload",    lua_ludo_resume_download },
     { NULL,                NULL                     }
 };
 

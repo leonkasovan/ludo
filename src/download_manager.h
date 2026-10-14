@@ -4,6 +4,7 @@
 #include <stdint.h>
 #include <stdio.h>
 #include <stdbool.h>
+#include <stdatomic.h>
 #include <curl/curl.h>
 #include "thread_queue.h"
 
@@ -56,7 +57,7 @@ struct Download {
     void            *curl_handle;    /* opaque pointer to active CURL handle, if any */
     FILE            *fp;             /* active file handle for writing, if any */
     size_t           bytes_since_last_flush;
-    volatile int     stop_requested;  /* guarded by list_mutex; volatile for visibility */
+    atomic_int      stop_requested;  /* not guarded by list_mutex in curl callbacks; atomic for thread-safe reads */
     int              marked_for_removal;
     char             extra_headers[4096]; /* optional "Name: Value\n" pairs appended to GET request */
     char             post_data[4096];     /* optional POST body for intercepted browser downloads */
@@ -134,6 +135,10 @@ void download_manager_set_output_dir(const char *output_dir);
 
 /* Lookup a single download by id (thread-safe read) */
 int download_manager_find_status(int id, DownloadStatus *out);
+
+/* Snapshot up to max download statuses (newest first) into out; returns the
+   number written. Thread-safe. */
+int download_manager_snapshot(DownloadStatus *out, int max);
 
 /* Re-dispatch the current status of all downloads to the GUI */
 void download_manager_sync_ui(void);

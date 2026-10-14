@@ -556,7 +556,7 @@ static int xfer_info_cb(void *clientp, curl_off_t dltotal, curl_off_t dlnow,
 
     /* Check cancellation */
     if (*ctx->cancel_flag) return 1; /* aborts transfer */
-    if (ctx->download && ctx->download->stop_requested) return 1;
+    if (ctx->download && atomic_load_explicit(&ctx->download->stop_requested, memory_order_relaxed)) return 1;
 
     /* Throttle GUI updates to once per second to avoid flooding uiQueueMain */
     time_t now = time(NULL);
@@ -625,7 +625,7 @@ static size_t write_cb(char *ptr, size_t size, size_t nmemb, void *userdata) {
         dm_log("[write_cb] id=%d cancelled, aborting", ctx->download_id);
         return 0;
     }
-    if (ctx->download && ctx->download->stop_requested) {
+    if (ctx->download && atomic_load_explicit(&ctx->download->stop_requested, memory_order_relaxed)) {
         dm_log("[write_cb] id=%d stop requested, aborting", ctx->download_id);
         return 0;
     }
@@ -1846,6 +1846,16 @@ int download_manager_find_status(int id, DownloadStatus *out) {
     }
     ludo_mutex_unlock(&g_mgr.list_mutex);
     return found;
+}
+
+int download_manager_snapshot(DownloadStatus *out, int max) {
+    int count = 0;
+    if (!out || max <= 0) return 0;
+    ludo_mutex_lock(&g_mgr.list_mutex);
+    for (Download *d = g_mgr.list; d && count < max; d = d->next)
+        out[count++] = d->status;
+    ludo_mutex_unlock(&g_mgr.list_mutex);
+    return count;
 }
 
 void download_manager_sync_ui(void) {
