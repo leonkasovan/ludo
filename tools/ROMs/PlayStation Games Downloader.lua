@@ -117,6 +117,7 @@ local function search_platform(p, query, results)
                 platform = p.name,
                 title_id = title_id,
                 region   = trim(row[p.col_region]),
+                content_id = trim(row[p.col_content_id] or ""),
                 name     = name,
                 date     = trim(row[p.col_date]):sub(1, 10),
                 size     = trim(row[p.col_size]),
