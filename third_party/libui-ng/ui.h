@@ -4082,6 +4082,48 @@ _UI_EXTERN void uiTableSetSelection(uiTable *t, uiTableSelection *sel);
  */
 _UI_EXTERN void uiFreeTableSelection(uiTableSelection* s);
 
+/**
+ * A WebView control that embeds the Microsoft Edge WebView2 runtime
+ * (Windows only; other platforms get an inert placeholder control).
+ *
+ * All methods must be called from the UI thread. Calls made before the
+ * underlying WebView2 environment finishes its asynchronous
+ * initialization are queued automatically and replayed once ready.
+ */
+typedef struct uiWebView uiWebView;
+#define uiWebView(this) ((uiWebView *) (this))
+
+/**
+ * Creates a new WebView control.
+ *
+ * @return  A new uiWebView instance. Call uiWebViewDestroy() to destroy.
+ */
+_UI_EXTERN uiWebView *uiNewWebView(void);
+
+/**
+ * Renders the supplied UTF-8 HTML string in the WebView.
+ *
+ * @param v    A uiWebView instance.
+ * @param html UTF-8 HTML markup.
+ */
+_UI_EXTERN void uiWebViewSetHTML(uiWebView *v, const char *html);
+
+/**
+ * Navigates the WebView to a URL (http:, https:, or file:).
+ *
+ * @param v    A uiWebView instance.
+ * @param url  UTF-8 URL.
+ */
+_UI_EXTERN void uiWebViewNavigate(uiWebView *v, const char *url);
+
+/**
+ * Executes JavaScript in the current document (fire and forget).
+ *
+ * @param v   A uiWebView instance.
+ * @param js  UTF-8 JavaScript source.
+ */
+_UI_EXTERN void uiWebViewEval(uiWebView *v, const char *js);
+
 #ifdef __cplusplus
 }
 #endif
