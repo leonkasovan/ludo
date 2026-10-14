@@ -926,6 +926,42 @@ int l_NewNonWrappingMultilineEntry(lua_State *L)
 
 
 /*
+ * WebView (Windows WebView2; inert placeholder elsewhere)
+ */
+
+int l_NewWebView(lua_State *L)
+{
+	CREATE_OBJECT(WebView, uiNewWebView());
+	return 1;
+}
+
+int l_WebViewSetHTML(lua_State *L)
+{
+	uiWebViewSetHTML(CAST_ARG(1, WebView), luaL_checkstring(L, 2));
+	return 0;
+}
+
+int l_WebViewNavigate(lua_State *L)
+{
+	uiWebViewNavigate(CAST_ARG(1, WebView), luaL_checkstring(L, 2));
+	return 0;
+}
+
+int l_WebViewEval(lua_State *L)
+{
+	uiWebViewEval(CAST_ARG(1, WebView), luaL_checkstring(L, 2));
+	return 0;
+}
+
+static struct luaL_Reg meta_WebView[] = {
+	{ "SetHTML",              l_WebViewSetHTML },
+	{ "Navigate",             l_WebViewNavigate },
+	{ "Eval",                 l_WebViewEval },
+	{ NULL }
+};
+
+
+/*
  * ProgressBar
  */
 
@@ -2548,8 +2584,9 @@ static struct luaL_Reg lui_table[] = {
 	{ "LoadImageFromMemory",    l_LoadImageFromMemory },
 	{ "ImageAppend",            l_ImageAppend },
 	{ "NewVerticalBox",         l_NewVerticalBox },
-	{ "NewVerticalSeparator",   l_NewVerticalSeparator },
-	{ "NewWindow",              l_NewWindow },
+	{ "NewVerticalSeparator", l_NewVerticalSeparator },
+	{ "NewWebView",           l_NewWebView },
+	{ "NewWindow",            l_NewWindow },
 
 	/* Control base methods (work on any control) */
 	{ "ControlShow",            l_ControlShow },
@@ -2617,6 +2654,7 @@ int luaopen_libuilua(lua_State *L)
 	CREATE_META(Spinbox)
 	CREATE_META(Tab)
 	CREATE_META(Table)
+	CREATE_META(WebView)
 	CREATE_META(Window)
 
 	/* Image meta (not a uiControl, has __gc) */
