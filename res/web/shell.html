@@ -1,0 +1,52 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<style>
+  html { color-scheme: dark; }
+  body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; background: #18181b; color: #f4f4f5; margin: 16px; font-size: 14px; line-height: 1.6; }
+  h1, h2, h3, h4 { margin: 14px 0 8px; line-height: 1.3; }
+  a { color: #60a5fa; }
+  pre { background: #27272a; border-radius: 8px; padding: 12px; overflow-x: auto; border: 1px solid #3f3f46; }
+  code { font-family: 'JetBrains Mono', Consolas, monospace; font-size: 13px; }
+  p code, li code, td code { background: #27272a; padding: 2px 6px; border-radius: 4px; color: #f97316; }
+  blockquote { margin: 8px 0; padding: 4px 12px; border-left: 3px solid #3f3f46; color: #a1a1aa; }
+  table { border-collapse: collapse; margin: 10px 0; }
+  th, td { border: 1px solid #3f3f46; padding: 5px 10px; }
+  th { background: #27272a; }
+  hr { border: none; border-top: 1px solid #3f3f46; margin: 14px 0; }
+  ul, ol { padding-left: 24px; }
+  .msg { margin: 12px 0; }
+  .msg .role { font-size: 11px; text-transform: uppercase; letter-spacing: 0.08em; color: #71717a; margin-bottom: 2px; }
+  .msg-user { border-left: 3px solid #3b82f6; padding-left: 10px; }
+  .msg-assistant { border-left: 3px solid #22c55e; padding-left: 10px; }
+  .msg-system { border-left: 3px solid #f97316; padding-left: 10px; color: #a1a1aa; }
+  .msg-tool { border-left: 3px solid #a1a1aa; padding-left: 10px; color: #a1a1aa; font-style: italic; }
+</style>
+<script src="marked.min.js"></script>
+</head>
+<body>
+<div id="content"></div>
+<script>
+  function renderMarkdown(md) {
+    document.getElementById('content').innerHTML = marked.parse(md);
+  }
+  function appendMessage(role, md) {
+    var box = document.createElement('div');
+    box.className = 'msg msg-' + role;
+    var lbl = document.createElement('div');
+    lbl.className = 'role';
+    lbl.textContent = role;
+    var body = document.createElement('div');
+    body.innerHTML = marked.parse(md);
+    box.appendChild(lbl);
+    box.appendChild(body);
+    document.getElementById('content').appendChild(box);
+    window.scrollTo(0, document.body.scrollHeight);
+  }
+  function clearContent() {
+    document.getElementById('content').innerHTML = '';
+  }
+</script>
+</body>
+</html>
