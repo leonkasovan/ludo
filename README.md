@@ -13,11 +13,14 @@ The application lets you paste URLs in the GUI (or pass them as command-line arg
 
 - GUI downloader app (`libui-ng`) or **console-only CLI** (`ludocon`)
 - Static Lua runtime (`lua-5.2.4` from source)
-- HTTP module exposed to Lua (`http.get`, `http.get_async`, `http.head`, `http.post`, cookies, URL tools)
+- HTTP module exposed to Lua (`http.get`, `http.get_async`, `http.head`, `http.post`, cookie handling, URL tools, `base64_*`, `sha256`)
 - Cookie state shared between `http.*` requests and `ludo.newDownload()` — authenticated sessions carry over automatically
 - AES-128-CBC encryption/decryption exposed to Lua (`http.aes128_cbc_{en,de}crypt`)
+- Zip archive creation exposed to Lua (`zip.create`)
 - HLS/m3u8 playlist parsing and segment download (`plugins/m3u8.lua`)
 - Host module exposed to Lua (`ludo.newDownload`, logging, output-dir helpers)
+- Native `libui-ng` widgets exposed to Lua as the `ui` module (GUI build only)
+- JSON encode/decode available globally (`json.encode`, `json.decode`)
 - Plugin-based URL extraction (`plugins/*.lua`)
 - Worker-threaded download processing and GUI progress updates
 - Runtime settings loaded from `config.ini`
@@ -26,9 +29,18 @@ The application lets you paste URLs in the GUI (or pass them as command-line arg
 
 - `src/` : C source code
 - `plugins/` : Lua extraction plugins
-- `third_party/libui-ng/` : UI library source
+- `lualib/` : Lua support libraries loaded via `require` (e.g. `ftcsv`)
+- `snippets/` : Sample Lua snippets for the GUI/test windows
+- `res/` : GUI resources
+- `tools/` : Standalone Lua tool scripts
+- `config.ini` : Runtime settings
+- `ludo_scripting.md` : Full scripting API reference
 - `third_party/curl-8.19.0/` : curl source
 - `third_party/lua-5.2.4/` : Lua source
+- `third_party/libui-ng/` : UI library source
+- `third_party/libuilua/` : libui-ng Lua bindings
+- `third_party/brotli/`, `third_party/zlib-1.2.8/`, `third_party/zstd-dev/` : compression libraries
+- `third_party/cJSON/`, `third_party/stb/` : helper libraries
 - `CMakeLists.txt` : build configuration
 
 ## Architecture (High Level)
@@ -42,17 +54,24 @@ The application lets you paste URLs in the GUI (or pass them as command-line arg
 
 ## Prerequisites
 
-### Windows (MSYS2 MinGW-64)
+### Windows (w64devkit)
 
-Install toolchain and common tools:
+Use **w64devkit** — a self-contained MinGW-w64 toolchain that bundles GCC,
+CMake and Ninja. All build commands **must** run inside its shell, otherwise
+GCC fails with `cannot execute 'cc1'` (its subprocess directory is not on the
+`PATH`):
 
 ```bash
-pacman -Syu
-pacman -S --needed \
-  mingw-w64-x86_64-toolchain \
-  mingw-w64-x86_64-cmake \
-  mingw-w64-x86_64-ninja \
-  mingw-w64-x86_64-meson
+# Run from the w64devkit terminal (e.g. C:\w64devkit\w64devkit.exe)
+cmake -B build . && cmake --build build --parallel
+```
+
+Alternatively, from `cmd.exe`, put the toolchain on `PATH` first (adjust the
+GCC version directory to match your install):
+
+```bat
+set PATH=C:\w64devkit\bin;C:\w64devkit\libexec\gcc\x86_64-w64-mingw32\15.2.0;%PATH%
+cmake --build build --parallel
 ```
 
 ### Linux (WSL2 Ubuntu 22.04)
@@ -61,7 +80,7 @@ Install toolchain and common tools:
 
 ```bash
 sudo apt update
-sudo apt install pkg-config cmake libssl-dev libgtk-3-dev
+sudo apt install build-essential cmake pkg-config libssl-dev libgtk-3-dev
 ```
 
 > This project builds `libui-ng` from source via CMake; Meson is not required.
@@ -72,6 +91,9 @@ CMake builds two executables:
 |--------|-------------|------------|--------------|
 | `ludo` | GUI downloader (requires libui-ng) | `ludo-debug.exe` | `ludo.exe` |
 | `ludocon` | Console-only CLI (no GUI) | `ludocon-debug.exe` | `ludocon.exe` |
+
+It also builds `wenativehost`, a small native-messaging host that lets the
+companion browser extension send links to Ludo.
 
 ## Workflow
 
@@ -167,10 +189,12 @@ You can run default build with `Ctrl+Shift+B`.
 
 Plugins live in `plugins/` and are loaded at startup.
 
-Included examples:
+The bundled plugins cover many sites (YouTube, Facebook, Instagram, TikTok,
+Twitter/X, Bilibili, and more). The fallback for plain direct links is
+`plugins/generic.lua` (shown in the UI as "Generic Direct Download"); a
+minimal example lives in `snippets/old/example_plugin.lua`.
 
-- `plugins/example_plugin.lua`
-- `plugins/generic_direct_download.lua`
+See `ludo_scripting.md` for the full scripting API reference.
 
 A plugin should return a table and implement:
 
@@ -204,7 +228,7 @@ For `Release` builds, CMake also applies optimization and symbol stripping:
 ```bash
 cmake --build build --target ludo --clean-first --parallel 4
 cmake --install build --prefix install
-./install/ludo.exe
+./install/ludo-debug.exe   # or ludo.exe for a Release build
 ```
 
 ### 2) `cannot open output file ludo.exe: Permission denied`
@@ -212,7 +236,8 @@ cmake --install build --prefix install
 `ludo.exe` is still running and locked. Close it or kill it, then rebuild.
 
 ```bash
-taskkill /IM ludo.exe /F
+taskkill /IM ludo-debug.exe /F   # Debug build
+taskkill /IM ludo.exe /F         # Release build
 cmake --build build --target ludo --parallel 4
 ```
 
@@ -226,10 +251,18 @@ Make sure `plugins/` exists beside the executable. Run `cmake --install build --
 
 ## License
 
-This repository includes third-party components under their own licenses:
+No license file is provided at the repository root; the LUDO sources are
+distributed without an explicit project license.
+
+Third-party components are bundled under their own licenses:
 
 - curl
 - libui-ng
 - Lua
+- brotli
+- zlib
+- zstd
+- cJSON
+- stb
 
 Check each upstream `LICENSE`/`COPYING` file in `third_party/`.
