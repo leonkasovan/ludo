@@ -902,7 +902,43 @@ if not json_str then
 end
 </code></pre>
 
-        <h2 id="4-http-library-http">4. HTTP Library (<code>http</code>)</h2>
+                <h3>4.2b <code>http.post_async(url, body, [options], callback)</code> &rarr; nothing</h3>
+        <p>Perform an asynchronous HTTP POST request. Like <code>http.get_async</code>, the request runs on a background worker thread so the GUI stays responsive, and the callback fires on the main thread when the response arrives.</p>
+        <div class="note">
+            <strong>Available in GUI builds only.</strong> Console builds (<code>ludocon</code>) return <code>nil, "http.post_async requires GUI build"</code>. The callback is <strong>one-shot</strong>. The Lua state must remain alive until the callback fires. Chaining multiple async calls inside their own callbacks (e.g. an LLM tool loop) works naturally &mdash; each callback runs on the UI thread and may queue the next request.
+        </div>
+        <p><strong>Parameters:</strong></p>
+        <ul>
+            <li><code>url</code> (string) &mdash; The URL to post to.</li>
+            <li><code>body</code> (string) &mdash; Raw request body (e.g. JSON). Sent with <code>Content-Type</code> from <code>options.headers</code>, or none if unspecified.</li>
+            <li><code>options</code> (table, optional) &mdash; Same options as <code>http.post</code> (see <a href="#48-options-table">Options Table</a>).</li>
+            <li><code>callback</code> (function) &mdash; Called as <code>callback(body, status, headers)</code>.</li>
+        </ul>
+        <p><strong>Callback arguments:</strong></p>
+        <ul>
+            <li><code>body</code> (string) &mdash; Response body (empty string on error).</li>
+            <li><code>status</code> (number) &mdash; HTTP status code (0 on network error).</li>
+            <li><code>headers</code> (table) &mdash; Response headers as key-value pairs.</li>
+        </ul>
+        <pre><code class="language-lua">-- Non-blocking JSON API call (window stays responsive while waiting)
+http.post_async("https://api.example.com/v1/chat",
+    json.encode({ model = "x", messages = { { role = "user", content = "Hi" } } }),
+    {
+        headers = {
+            ["Authorization"] = "Bearer " .. token,
+            ["Content-Type"]  = "application/json",
+        },
+        timeout = 120,
+    },
+    function(body, status, headers)
+        if status == 200 then
+            local ok, data = pcall(json.decode, body)
+            if ok then label:SetText(data.reply) end
+        else
+            ludo.logError("API failed: HTTP " .. status)
+        end
+    end)</code></pre>
+<h2 id="4-http-library-http">4. HTTP Library (<code>http</code>)</h2>
 
         <p>The <code>http</code> module is registered as a global table. It provides HTTP client functionality backed by libcurl with cookie management, URL utilities, and custom headers.</p>
 
@@ -913,7 +949,7 @@ end
         <p><strong>Parameters:</strong></p>
         <ul>
             <li><code>url</code> (string) — The URL to fetch.</li>
-            <li><code>options</code> (table, optional) — Request options (see <a href="#47-options-table">Options Table</a>).</li>
+            <li><code>options</code> (table, optional) — Request options (see <a href="#48-options-table">Options Table</a>).</li>
         </ul>
 
         <p><strong>Returns:</strong></p>
@@ -957,7 +993,7 @@ end
         <p><strong>Parameters:</strong></p>
         <ul>
             <li><code>url</code> (string) — The URL to fetch.</li>
-            <li><code>options</code> (table) — Request options (see <a href="#47-options-table">Options Table</a>).</li>
+            <li><code>options</code> (table) — Request options (see <a href="#48-options-table">Options Table</a>).</li>
             <li><code>callback</code> (function) — Called as <code>callback(body, status, headers)</code>.</li>
         </ul>
 
@@ -1859,6 +1895,56 @@ local hdrs = ludo.http_tester.response.header()
         <pre><code>lua
 ludo.lua_tester.println("Hello from Lua")
 ludo.lua_tester.printf("Answer: %d", 42)
+</code></pre>
+
+        <h3>6.11 <code>ludo.addURL(url)</code></h3>
+
+        <p>Hand a URL to the same pipeline used by the app's "Add" button and the native-messaging host: a worker thread runs <code>validate()</code>/<code>process()</code> of the first matching plugin in <code>plugins/</code> (fresh copies are loaded per URL), and if no plugin matches, the URL is queued as a direct download. Never blocks the caller.</p>
+
+        <pre><code>lua
+ludo.addURL("https://www.youtube.com/watch?v=dQw4w9WgXcQ")
+</code></pre>
+
+        <h3>6.12 <code>ludo.queueDownload(url [, filename [, headers]])</code> &rarr; id</h3>
+
+        <p>Queue a direct download <strong>without</strong> the synchronous HEAD preflight that <code>newDownload</code> performs &mdash; returns immediately, so it is safe to call from UI-thread scripts (agent tools). The worker thread performs the HEAD probe when the transfer starts.</p>
+
+        <pre><code>lua
+local id = ludo.queueDownload("https://example.com/video.mp4", "video.mp4")
+</code></pre>
+
+        <h3>6.13 <code>ludo.downloadStatus(id)</code> / <code>ludo.listDownloads()</code></h3>
+
+        <p>Query download state (thread-safe reads of the download manager). <code>ludo.downloadStatus(id)</code> returns a status table or <code>nil</code> when the id is unknown; <code>ludo.listDownloads()</code> returns an array of status tables, newest first (capped at 64).</p>
+
+        <table class="api-table">
+            <thead><tr><th>Field</th><th>Type</th><th>Description</th></tr></thead>
+            <tbody>
+                <tr><td><code>id</code></td><td>number</td><td>Download ID</td></tr>
+                <tr><td><code>filename</code></td><td>string</td><td>Current (or URL-derived) filename</td></tr>
+                <tr><td><code>state</code></td><td>string</td><td><code>queued</code> / <code>running</code> / <code>paused</code> / <code>completed</code> / <code>failed</code></td></tr>
+                <tr><td><code>progress</code></td><td>number</td><td>0.0 &ndash; 100.0</td></tr>
+                <tr><td><code>speed</code></td><td>number</td><td>Bytes per second (0 when not running)</td></tr>
+                <tr><td><code>total_bytes</code></td><td>number</td><td>Total size (0 if unknown)</td></tr>
+                <tr><td><code>downloaded_bytes</code></td><td>number</td><td>Bytes downloaded so far</td></tr>
+            </tbody>
+        </table>
+
+        <pre><code>lua
+local st = ludo.downloadStatus(id)
+if st then print(st.state, st.progress .. "%") end
+
+for _, s in ipairs(ludo.listDownloads()) do
+    print(s.id, s.state, s.filename)
+end
+</code></pre>
+
+        <h3>6.14 <code>ludo.resumeDownload(id)</code> &rarr; bool</h3>
+
+        <p>Resume a paused download. Returns <code>true</code> if the download was found and resumed.</p>
+
+        <pre><code>lua
+ludo.resumeDownload(id)
 </code></pre>
 
         <h2 id="7-ui-library-ui">7. UI Library (<code>ui</code>)</h2>
@@ -3220,7 +3306,53 @@ local function update_details(idx)
 end
 </code></pre>
 
-        <h3>7.27 Dialogs</h3>
+        <h3>7.27 WebView (WebView2 / Markdown)</h3>
+
+        <h4><code>ui.NewWebView()</code> → WebView</h4>
+
+        <p>Embeds the Microsoft Edge <strong>WebView2</strong> runtime as a native child control. Windows only — on other platforms it returns an inert placeholder label and the methods do nothing (so scripts can be written without <code>ifdef</code>s).</p>
+
+        <pre><code>local wv = ui.NewWebView()
+box:Append(wv, true)          -- stretchy: the WebView has no intrinsic size
+</code></pre>
+
+        <table class="api-table">
+            <thead>
+                <tr>
+                    <th>Method</th>
+                    <th>Description</th>
+                </tr>
+            </thead>
+            <tbody>
+                <tr>
+                    <td><code>wv:SetHTML(html)</code></td>
+                    <td>Render a UTF-8 HTML string (<code>NavigateToString</code>, ~2 MB cap)</td>
+                </tr>
+                <tr>
+                    <td><code>wv:Navigate(url)</code></td>
+                    <td>Go to an <code>http(s):</code> or <code>file:</code> URL</td>
+                </tr>
+                <tr>
+                    <td><code>wv:Eval(js)</code></td>
+                    <td>Execute JavaScript in the current page (fire and forget)</td>
+                </tr>
+            </tbody>
+        </table>
+
+        <p><strong>Asynchronous init</strong> — the WebView2 controller initializes in the background after <code>ui.NewWebView()</code> returns. Any <code>SetHTML</code> / <code>Navigate</code> / <code>Eval</code> call made before it is ready is queued and replayed in order, so calling them immediately after creation is fine.</p>
+
+        <p><strong>Requirements / fallback</strong> — needs the WebView2 Evergreen Runtime (preinstalled on current Windows 10/11) and <code>WebView2Loader.dll</code> next to <code>ludo.exe</code> (shipped in the install folder). If the runtime is missing the control shows a "WebView2 Runtime not available" message instead of failing.</p>
+
+        <p><strong>Markdown rendering</strong> — <code>res/web/shell.html</code> + <code>res/web/marked.min.js</code> provide a ready-made dark-theme markdown shell with JS entry points <code>renderMarkdown(md)</code>, <code>appendMessage(role, md)</code> (chat bubbles: <code>user</code>/<code>assistant</code>/<code>system</code>/<code>tool</code>) and <code>clearContent()</code>. Pass markdown through <code>json.encode()</code> to build a safe JS string literal. Because <code>SetHTML</code> has no base URL, inline <code>marked.min.js</code> into the shell before loading it (see <code>tools/Agents/Generate Plugin.lua</code>), or <code>Navigate()</code> to a <code>file:///</code> URL instead.</p>
+
+        <pre><code>local wv = ui.NewWebView()
+wv:SetHTML(shell_with_inlined_marked)      -- queued until the controller exists
+wv:Eval("appendMessage('assistant', " .. json.encode(md) .. ");")
+</code></pre>
+
+        <p>All WebView calls must run on the UI thread — agent callbacks (<code>agent.chat_async</code>, <code>http.*_async</code>) already do.</p>
+
+        <h3>7.28 Dialogs</h3>
 
         <p>These functions display native OS dialogs. All require a parent <code>Window</code>.</p>
 
@@ -3267,7 +3399,7 @@ ui.MsgBox(win, "Done", "Download complete!")
 ui.MsgBoxError(win, "Error", "Failed to connect.")
 </code></pre>
 
-        <h3>7.28 Complete Tool Script Example</h3>
+        <h3>7.29 Complete Tool Script Example</h3>
 
         <pre><code>lua
 -- Example tool script (tools/my_tool.lua)
@@ -3323,7 +3455,7 @@ while win_open do
 end
 </code></pre>
 
-        <h3>7.29 Table Tool Example</h3>
+        <h3>7.30 Table Tool Example</h3>
 
         <pre><code>lua
 -- tools/download_list.lua
@@ -4507,6 +4639,11 @@ end
                     <td><code>(url, body [, opts])</code></td>
                     <td><code>body, status, headers</code></td>
                 </tr>
+                    <tr>
+                        <td><code>http.post_async</code></td>
+                        <td><code>(url, body, opts, callback)</code></td>
+                        <td>&mdash; (callback receives <code>body, status, headers</code>)</td>
+                    </tr>
                 <tr>
                     <td><code>http.set_cookie</code></td>
                     <td><code>(filepath)</code></td>
@@ -4620,6 +4757,31 @@ end
                     <td><code>ludo.getOutputDirectory</code></td>
                     <td><code>()</code></td>
                     <td><code>dir</code></td>
+                </tr>
+                <tr>
+                    <td><code>ludo.addURL</code></td>
+                    <td><code>(url)</code></td>
+                    <td><code>true</code></td>
+                </tr>
+                <tr>
+                    <td><code>ludo.queueDownload</code></td>
+                    <td><code>(url [, filename [, headers]])</code></td>
+                    <td><code>id</code></td>
+                </tr>
+                <tr>
+                    <td><code>ludo.downloadStatus</code></td>
+                    <td><code>(id)</code></td>
+                    <td><code>status_table</code> or <code>nil</code></td>
+                </tr>
+                <tr>
+                    <td><code>ludo.listDownloads</code></td>
+                    <td><code>()</code></td>
+                    <td><code>array of status tables</code></td>
+                </tr>
+                <tr>
+                    <td><code>ludo.resumeDownload</code></td>
+                    <td><code>(id)</code></td>
+                    <td><code>bool</code></td>
                 </tr>
                 <tr>
                     <td><code>ludo.http_tester.response.content</code></td>
@@ -4827,6 +4989,26 @@ end
                 <tr>
                     <td><code>ui.DrawBitmap</code></td>
                     <td><code>(ctx, img, x, y, w, h)</code></td>
+                    <td>—</td>
+                </tr>
+                <tr>
+                    <td><code>ui.NewWebView</code></td>
+                    <td><code>()</code></td>
+                    <td><code>WebView</code> (Windows WebView2; stub elsewhere)</td>
+                </tr>
+                <tr>
+                    <td><code>wv:SetHTML</code></td>
+                    <td><code>(html)</code></td>
+                    <td>—</td>
+                </tr>
+                <tr>
+                    <td><code>wv:Navigate</code></td>
+                    <td><code>(url)</code></td>
+                    <td>—</td>
+                </tr>
+                <tr>
+                    <td><code>wv:Eval</code></td>
+                    <td><code>(js)</code></td>
                     <td>—</td>
                 </tr>
             </tbody>

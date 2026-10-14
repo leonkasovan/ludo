@@ -643,7 +643,7 @@ thread when the response arrives.
 
 **Parameters:**
 - `url` (string) — The URL to fetch.
-- `options` (table) — Request options (see [Options Table](#47-options-table)).
+- `options` (table) — Request options (see [Options Table](#48-options-table)).
 - `callback` (function) — Called as `callback(body, status, headers)`.
 
 **Callback arguments:**
@@ -662,6 +662,51 @@ http.get_async("https://myserver.com/image.png",
             end
         else
             ludo.logError("Image load failed: HTTP " .. status)
+        end
+    end)
+```
+
+### 4.2b `http.post_async(url, body, [options], callback)` → nothing
+
+Perform an asynchronous HTTP POST request. Like `http.get_async`, the request
+runs on a background worker thread so the GUI stays responsive, and the
+callback fires on the main thread when the response arrives.
+
+> **Available in GUI builds only.** Console builds (`ludocon`) return `nil, "http.post_async requires GUI build"`.
+> The callback is **one-shot**. The Lua state must remain alive until the callback fires.
+> Chaining multiple async calls inside their own callbacks (e.g. an LLM tool
+> loop) works naturally — each callback runs on the UI thread and may queue
+> the next request.
+
+**Parameters:**
+- `url` (string) — The URL to post to.
+- `body` (string) — Raw request body (e.g. JSON). Sent with `Content-Type`
+  from `options.headers`, or none if unspecified.
+- `options` (table, optional) — Same options as `http.post` (see [Options Table](#48-options-table)).
+- `callback` (function) — Called as `callback(body, status, headers)`.
+
+**Callback arguments:**
+- `body` (string) — Response body (empty string on error).
+- `status` (number) — HTTP status code (0 on network error).
+- `headers` (table) — Response headers as key-value pairs.
+
+```lua
+-- Non-blocking JSON API call (window stays responsive while waiting)
+http.post_async("https://api.example.com/v1/chat",
+    json.encode({ model = "x", messages = { { role = "user", content = "Hi" } } }),
+    {
+        headers = {
+            ["Authorization"] = "Bearer " .. token,
+            ["Content-Type"]  = "application/json",
+        },
+        timeout = 120,
+    },
+    function(body, status, headers)
+        if status == 200 then
+            local ok, data = pcall(json.decode, body)
+            if ok then label:SetText(data.reply) end
+        else
+            ludo.logError("API failed: HTTP " .. status)
         end
     end)
 ```
@@ -1416,6 +1461,84 @@ Writes output to the Lua Tester window's output widget.
 ```lua
 ludo.lua_tester.println("Hello from Lua")
 ludo.lua_tester.printf("Answer: %d", 42)
+```
+
+### 6.11 `ludo.addURL(url)`
+
+Hand a URL to the same pipeline used by the app's "Add" button and the
+native-messaging host: a worker thread runs `validate()`/`process()` of the first
+matching plugin in `plugins/` (fresh copies are loaded per URL), and if no plugin
+matches, the URL is queued as a direct download. Never blocks the caller.
+
+**Parameters:**
+- `url` (string) — Page or file URL (`http`/`https`).
+
+**Returns:**
+- `true` — always (the queue copies the URL; failures surface in the log/UI).
+
+```lua
+ludo.addURL("https://www.youtube.com/watch?v=dQw4w9WgXcQ")
+```
+
+### 6.12 `ludo.queueDownload(url [, filename [, headers]])` -> id
+
+Queue a direct download **without** the synchronous HEAD preflight that
+`newDownload` performs — returns immediately, so it is safe to call from UI-thread
+scripts (agent tools). The worker thread performs the HEAD probe when the transfer
+starts.
+
+**Parameters:**
+- `url` (string) — Direct file/media URL.
+- `filename` (string, optional) — Output filename (basename).
+- `headers` (table, optional) — Extra request headers `{"Name": "Value"}`.
+
+**Returns:**
+- `id` (number) — The assigned download ID (errors throw).
+
+```lua
+local id = ludo.queueDownload("https://example.com/video.mp4", "video.mp4")
+```
+
+### 6.13 `ludo.downloadStatus(id)` / `ludo.listDownloads()`
+
+Query download state (thread-safe reads of the download manager).
+
+- `ludo.downloadStatus(id)` → status table or `nil` when the id is unknown.
+- `ludo.listDownloads()` → array of status tables, newest first (capped at 64).
+
+Status table fields:
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `id` | number | Download ID |
+| `filename` | string | Current (or URL-derived) filename |
+| `state` | string | `queued` / `running` / `paused` / `completed` / `failed` |
+| `progress` | number | 0.0 – 100.0 |
+| `speed` | number | Bytes per second (0 when not running) |
+| `total_bytes` | number | Total size (0 if unknown) |
+| `downloaded_bytes` | number | Bytes downloaded so far |
+
+```lua
+local st = ludo.downloadStatus(id)
+if st then print(st.state, st.progress .. "%") end
+
+for _, s in ipairs(ludo.listDownloads()) do
+    print(s.id, s.state, s.filename)
+end
+```
+
+### 6.14 `ludo.resumeDownload(id)` -> bool
+
+Resume a paused download.
+
+**Parameters:**
+- `id` (number) — The download ID returned by `newDownload`/`queueDownload`.
+
+**Returns:**
+- `bool` — `true` if the download was found and resumed.
+
+```lua
+ludo.resumeDownload(id)
 ```
 
 ---
@@ -2188,7 +2311,61 @@ end
 
 ---
 
-### 7.27 Dialogs
+### 7.27 WebView (WebView2 / Markdown)
+
+#### `ui.NewWebView()` → WebView
+
+Embeds the Microsoft Edge **WebView2** runtime as a native child control.
+Windows only — on other platforms it returns an inert placeholder label and
+the methods do nothing (so scripts can be written without `ifdef`s).
+
+```lua
+local wv = ui.NewWebView()
+box:Append(wv, true)          -- stretchy: the WebView has no intrinsic size
+```
+
+| Method | Description |
+|--------|-------------|
+| `wv:SetHTML(html)` | Render a UTF-8 HTML string (`NavigateToString`, ~2 MB cap) |
+| `wv:Navigate(url)` | Go to an `http(s):` or `file:` URL |
+| `wv:Eval(js)` | Execute JavaScript in the current page (fire and forget) |
+
+**Asynchronous init** — the WebView2 controller initializes in the
+background after `ui.NewWebView()` returns. Any `SetHTML` / `Navigate` /
+`Eval` call made before it is ready is queued and replayed in order, so
+calling them immediately after creation is fine:
+
+```lua
+local wv = ui.NewWebView()
+wv:SetHTML(load_shell())                    -- queued until the controller exists
+wv:Eval("appendMessage('assistant', " .. json.encode(md) .. ");")
+```
+
+**Requirements / fallback** — needs the WebView2 Evergreen Runtime
+(preinstalled on current Windows 10/11) and `WebView2Loader.dll` next to
+`ludo.exe` (shipped in the install folder). If the runtime is missing the
+control shows a "WebView2 Runtime not available" message instead of failing.
+
+**Markdown rendering** — `res/web/shell.html` + `res/web/marked.min.js`
+provide a ready-made dark-theme markdown shell with these JS entry points:
+
+| JS function | Purpose |
+|-------------|---------|
+| `renderMarkdown(md)` | Replace the document with rendered markdown |
+| `appendMessage(role, md)` | Append a colored chat bubble (`user`/`assistant`/`system`/`tool`) |
+| `clearContent()` | Empty the transcript |
+
+Pass markdown through `json.encode()` to build a safe JS string literal.
+Because `SetHTML` has no base URL, inline `marked.min.js` into the shell
+before loading it (see `tools/Agents/Generate Plugin.lua` for the
+helper pattern), or `Navigate()` to a `file:///` URL instead.
+
+All WebView calls must run on the UI thread — agent callbacks
+(`agent.chat_async`, `http.*_async`) already do.
+
+---
+
+### 7.28 Dialogs
 
 These functions display native OS dialogs. All require a parent `Window`.
 
@@ -2214,7 +2391,7 @@ ui.MsgBoxError(win, "Error", "Failed to connect.")
 
 ---
 
-### 7.28 Complete Tool Script Example
+### 7.29 Complete Tool Script Example
 
 ```lua
 -- Example tool script (tools/my_tool.lua)
@@ -2272,7 +2449,7 @@ end
 
 ---
 
-### 7.29 Table Tool Example
+### 7.30 Table Tool Example
 
 ```lua
 -- tools/download_list.lua
@@ -2528,6 +2705,7 @@ return plugin
 | `http.get_async` | `(url, opts, callback)` | — (callback receives `body, status, headers`) |
 | `http.head` | `(url [, opts])` | `body, status, headers` |
 | `http.post` | `(url, body [, opts])` | `body, status, headers` |
+| `http.post_async` | `(url, body, opts, callback)` | — (callback receives `body, status, headers`) |
 | `http.set_cookie` | `(filepath)` | — |
 | `http.clear_cookies` | `()` | — |
 | `http.get_last_url` | `()` | `url` |
@@ -2553,6 +2731,11 @@ return plugin
 | `ludo.logSuccess` | `(msg)` | — |
 | `ludo.logInfo` | `(msg)` | — |
 | `ludo.getOutputDirectory` | `()` | `dir` |
+| `ludo.addURL` | `(url)` | `true` |
+| `ludo.queueDownload` | `(url [, filename [, headers]])` | `id` |
+| `ludo.downloadStatus` | `(id)` | `status_table` or `nil` |
+| `ludo.listDownloads` | `()` | `array of status tables` |
+| `ludo.resumeDownload` | `(id)` | `bool` |
 | `ludo.http_tester.response.content` | `()` | `body` (GUI only) |
 | `ludo.http_tester.response.header` | `()` | `headers` (GUI only) |
 | `ludo.lua_tester.println` | `(msg)` | — (GUI only) |
@@ -2599,6 +2782,10 @@ return plugin
 | `img:Append` | `(pixels, width, height)` | `img` (self) |
 | `ui.NewStaticImage` | `()` | `StaticImage` |
 | `ui.DrawBitmap` | `(ctx, img, x, y, w, h)` | — |
+| `ui.NewWebView` | `()` | `WebView` (Windows WebView2; stub elsewhere) |
+| `wv:SetHTML` | `(html)` | — |
+| `wv:Navigate` | `(url)` | — |
+| `wv:Eval` | `(js)` | — |
 
 ### JSON Functions
 
