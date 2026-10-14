@@ -796,6 +796,9 @@ typedef struct {
     int    header_count;
     char   header_keys[16][256];
     char   header_vals[16][1024];
+    int    method;              /* 0 = GET, 2 = POST */
+    char  *post_data;           /* heap copy of POST body (worker frees) */
+    size_t post_data_len;
 } AsyncHttpTask;
 
 typedef struct {
@@ -925,6 +928,8 @@ void async_http_cancel_all_for_L(lua_State *L) {
             luaL_unref(L, LUA_REGISTRYINDEX, g_async.ring[idx].callback_ref);
             g_async.ring[idx].main_L = NULL;
             g_async.ring[idx].callback_ref = LUA_NOREF;
+            free(g_async.ring[idx].post_data);
+            g_async.ring[idx].post_data = NULL;
             track_dec(L);
         }
         idx = (idx + 1) % g_async.cap;
@@ -1001,11 +1006,19 @@ static void async_http_on_main(void *data) {
     free(r);
 }
 
+static void async_http_task_clear(AsyncHttpTask *task) {
+    free(task->post_data);
+    task->post_data = NULL;
+}
+
 static void *async_http_worker(void *arg) {
     (void)arg;
     AsyncHttpTask task;
     while (async_http_queue_pop(&task)) {
-        if (task.main_L == NULL) continue;
+        if (task.main_L == NULL) {
+            async_http_task_clear(&task);
+            continue;
+        }
         CURL *curl = curl_easy_init();
         if (!curl) continue;
         curl_easy_setopt(curl, CURLOPT_SHARE, download_manager_get_share());
@@ -1029,6 +1042,12 @@ static void *async_http_worker(void *arg) {
         if (task.cookie_file[0]) {
             curl_easy_setopt(curl, CURLOPT_COOKIEFILE, task.cookie_file);
             curl_easy_setopt(curl, CURLOPT_COOKIEJAR,  task.cookie_file);
+        }
+
+        if (task.method == 2 && task.post_data) {
+            curl_easy_setopt(curl, CURLOPT_POST, 1L);
+            curl_easy_setopt(curl, CURLOPT_POSTFIELDS, task.post_data);
+            curl_easy_setopt(curl, CURLOPT_POSTFIELDSIZE, (long)task.post_data_len);
         }
 
         if (task.timeout > 0)
@@ -1070,11 +1089,13 @@ static void *async_http_worker(void *arg) {
 
         curl_slist_free_all(headers);
         curl_easy_cleanup(curl);
+        async_http_task_clear(&task);
     }
     return NULL;
 }
 
 void async_http_init(void) {
+    if (g_async.running) return;   /* already initialized (idempotent) */
     memset(&g_async, 0, sizeof(g_async));
     memset(g_async_track, 0, sizeof(g_async_track));
     g_async.cap = ASYNC_HTTP_QUEUE_CAP;
@@ -1105,10 +1126,15 @@ void async_http_shutdown(void) {
     memset(&g_async, 0, sizeof(g_async));
 }
 
+static void async_http_ensure_init(void) {
+    if (!g_async.running) async_http_init();
+}
+
 static int lua_http_get_async(lua_State *L) {
     const char *url = luaL_checkstring(L, 1);
     int opts_idx = lua_istable(L, 2) ? 2 : 0;
     luaL_checktype(L, 3, LUA_TFUNCTION);
+    async_http_ensure_init();
 
     lua_pushvalue(L, 3);
     int cb_ref = luaL_ref(L, LUA_REGISTRYINDEX);
@@ -1156,12 +1182,93 @@ static int lua_http_get_async(lua_State *L) {
     return 0;
 }
 
+/* http.post_async(url, body, [opts], callback) -> bool [, err]
+ * Asynchronous POST for GUI builds. Runs on the async worker thread;
+ * the callback is invoked on the main/UI thread as
+ *   callback(body, status, headers)
+ * just like http.get_async. */
+static int lua_http_post_async(lua_State *L) {
+    const char *url = luaL_checkstring(L, 1);
+    size_t body_len = 0;
+    const char *body = luaL_optlstring(L, 2, "", &body_len);
+    int opts_idx = 0;
+    int cb_idx;
+    if (lua_istable(L, 3)) {
+        opts_idx = 3;
+        cb_idx = 4;
+    } else {
+        cb_idx = 3;
+    }
+    luaL_checktype(L, cb_idx, LUA_TFUNCTION);
+    async_http_ensure_init();
+
+    lua_pushvalue(L, cb_idx);
+    int cb_ref = luaL_ref(L, LUA_REGISTRYINDEX);
+
+    AsyncHttpTask task;
+    memset(&task, 0, sizeof(task));
+    strncpy(task.url, url, sizeof(task.url) - 1);
+    task.callback_ref = cb_ref;
+    task.main_L = L;
+    task.timeout = 30;
+    task.method = 2;
+
+    task.post_data = (char *)malloc(body_len + 1);
+    if (task.post_data) {
+        memcpy(task.post_data, body, body_len);
+        task.post_data[body_len] = '\0';
+        task.post_data_len = body_len;
+    }
+
+    if (opts_idx) {
+        lua_getfield(L, opts_idx, "user_agent");
+        if (lua_isstring(L, -1))
+            strncpy(task.user_agent, lua_tostring(L, -1), sizeof(task.user_agent) - 1);
+        lua_pop(L, 1);
+
+        lua_getfield(L, opts_idx, "timeout");
+        if (lua_isnumber(L, -1))
+            task.timeout = lua_tointeger(L, -1);
+        lua_pop(L, 1);
+
+        lua_getfield(L, opts_idx, "headers");
+        if (lua_istable(L, -1)) {
+            lua_pushnil(L);
+            while (lua_next(L, -2) && task.header_count < 16) {
+                const char *k = lua_tostring(L, -2);
+                const char *v = lua_tostring(L, -1);
+                if (k && v) {
+                    strncpy(task.header_keys[task.header_count], k, 255);
+                    strncpy(task.header_vals[task.header_count], v, 1023);
+                    task.header_count++;
+                }
+                lua_pop(L, 1);
+            }
+        }
+        lua_pop(L, 1);
+    }
+
+    HttpSession *s = get_session(L);
+    if (s && s->cookie_file[0])
+        strncpy(task.cookie_file, s->cookie_file, sizeof(task.cookie_file) - 1);
+
+    async_http_queue_push(&task);
+    return 0;
+}
+
 #else /* BUILD_CONSOLE */
 
 static int lua_http_get_async(lua_State *L) {
     (void)L;
     lua_pushnil(L);
     lua_pushstring(L, "http.get_async requires GUI build");
+    return 2;
+}
+
+static int lua_http_post_async(lua_State *L) {
+    (void)L;
+    lua_pushnil(L);
+    lua_pushstring(L, "http.post_async requires GUI build");
     return 2;
 }
 
@@ -1311,6 +1418,7 @@ static const luaL_Reg http_funcs[] = {
     { "get_async",    lua_http_get_async   },
     { "head",         lua_http_head        },
     { "post",         lua_http_post        },
+    { "post_async",   lua_http_post_async  },
     { "set_cookie",   lua_http_set_cookie  },
     { "clear_cookies",lua_http_clear_cookies },
     { "get_last_url", lua_http_get_last_url },
