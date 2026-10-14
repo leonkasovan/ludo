@@ -350,6 +350,10 @@ if(WIN32)
         comdlg32 d2d1 dwrite ole32 oleaut32 oleacc usp10
         gdiplus windowscodecs
     )
+
+    # WebView2 (windows/webview.cpp): vendored SDK headers + MinGW import lib
+    target_include_directories(libui_static PRIVATE ${CMAKE_SOURCE_DIR}/third_party/WebView2/include)
+    target_link_libraries(libui_static INTERFACE ${CMAKE_SOURCE_DIR}/third_party/WebView2/lib/libWebView2Loader.a)
 elseif(APPLE)
     target_link_libraries(libui_static INTERFACE "-framework Cocoa")
 else()
@@ -512,11 +516,16 @@ endif()
 install(TARGETS ludo DESTINATION .)
 install(DIRECTORY res/ DESTINATION res)
 install(DIRECTORY tools/ DESTINATION tools)
+if(WIN32)
+    # WebView2 loader next to the exe (required by windows/webview.cpp)
+    install(FILES ${CMAKE_SOURCE_DIR}/third_party/WebView2/bin/WebView2Loader.dll DESTINATION .)
+endif()
 endif()
 
 # Common asset install rules (shared by ludo and ludocon)
 install(FILES config.ini DESTINATION .)
 install(FILES ludo_scripting.htm DESTINATION .)
+install(FILES ludo_scripting.md DESTINATION .)
 install(DIRECTORY plugins/ DESTINATION plugins)
 install(DIRECTORY snippets/ DESTINATION snippets)
 install(DIRECTORY lualib/ DESTINATION lualib)
