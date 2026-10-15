@@ -210,10 +210,15 @@ static struct curl_slist *apply_options(lua_State *L, CURL *curl, int opts_idx) 
         lua_pushnil(L);
         while (lua_next(L, -2)) {
             if (lua_isstring(L, -2) && lua_isstring(L, -1)) {
-                char hdr[1024];
-                snprintf(hdr, sizeof(hdr), "%s: %s",
-                         lua_tostring(L, -2), lua_tostring(L, -1));
-                headers = curl_slist_append(headers, hdr);
+                const char *hkey = lua_tostring(L, -2);
+                const char *hval = lua_tostring(L, -1);
+                size_t hlen = strlen(hkey) + 2 + strlen(hval) + 1;
+                char *hdr = (char *)malloc(hlen);
+                if (hdr) {
+                    snprintf(hdr, hlen, "%s: %s", hkey, hval);
+                    headers = curl_slist_append(headers, hdr);
+                    free(hdr);
+                }
             }
             lua_pop(L, 1);
         }
@@ -795,7 +800,7 @@ typedef struct {
     lua_State *main_L;
     int    header_count;
     char   header_keys[16][256];
-    char   header_vals[16][1024];
+    char  *header_vals[16];
     int    method;              /* 0 = GET, 2 = POST */
     char  *post_data;           /* heap copy of POST body (worker frees) */
     size_t post_data_len;
@@ -884,7 +889,8 @@ static struct {
     int             running;
 } g_async;
 
-static void async_http_queue_push(AsyncHttpTask *task) {
+static int async_http_queue_push(AsyncHttpTask *task) {
+    int accepted = 0;
     ludo_mutex_lock(&g_async.mutex);
     while (g_async.count == g_async.cap && !g_async.shutdown) {
         ludo_cond_wait(&g_async.not_full, &g_async.mutex);
@@ -896,8 +902,10 @@ static void async_http_queue_push(AsyncHttpTask *task) {
         g_async.count++;
         track_inc(task->main_L);
         ludo_cond_broadcast(&g_async.not_empty);
+        accepted = 1;
     }
     ludo_mutex_unlock(&g_async.mutex);
+    return accepted;
 }
 
 static int async_http_queue_pop(AsyncHttpTask *out) {
@@ -918,6 +926,17 @@ static int async_http_queue_pop(AsyncHttpTask *out) {
     return 1;
 }
 
+static void async_http_task_clear(AsyncHttpTask *task) {
+    for (int i = 0; i < task->header_count; i++) {
+        free(task->header_vals[i]);
+        task->header_vals[i] = NULL;
+    }
+    task->header_count = 0;
+    free(task->post_data);
+    task->post_data = NULL;
+    task->post_data_len = 0;
+}
+
 void async_http_cancel_all_for_L(lua_State *L) {
     if (!g_async.running) return;
     ludo_mutex_lock(&g_async.mutex);
@@ -928,8 +947,7 @@ void async_http_cancel_all_for_L(lua_State *L) {
             luaL_unref(L, LUA_REGISTRYINDEX, g_async.ring[idx].callback_ref);
             g_async.ring[idx].main_L = NULL;
             g_async.ring[idx].callback_ref = LUA_NOREF;
-            free(g_async.ring[idx].post_data);
-            g_async.ring[idx].post_data = NULL;
+            async_http_task_clear(&g_async.ring[idx]);
             track_dec(L);
         }
         idx = (idx + 1) % g_async.cap;
@@ -1006,11 +1024,6 @@ static void async_http_on_main(void *data) {
     free(r);
 }
 
-static void async_http_task_clear(AsyncHttpTask *task) {
-    free(task->post_data);
-    task->post_data = NULL;
-}
-
 static void *async_http_worker(void *arg) {
     (void)arg;
     AsyncHttpTask task;
@@ -1020,7 +1033,7 @@ static void *async_http_worker(void *arg) {
             continue;
         }
         CURL *curl = curl_easy_init();
-        if (!curl) continue;
+        if (!curl) { async_http_task_clear(&task); continue; }
         curl_easy_setopt(curl, CURLOPT_SHARE, download_manager_get_share());
 
         StrBuf body_buf    = {0};
@@ -1055,10 +1068,15 @@ static void *async_http_worker(void *arg) {
 
         struct curl_slist *headers = NULL;
         for (int i = 0; i < task.header_count; i++) {
-            char hdr[1280];
-            snprintf(hdr, sizeof(hdr), "%s: %s",
-                     task.header_keys[i], task.header_vals[i]);
-            headers = curl_slist_append(headers, hdr);
+            const char *hkey = task.header_keys[i];
+            const char *hval = task.header_vals[i] ? task.header_vals[i] : "";
+            size_t hlen = strlen(hkey) + 2 + strlen(hval) + 1;
+            char *hdr = (char *)malloc(hlen);
+            if (hdr) {
+                snprintf(hdr, hlen, "%s: %s", hkey, hval);
+                headers = curl_slist_append(headers, hdr);
+                free(hdr);
+            }
         }
         if (headers)
             curl_easy_setopt(curl, CURLOPT_HTTPHEADER, headers);
@@ -1164,9 +1182,14 @@ static int lua_http_get_async(lua_State *L) {
                 const char *k = lua_tostring(L, -2);
                 const char *v = lua_tostring(L, -1);
                 if (k && v) {
-                    strncpy(task.header_keys[task.header_count], k, 255);
-                    strncpy(task.header_vals[task.header_count], v, 1023);
-                    task.header_count++;
+                    char *dup = (char *)malloc(strlen(v) + 1);
+                    if (dup) {
+                        strncpy(task.header_keys[task.header_count], k, 255);
+                        task.header_keys[task.header_count][255] = '\0';
+                        strcpy(dup, v);
+                        task.header_vals[task.header_count] = dup;
+                        task.header_count++;
+                    }
                 }
                 lua_pop(L, 1);
             }
@@ -1178,7 +1201,10 @@ static int lua_http_get_async(lua_State *L) {
     if (s && s->cookie_file[0])
         strncpy(task.cookie_file, s->cookie_file, sizeof(task.cookie_file) - 1);
 
-    async_http_queue_push(&task);
+    if (!async_http_queue_push(&task)) {
+        async_http_task_clear(&task);
+        luaL_unref(L, LUA_REGISTRYINDEX, cb_ref);
+    }
     return 0;
 }
 
@@ -1238,9 +1264,14 @@ static int lua_http_post_async(lua_State *L) {
                 const char *k = lua_tostring(L, -2);
                 const char *v = lua_tostring(L, -1);
                 if (k && v) {
-                    strncpy(task.header_keys[task.header_count], k, 255);
-                    strncpy(task.header_vals[task.header_count], v, 1023);
-                    task.header_count++;
+                    char *dup = (char *)malloc(strlen(v) + 1);
+                    if (dup) {
+                        strncpy(task.header_keys[task.header_count], k, 255);
+                        task.header_keys[task.header_count][255] = '\0';
+                        strcpy(dup, v);
+                        task.header_vals[task.header_count] = dup;
+                        task.header_count++;
+                    }
                 }
                 lua_pop(L, 1);
             }
@@ -1252,7 +1283,10 @@ static int lua_http_post_async(lua_State *L) {
     if (s && s->cookie_file[0])
         strncpy(task.cookie_file, s->cookie_file, sizeof(task.cookie_file) - 1);
 
-    async_http_queue_push(&task);
+    if (!async_http_queue_push(&task)) {
+        async_http_task_clear(&task);
+        luaL_unref(L, LUA_REGISTRYINDEX, cb_ref);
+    }
     return 0;
 }
 
@@ -1329,9 +1363,13 @@ int http_raw_get(const char *url, const char *headers_str, HttpRawResult *result
                     *colon = '\0';
                     const char *v = colon + 1;
                     while (*v == ' ' || *v == '\t') v++;
-                    char hdr[2048];
-                    snprintf(hdr, sizeof(hdr), "%s: %s", p, v);
-                    custom_hdrs = curl_slist_append(custom_hdrs, hdr);
+                    size_t hlen = strlen(p) + 2 + strlen(v) + 1;
+                    char *hdr = (char *)malloc(hlen);
+                    if (hdr) {
+                        snprintf(hdr, hlen, "%s: %s", p, v);
+                        custom_hdrs = curl_slist_append(custom_hdrs, hdr);
+                        free(hdr);
+                    }
                 }
                 p = end ? end + 1 : NULL;
             }
