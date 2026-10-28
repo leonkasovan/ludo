@@ -32,10 +32,10 @@
 /* Path constants for persistence */
 #define DB_PATH      "dl_items.db"
 #define ARCHIVE_PATH "dl_history.gz"
-#define DB_MAX_BYTES 10240   /* 10 KB — archive trigger */
+#define ARCHIVE_MAX_RECORDS 500  /* history entries restored at startup */
 
 /* ------------------------------------------------------------------ */
-/* Debug logging (writes to dm_debug.log; thread-safe, runtime toggle) */
+/* Debug logging (writes to ludo.log; thread-safe, always on) */
 /* ------------------------------------------------------------------ */
 
 #include <stdarg.h>
@@ -58,18 +58,12 @@ static int dm_remove_utf8(const char *path);
 void dm_log_init(void) {
     if (!g_log_mutex_init) { ludo_mutex_init(&g_log_mutex); g_log_mutex_init = 1; }
 
-#ifdef DEBUG
+    /* ludo.log is the application log, not only a debug channel: keep it
+       enabled in every build so ludo.log*()/gui_log() output survives a
+       Release run. Append so a previous session is not truncated. */
     g_log_enabled = 1;
-#else
-    /* Allow users to enable debug logging at runtime via environment variable */
-    const char *env = getenv("LUDO_DEBUG");
-    g_log_enabled = (env && (env[0] == '1' || env[0] == 'y' || env[0] == 'Y' ||
-                             env[0] == 't' || env[0] == 'T'));
-#endif
 
-    if (!g_log_enabled) return;
-
-    g_log_fp = fopen_utf8("ludo.log", "w");
+    g_log_fp = fopen_utf8("ludo.log", "a");
     if (!g_log_fp) { g_log_enabled = 0; return; }
     /* Header line so runs are separated */
     fprintf(g_log_fp, "\n===== dm session start =====\n");
@@ -139,8 +133,6 @@ struct HeaderCtx {
     char filename[512];   /* set if Content-Disposition provides one */
     int  has_filename;
     int  download_id;     /* filled by perform_download so header_cb can dispatch */
-    char raw_headers[8192];
-    size_t raw_headers_len;
     int64_t content_length; /* parsed or obtained from HEAD */
     long response_code;   /* parsed from the HTTP status line */
 };
@@ -148,7 +140,6 @@ struct HeaderCtx {
 /* Forward declare gui_dispatch_update so header_cb may call it before its
    static definition later in this file. */
 static void gui_dispatch_update(const ProgressUpdate *update);
-static void header_ctx_append_line(HeaderCtx *hctx, const char *line);
 static void decode_filename_component(const char *src, char *dst, size_t dst_sz);
 static void header_ctx_set_filename(HeaderCtx *hctx, const char *src, size_t len);
 /* curl header callback — extracts filename from Content-Disposition */
@@ -168,7 +159,6 @@ static size_t header_cb(char *buf, size_t size, size_t nitems, void *userdata)
         else break;
     }
 
-    header_ctx_append_line(hctx, line);
 #ifdef DEBUG
     dm_log("[curl response header] %s", line);
 #endif
@@ -296,29 +286,6 @@ static void gui_dispatch_update(const ProgressUpdate *update) {
     uiQueueMain(gui_update_on_main, pkt);
 }
 
-static void header_ctx_append_line(HeaderCtx *hctx, const char *line) {
-    size_t len;
-    size_t copy_len;
-
-    if (!hctx || !line || line[0] == '\0') return;
-
-    len = strlen(line);
-    if (hctx->raw_headers_len >= sizeof(hctx->raw_headers) - 1) return;
-
-    copy_len = len;
-    if (hctx->raw_headers_len + copy_len + 1 >= sizeof(hctx->raw_headers)) {
-        copy_len = (sizeof(hctx->raw_headers) - 1) - hctx->raw_headers_len;
-    }
-    if (copy_len > 0) {
-        memcpy(hctx->raw_headers + hctx->raw_headers_len, line, copy_len);
-        hctx->raw_headers_len += copy_len;
-    }
-    if (hctx->raw_headers_len < sizeof(hctx->raw_headers) - 1) {
-        hctx->raw_headers[hctx->raw_headers_len++] = '\n';
-    }
-    hctx->raw_headers[hctx->raw_headers_len] = '\0';
-}
-
 static int dm_hex_value(int ch) {
     if (ch >= '0' && ch <= '9') return ch - '0';
     ch = tolower((unsigned char)ch);
@@ -433,6 +400,10 @@ static void probe_download_head(const char *url, HeaderCtx *hctx, const char *co
     curl_easy_setopt(head, CURLOPT_HEADERDATA, hctx);
     curl_easy_setopt(head, CURLOPT_FOLLOWLOCATION, 1L);
     curl_easy_setopt(head, CURLOPT_MAXREDIRS, (long)(cfg ? cfg->max_redirect : 10));
+    /* Bound a synchronous preflight so a stalling server cannot block the
+       URL worker thread indefinitely. */
+    curl_easy_setopt(head, CURLOPT_CONNECTTIMEOUT, 10L);
+    curl_easy_setopt(head, CURLOPT_TIMEOUT, 30L);
     curl_easy_setopt(head, CURLOPT_USERAGENT,
                      "Mozilla/5.0 (Windows NT 10.0; Win64; x64)");
     curl_easy_setopt(head, CURLOPT_COOKIEFILE, ""); /* activate in-memory jar */
@@ -564,6 +535,14 @@ static int xfer_info_cb(void *clientp, curl_off_t dltotal, curl_off_t dlnow,
     time_t prev_tick = ctx->last_ui_tick;
     ctx->last_ui_tick = now;
 
+    /* Sample the transfer speed once per update; curl_easy_getinfo has its
+       own internal locking, so this does not need list_mutex. */
+    curl_off_t curl_speed = 0;
+    double speed_bps;
+    if (curl_easy_getinfo(ctx->curl, CURLINFO_SPEED_DOWNLOAD_T, &curl_speed) != CURLE_OK)
+        curl_speed = 0;
+    speed_bps = (double)curl_speed;
+
     ludo_mutex_lock(&g_mgr.list_mutex);
     Download *d = NULL;
     for (Download *it = g_mgr.list; it; it = it->next) {
@@ -588,30 +567,15 @@ static int xfer_info_cb(void *clientp, curl_off_t dltotal, curl_off_t dlnow,
                         : 0.0;
         /* Only mark RUNNING if not paused (checked above) */
         d->status.state = DOWNLOAD_STATE_RUNNING;
-
-        /* Compute instantaneous speed (bytes/sec) via libcurl's moving average */
-        curl_off_t curl_speed = 0;
-        if (d) {
-            if (curl_easy_getinfo(ctx->curl, CURLINFO_SPEED_DOWNLOAD_T, &curl_speed) == CURLE_OK) {
-                d->status.speed_bps = (double)curl_speed;
-            } else {
-                d->status.speed_bps = 0.0;
-            }
-        }
+        d->status.speed_bps = speed_bps;
     }
     ProgressUpdate upd = {0};
     if (d) {
         upd.status = d->status;  // copy under lock
-        upd.status.speed_bps = 0.0;
     }
     ludo_mutex_unlock(&g_mgr.list_mutex);
 
     if (d) {
-        /* Compute speed outside the lock — curl_easy_getinfo has its own internal locking */
-        curl_off_t curl_speed = 0;
-        if (curl_easy_getinfo(ctx->curl, CURLINFO_SPEED_DOWNLOAD_T, &curl_speed) == CURLE_OK) {
-            upd.status.speed_bps = (double)curl_speed;
-        }
         gui_dispatch_update(&upd);
     }
 
@@ -1063,30 +1027,54 @@ static void sanitize_field(const char *src, char *dst, size_t dst_sz) {
     dst[pos] = '\0';
 }
 
-static void db_save_and_archive(void) {
-    /* Check if the existing DB has crossed the archive threshold */
-#ifdef _WIN32
-    struct _stat64 st;
-#else
-    struct stat st;
-#endif
-     /* Only trigger archiving when the existing DB exceeds the size threshold.
-         Previously this was replaced by an existence-only check which prevented
-         the intended size-based archival behavior. */
-     int trigger_archive = (dm_stat_utf8(DB_PATH, &st) == 0 && st.st_size >= DB_MAX_BYTES);
+/* Format one record as a TAB-separated line (no trailing newline). */
+static void db_format_record(char *buf, size_t bufsz, const Download *d) {
+    char s_url[4096];
+    char s_output_dir[1024];
+    char s_filename[512];
+    char s_original_url[4096];
+    int has_distinct_original;
+    /* Prefer the preserved user-supplied original URL for the primary
+       DB URL field so redirects do not overwrite what the user entered. */
+    const char *url_to_save = (d->original_url[0] != '\0') ? d->original_url : d->url;
 
-     /* Write to a temporary file first for atomic safety against crashes.
-         Use text mode so newline semantics are consistent with db_load on
-         Windows (CRLF normalization when writing/reading in text mode). */
-     FILE *f_db = fopen_utf8(DB_PATH ".tmp", "w");
-    if (!f_db) return;
+    sanitize_field(url_to_save, s_url, sizeof(s_url));
+    sanitize_field(d->output_dir, s_output_dir, sizeof(s_output_dir));
+    sanitize_field(d->status.filename, s_filename, sizeof(s_filename));
+    sanitize_field(d->original_url, s_original_url, sizeof(s_original_url));
+    has_distinct_original = (s_original_url[0] != '\0' && strcmp(s_original_url, s_url) != 0);
 
-    gzFile f_gz = NULL;
-    if (trigger_archive) {
-        f_gz = gzopen(ARCHIVE_PATH, "ab");
-        dm_log("[shutdown] DB size > 10KB. Moving completed tasks to archive...");
+    if (has_distinct_original) {
+        snprintf(buf, bufsz, "%d\t%s\t%s\t%s\t%d\t%.2f\t%.2f\t%lld\t%lld\t%lld\t%lld\t%s",
+                 d->status.id, s_url, s_output_dir, s_filename,
+                 (int)d->status.state, d->status.progress, d->status.speed_bps,
+                 (long long)d->status.total_bytes, (long long)d->status.downloaded_bytes,
+                 (long long)d->status.start_time, (long long)d->status.end_time,
+                 s_original_url);
+    } else {
+        snprintf(buf, bufsz, "%d\t%s\t%s\t%s\t%d\t%.2f\t%.2f\t%lld\t%lld\t%lld\t%lld",
+                 d->status.id, s_url, s_output_dir, s_filename,
+                 (int)d->status.state, d->status.progress, d->status.speed_bps,
+                 (long long)d->status.total_bytes, (long long)d->status.downloaded_bytes,
+                 (long long)d->status.start_time, (long long)d->status.end_time);
     }
+}
 
+static void db_save_and_archive(void) {
+    /* Active items go to dl_items.db; completed items go to the rewritten
+       dl_history.gz archive.  Rewriting (instead of appending) keeps a record
+       from being stored twice, and db_load_archive() reads it back at startup
+       so finished downloads are not lost between sessions.  If the archive
+       cannot be opened, completed items fall back to the DB. */
+    /* Write to a temporary file first for atomic safety against crashes.
+       Use text mode so newline semantics are consistent with db_load on
+       Windows (CRLF normalization when writing/reading in text mode). */
+    FILE *f_db = fopen_utf8(DB_PATH ".tmp", "w");
+    gzFile f_gz;
+    char record[12288];
+
+    if (!f_db) return;
+    f_gz = gzopen(ARCHIVE_PATH ".tmp", "wb");
 
     ludo_mutex_lock(&g_mgr.list_mutex);
     for (Download *d = g_mgr.list; d; d = d->next) {
@@ -1096,56 +1084,22 @@ static void db_save_and_archive(void) {
         /* TASK 1: Update size from disk for active/paused items before saving */
         if (!is_finished) sync_download_size_from_disk(d);
 
-        char s_url[4096];
-        char s_output_dir[1024];
-        char s_filename[512];
-        char s_original_url[4096];
-        int has_distinct_original;
-        /* Prefer the preserved user-supplied original URL for the primary
-           DB URL field so redirects do not overwrite what the user entered. */
-        const char *url_to_save = (d->original_url[0] != '\0') ? d->original_url : d->url;
-        sanitize_field(url_to_save, s_url, sizeof(s_url));
-        sanitize_field(d->output_dir, s_output_dir, sizeof(s_output_dir));
-        sanitize_field(d->status.filename, s_filename, sizeof(s_filename));
-        sanitize_field(d->original_url, s_original_url, sizeof(s_original_url));
-        has_distinct_original = (s_original_url[0] != '\0' && strcmp(s_original_url, s_url) != 0);
-
-        if (trigger_archive && f_gz && is_finished) {
-            if (has_distinct_original) {
-                gzprintf(f_gz, "%d\t%s\t%s\t%s\t%d\t%.2f\t%.2f\t%lld\t%lld\t%lld\t%lld\t%s\n",
-                         d->status.id, s_url, s_output_dir, s_filename,
-                         (int)d->status.state, d->status.progress, d->status.speed_bps,
-                         (long long)d->status.total_bytes, (long long)d->status.downloaded_bytes,
-                         (long long)d->status.start_time, (long long)d->status.end_time,
-                         s_original_url);
-            } else {
-                gzprintf(f_gz, "%d\t%s\t%s\t%s\t%d\t%.2f\t%.2f\t%lld\t%lld\t%lld\t%lld\n",
-                         d->status.id, s_url, s_output_dir, s_filename,
-                         (int)d->status.state, d->status.progress, d->status.speed_bps,
-                         (long long)d->status.total_bytes, (long long)d->status.downloaded_bytes,
-                         (long long)d->status.start_time, (long long)d->status.end_time);
-            }
-        } else {
-            if (has_distinct_original) {
-                fprintf(f_db, "%d\t%s\t%s\t%s\t%d\t%.2f\t%.2f\t%lld\t%lld\t%lld\t%lld\t%s\n",
-                        d->status.id, s_url, s_output_dir, s_filename,
-                        (int)d->status.state, d->status.progress, d->status.speed_bps,
-                        (long long)d->status.total_bytes, (long long)d->status.downloaded_bytes,
-                        (long long)d->status.start_time, (long long)d->status.end_time,
-                        s_original_url);
-            } else {
-                fprintf(f_db, "%d\t%s\t%s\t%s\t%d\t%.2f\t%.2f\t%lld\t%lld\t%lld\t%lld\n",
-                        d->status.id, s_url, s_output_dir, s_filename,
-                        (int)d->status.state, d->status.progress, d->status.speed_bps,
-                        (long long)d->status.total_bytes, (long long)d->status.downloaded_bytes,
-                        (long long)d->status.start_time, (long long)d->status.end_time);
-            }
-        }
+        db_format_record(record, sizeof(record), d);
+        if (is_finished && f_gz)
+            gzprintf(f_gz, "%s\n", record);
+        else
+            fprintf(f_db, "%s\n", record);
     }
     ludo_mutex_unlock(&g_mgr.list_mutex);
 
     fclose(f_db);
-    if (f_gz) gzclose(f_gz);
+    if (f_gz) {
+        /* Atomic replace so a crash mid-save cannot destroy the history. */
+        if (gzclose(f_gz) == Z_OK)
+            dm_rename_utf8(ARCHIVE_PATH ".tmp", ARCHIVE_PATH);
+        else
+            dm_remove_utf8(ARCHIVE_PATH ".tmp");
+    }
 
     /* Atomic replace: ensures data isn't corrupted if power is lost during save */
 #ifdef _WIN32
@@ -1158,14 +1112,13 @@ static void db_save_and_archive(void) {
 #endif
 }
 
-static void db_load(const char *path) {
+/* Parse records from an already-open stream.  The first `skip_lines`
+   records (oldest first) are ignored so the archive loader can bound how
+   much history is restored. */
+static void db_load_file(FILE *f, long skip_lines) {
     /* Robust loader that can handle very long lines (long URLs with large
        query strings). Uses a dynamically growing buffer to read one logical
        line at a time. */
-    /* Open in text mode so CRLF is normalized on Windows. We still
-       defensively strip CR/LF later to be robust on all platforms. */
-    FILE *f = fopen_utf8(path, "r");
-    if (!f) return;
 
     char *line = NULL;
     size_t cap = 0;
@@ -1214,6 +1167,12 @@ static void db_load(const char *path) {
 
         /* Strip trailing CR/LF. Works in both Windows and Unix */
         line[strcspn(line, "\r\n")] = 0;
+
+        if (skip_lines > 0) {
+            skip_lines--;
+            line[0] = '\0';
+            continue;
+        }
 
         Download *d = (Download *)calloc(1, sizeof(Download));
         if (!d) break;
@@ -1302,12 +1261,77 @@ static void db_load(const char *path) {
     }
 
     free(line);
+}
+
+static void db_load(const char *path) {
+    /* Open in text mode so CRLF is normalized on Windows. We still
+       defensively strip CR/LF later to be robust on all platforms. */
+    FILE *f = fopen_utf8(path, "r");
+    if (!f) return;
+    db_load_file(f, 0);
     fclose(f);
+}
+
+/* Restore completed-download history written by db_save_and_archive().
+   The archive is stored oldest-first, so only its newest records are parsed
+   to keep startup memory bounded. */
+static void db_load_archive(void) {
+    gzFile in = gzopen(ARCHIVE_PATH, "rb");
+    FILE *tmp;
+    char buf[16384];
+    long total = 0;
+    int n;
+
+    if (!in) return;
+    tmp = tmpfile();
+    if (!tmp) { gzclose(in); return; }
+
+    while ((n = gzread(in, buf, sizeof(buf))) > 0) {
+        int k;
+        fwrite(buf, 1, (size_t)n, tmp);
+        for (k = 0; k < n; k++) if (buf[k] == '\n') total++;
+    }
+    gzclose(in);
+
+    rewind(tmp);
+    db_load_file(tmp, (total > ARCHIVE_MAX_RECORDS) ? (total - ARCHIVE_MAX_RECORDS) : 0);
+    fclose(tmp);
 }
 
 /* ------------------------------------------------------------------ */
 /* Worker thread                                                        */
 /* ------------------------------------------------------------------ */
+/* A download removed while still queued is released here: perform_download()
+   returns early on the stop flag and never reaches its own free path, so
+   without this the node would leak and its GUI row would never be deleted. */
+static void collect_removed_download(int id) {
+    Download *victim = NULL;
+    ProgressUpdate upd;
+
+    ludo_mutex_lock(&g_mgr.list_mutex);
+    for (Download *it = g_mgr.list; it; it = it->next) {
+        if (it->status.id == id && it->marked_for_removal) {
+            victim = it;
+            break;
+        }
+    }
+    if (victim) {
+        Download **prev = &g_mgr.list;
+        while (*prev && *prev != victim) prev = &(*prev)->next;
+        if (*prev) *prev = victim->next;
+        memset(&upd, 0, sizeof(upd));
+        upd.status = victim->status;
+        upd.status.speed_bps = 0.0;
+        upd.marked_for_removal = 1;
+    }
+    ludo_mutex_unlock(&g_mgr.list_mutex);
+
+    if (victim) {
+        free(victim);
+        gui_dispatch_update(&upd);
+    }
+}
+
 static void *worker_thread(void *arg) {
     (void)arg;
     URLTask task;
@@ -1322,8 +1346,12 @@ static void *worker_thread(void *arg) {
         }
         ludo_mutex_unlock(&g_mgr.list_mutex);
         if (!d) continue;
-        if (task.is_resume_task && d->status.state != DOWNLOAD_STATE_QUEUED) continue;
+        if (task.is_resume_task && d->status.state != DOWNLOAD_STATE_QUEUED) {
+            collect_removed_download(task.download_id);
+            continue;
+        }
         perform_download(d);
+        collect_removed_download(task.download_id);
     }
     return NULL;
 }
@@ -1400,17 +1428,23 @@ int download_manager_init(int num_workers, const char *output_dir) {
     /* Restore previous session */
     dm_log("[init] loading db: %s", DB_PATH);
     db_load(DB_PATH);
+    db_load_archive();
     dm_log("[init] db loaded");
 
     /* At startup, notify the GUI only about tasks that are not completed
        so the UI doesn't re-display finished entries. */
     {
         int snapshot_count = 0;
-        ProgressUpdate snapshot[32]; /* safe upper bound for initial DB load */
+        int capacity = 0;
+        ProgressUpdate *snapshot = NULL;
         ludo_mutex_lock(&g_mgr.list_mutex);
-        for (Download *d = g_mgr.list; d; d = d->next) {
-            if (d->status.state != DOWNLOAD_STATE_COMPLETED && snapshot_count < 32) {
-                memset(&snapshot[snapshot_count], 0, sizeof(snapshot[0]));
+        for (Download *d = g_mgr.list; d; d = d->next)
+            if (d->status.state != DOWNLOAD_STATE_COMPLETED) capacity++;
+        if (capacity > 0)
+            snapshot = (ProgressUpdate *)calloc((size_t)capacity, sizeof(*snapshot));
+        if (snapshot) {
+            for (Download *d = g_mgr.list; d && snapshot_count < capacity; d = d->next) {
+                if (d->status.state == DOWNLOAD_STATE_COMPLETED) continue;
                 snapshot[snapshot_count].status = d->status;
                 snapshot_count++;
             }
@@ -1419,6 +1453,7 @@ int download_manager_init(int num_workers, const char *output_dir) {
         for (int i = 0; i < snapshot_count; i++) {
             gui_dispatch_update(&snapshot[i]);
         }
+        free(snapshot);
     }
 
     g_mgr.workers = (ludo_thread_t *)calloc((size_t)num_workers,
@@ -1860,17 +1895,23 @@ int download_manager_snapshot(DownloadStatus *out, int max) {
 
 void download_manager_sync_ui(void) {
     int snapshot_count = 0;
-    ProgressUpdate snapshot[64]; /* safe upper bound — matches MAX_DOWNLOAD_ROWS in gui.c */
+    int capacity = 0;
+    ProgressUpdate *snapshot = NULL;
     ludo_mutex_lock(&g_mgr.list_mutex);
-    for (Download *d = g_mgr.list; d; d = d->next) {
-        if (d->status.state == DOWNLOAD_STATE_COMPLETED) continue;
-        if (snapshot_count >= 64) break;
-        memset(&snapshot[snapshot_count], 0, sizeof(snapshot[0]));
-        snapshot[snapshot_count].status = d->status;
-        snapshot_count++;
+    for (Download *d = g_mgr.list; d; d = d->next)
+        if (d->status.state != DOWNLOAD_STATE_COMPLETED) capacity++;
+    if (capacity > 0)
+        snapshot = (ProgressUpdate *)calloc((size_t)capacity, sizeof(*snapshot));
+    if (snapshot) {
+        for (Download *d = g_mgr.list; d && snapshot_count < capacity; d = d->next) {
+            if (d->status.state == DOWNLOAD_STATE_COMPLETED) continue;
+            snapshot[snapshot_count].status = d->status;
+            snapshot_count++;
+        }
     }
     ludo_mutex_unlock(&g_mgr.list_mutex);
     for (int i = 0; i < snapshot_count; i++) {
         gui_dispatch_update(&snapshot[i]);
     }
+    free(snapshot);
 }

@@ -17,6 +17,18 @@ extern "C" {
 /* UTF-8 aware fopen — on Windows wraps _wfopen, on POSIX wraps fopen. */
 FILE *fopen_utf8(const char *path, const char *mode);
 
+/* Change the working directory to the directory containing the executable so
+   that relative asset paths (config.ini, plugins/, res/, lualib/) resolve
+   consistently no matter how the process was launched.
+   Returns 1 on success, 0 on failure (the working directory is then left
+   unchanged). */
+int chdir_to_app_dir(void);
+
+/* Write the absolute form of `path` (relative paths resolved against the
+   current working directory) into dst.  Returns 1 on success, 0 on failure
+   (for example when the result does not fit in dst). */
+int path_absolute(const char *path, char *dst, size_t dst_sz);
+
 #ifdef _WIN32
 #include <windows.h>
 

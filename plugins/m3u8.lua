@@ -8,7 +8,6 @@
 --   local ok, path_or_error = m3u8.download(m3u8_url, output_dir, "video.mp4")
 --
 -- Limitations:
---   - No AES-128 decryption (encrypted streams are logged as unsupported)
 --   - Individual segments limited to ~8 MB (Ludo http.get() buffer)
 --   - Sequential segment download (no concurrency)
 

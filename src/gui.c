@@ -39,7 +39,7 @@ extern char **environ;
 /* Constants                                                            */
 /* ------------------------------------------------------------------ */
 
-#define MAX_DOWNLOAD_ROWS 64
+#define DOWNLOAD_ROWS_INITIAL 64
 
 #define ICON_ADD      "add.png"
 #define ICON_PAUSE    "pause.png"
@@ -378,8 +378,9 @@ static struct {
     uiBox           *downloads_box; /* vbox; one row per download       */
     uiMultilineEntry *log_view;
 
-    DownloadRow      rows[MAX_DOWNLOAD_ROWS];
+    DownloadRow     *rows;
     int              row_count;
+    int              row_capacity;
     int              active_download_id;
     int              shutdown_requested;
     ludo_thread_t    url_worker;
@@ -736,11 +737,11 @@ void gui_log(LogLevel level, const char *fmt, ...) {
         default:          prefix = "[INFO] "; break;
     }
 
-    /* Queue to GUI if it was initialized, otherwise free the packet */
+    /* Always persist to ludo.log; additionally mirror to the on-screen log */
+    dm_log("%s%s", prefix, pkt->msg);
     if (g_gui.log_view) {
         uiQueueMain(log_on_main, pkt);
     } else {
-        dm_log("%s%s", prefix, pkt->msg);
         free(pkt);
     }
 }
@@ -1348,10 +1349,17 @@ static int resolve_toolbar_png_path(const char *name, char *out, size_t out_sz) 
 #endif
 
 static DownloadRow *add_row(int id, const char *filename) {
-    if (g_gui.row_count >= MAX_DOWNLOAD_ROWS) {
-        static int warned = 0;
-        if (!warned) { gui_log(LOG_WARNING, "MAX_DOWNLOAD_ROWS reached; further downloads will not appear in the table."); warned = 1; }
-        return NULL;
+    if (g_gui.row_count >= g_gui.row_capacity) {
+        int new_cap = (g_gui.row_capacity > 0) ? g_gui.row_capacity * 2
+                                              : DOWNLOAD_ROWS_INITIAL;
+        DownloadRow *grown = (DownloadRow *)realloc(
+            g_gui.rows, (size_t)new_cap * sizeof(DownloadRow));
+        if (!grown) {
+            gui_log(LOG_ERROR, "Out of memory growing the download table");
+            return NULL;
+        }
+        g_gui.rows = grown;
+        g_gui.row_capacity = new_cap;
     }
 
     DownloadRow *r = &g_gui.rows[g_gui.row_count];
@@ -1605,6 +1613,10 @@ void gui_cleanup(void) {
         g_downloads_model = NULL;
     }
     g_downloads_table = NULL;
+    free(g_gui.rows);
+    g_gui.rows = NULL;
+    g_gui.row_count = 0;
+    g_gui.row_capacity = 0;
 }
 
 int gui_is_shutdown_requested(void) {
@@ -2151,8 +2163,7 @@ static void on_header_clicked(uiTable *t, int column, void *data) {
 
     /* Notify the model that every row has changed. libui-ng exposes no
        bulk-invalidation call (uiTableModelRowChanged maps 1:1 to LVM_UPDATE
-       on Windows), so we send one notification per row. Row count is bounded
-       by MAX_DOWNLOAD_ROWS (64), so the overhead is acceptable. */
+       on Windows), so we send one notification per row. */
     for (int i = 0; i < g_gui.row_count; i++) {
         uiTableModelRowChanged(g_downloads_model, i);
     }

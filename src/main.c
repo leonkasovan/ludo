@@ -2,6 +2,7 @@
 #include "download_manager.h"
 #include "config.h"
 #include "thread_queue.h"
+#include "platform_utils.h"
 #ifndef BUILD_CONSOLE
 #include "http_module.h"
 #endif
@@ -118,6 +119,14 @@ int main(int argc, char *argv[]) {
         return show_help ? 0 : 1;
     }
 
+    /* Make a relative --file path absolute against the launch directory, then
+       run from the executable's directory so config.ini and relative asset
+       paths resolve no matter where the process was started. */
+    char file_path_abs[4096];
+    if (file_path && path_absolute(file_path, file_path_abs, sizeof(file_path_abs)))
+        file_path = file_path_abs;
+    chdir_to_app_dir();
+
     if (!ludo_config_init("config.ini"))
         fprintf(stderr, "Warning: failed to load config.ini\n");
     const LudoConfig *cfg = ludo_config_get();
@@ -224,14 +233,10 @@ int main(int argc, char *argv[])
     (void)argc; (void)argv;
 #endif
 
-    if (!ludo_config_init("config.ini")) {
-        fprintf(stderr, "Failed to load config.ini\n");
-    }
-    const LudoConfig *cfg = ludo_config_get();
-    // dm_log_init();
-
     /* -------------------------------------------------------------- */
     /* Early-Check: Headless script mode                              */
+    /* Parsed before the working directory is changed so that a        */
+    /* relative -s path still resolves against the launch directory.   */
     /* -------------------------------------------------------------- */
     char *script_path = NULL;
 
@@ -280,6 +285,28 @@ int main(int argc, char *argv[])
         }
     }
 #endif
+
+    if (script_path) {
+        char abs_path[4096];
+        if (path_absolute(script_path, abs_path, sizeof(abs_path))) {
+            char *tmp = (char *)realloc(script_path, strlen(abs_path) + 1);
+            if (tmp) {
+                script_path = tmp;
+                strcpy(script_path, abs_path);
+            }
+        }
+    }
+
+    /* Run from the executable's directory so relative asset paths
+       (config.ini, plugins/, res/, lualib/) resolve no matter how the
+       process was launched. */
+    chdir_to_app_dir();
+
+    if (!ludo_config_init("config.ini")) {
+        fprintf(stderr, "Failed to load config.ini\n");
+    }
+    const LudoConfig *cfg = ludo_config_get();
+    // dm_log_init();
 
     if (script_path) {
         /* Initialise libui first so scripts that use async HTTP callbacks
